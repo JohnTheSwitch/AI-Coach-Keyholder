@@ -204,6 +204,17 @@ fallback.
   `None`, the handler replies that Chaster is "not configured" rather
   than raising. See `chaster/README.md` for the full module boundary
   and its own honestly-flagged limitation (identity resolution).
+- **Self-healing Chaster tokens + `chaster disconnect`.**
+  `ApplicationService.__init__` gained an optional
+  `chaster_token_manager` DI parameter (auto-built from
+  `chaster_connections` + `chaster_oauth_client` when both are given).
+  `chaster status` now calls the Chaster API through
+  `ChasterTokenManager.call_with_token()` (pre-call refresh; one
+  refresh-and-retry on HTTP 401) and answers a connection that can no
+  longer be renewed with a red "Chaster Reconnection Required" embed.
+  `chaster connect` issues a fresh link even for an already-connected
+  user. New `chaster disconnect` is a deterministic, local-only removal
+  with a green/blue embed. See `chaster/README.md` for the full detail.
 - **First Testable Keyholder Milestone, Slice D.** `ApplicationService.__init__`
   gained new, optional `lock_state`/`task_runtime`/`task_catalog`
   parameters — see `conversation_engine/README.md`'s own "Slice D"

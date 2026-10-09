@@ -63,7 +63,16 @@ DEFAULT_READ_TIMEOUT_SECONDS = 15.0
 
 class ChasterLockApiError(RuntimeError):
     """Raised on a network error or a response this client cannot
-    interpret. Never includes the access token in its message."""
+    interpret. Never includes the access token in its message.
+
+    `status_code` is the HTTP status of a non-200 response, or None
+    for a network error / unparseable body. It exists so callers (see
+    chaster/token_manager.py) can recognise an expired access token
+    (HTTP 401) without parsing the message text."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class EmergencyUnlockHttpOutcome(StrEnum):
@@ -103,7 +112,9 @@ class ChasterLockClient:
             raise ChasterLockApiError("Network error contacting Chaster's locks endpoint.") from exc
 
         if response.status_code != 200:
-            raise ChasterLockApiError(f"Chaster's locks endpoint returned HTTP {response.status_code}.")
+            raise ChasterLockApiError(
+                f"Chaster's locks endpoint returned HTTP {response.status_code}.", status_code=response.status_code,
+            )
 
         try:
             body = response.json()

@@ -158,6 +158,12 @@ class TestDelete:
     def test_delete_is_safe_when_no_connection_exists(self, repo: ChasterConnectionRepository) -> None:
         repo.delete("u1")  # must not raise
 
+    def test_delete_reports_whether_a_connection_existed(self, repo: ChasterConnectionRepository) -> None:
+        assert repo.delete("u1") is False
+        _create(repo)
+        assert repo.delete("u1") is True
+        assert repo.delete("u1") is False
+
 
 class TestExpiryPersistence:
     def test_token_expiry_timestamps_are_stored_and_read_back_exactly(self, repo: ChasterConnectionRepository) -> None:
@@ -177,3 +183,52 @@ class TestReprRedaction:
         assert connection.encrypted_access_token not in text
         assert connection.encrypted_refresh_token not in text
         assert "<redacted>" in text
+
+
+class TestDeleteWithDependentRows:
+    """Foreign keys are enforced: `chaster_provider_observations`
+    REFERENCES `chaster_connections(user_id)`. A naive DELETE of the
+    connection would raise IntegrityError once any observation exists,
+    which is the normal state of a user who has used `chaster status`
+    flows. `delete()` must remove children first, atomically."""
+
+    def _record_observation(self, core, tmp_path) -> None:
+        from chaster.models import ChasterProviderStatus
+        from chaster.provider_observation_repository import ChasterProviderObservationRecorder
+        ChasterProviderObservationRecorder(tmp_path / "test.db", core=core).record(
+            connection_id="u1", provider="chaster", chaster_lock_id="lock1",
+            status=ChasterProviderStatus.LOCKED, fetched_at=FIXED_TIME, now=FIXED_TIME,
+        )
+
+    def test_delete_succeeds_for_a_connection_that_has_observations(self, repo, core, tmp_path) -> None:
+        _create(repo)
+        self._record_observation(core, tmp_path)
+        assert repo.delete("u1") is True
+        assert repo.get("u1") is None
+
+    def test_delete_removes_the_connections_observations(self, repo, core, tmp_path) -> None:
+        _create(repo)
+        self._record_observation(core, tmp_path)
+        repo.delete("u1")
+        with core.raw_connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM chaster_provider_observations").fetchone()[0]
+        assert count == 0
+
+    def test_delete_only_removes_the_requesting_users_rows(self, repo, core, tmp_path) -> None:
+        _create(repo)
+        _create(repo, user_id="u2", chaster_account_id="chaster-acc-2")
+        self._record_observation(core, tmp_path)
+        repo.delete("u1")
+        assert repo.get("u2") is not None
+
+    def test_delete_kills_a_pending_authorization_link(self, repo, core, tmp_path) -> None:
+        from chaster.repository import ChasterOAuthStateRepository
+        states = ChasterOAuthStateRepository(tmp_path / "test.db", core=core)
+        state = states.create_or_replace(user_id="u1", now=FIXED_TIME)
+        _create(repo)
+        repo.delete("u1")
+        assert states.consume(state=state, now=FIXED_TIME).matched is False
+
+    def test_delete_never_touches_user_reported_lock_state(self, repo, core) -> None:
+        source = (Path(__file__).parent.parent.parent / "chaster" / "repository.py").read_text(encoding="utf-8")
+        assert "lock_reports" not in source

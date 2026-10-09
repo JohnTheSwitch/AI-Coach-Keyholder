@@ -247,14 +247,34 @@ class ChasterConnectionRepository:
                 (ConnectionStatus.NEEDS_REAUTHORIZATION.value, _iso(now), user_id),
             )
 
-    def delete(self, user_id: str) -> None:
+    def delete(self, user_id: str) -> bool:
         """Local-only disconnect (chaster_integration_technical_design.md
-        Section 19) -- deletes the row entirely. Does not, and cannot,
-        revoke anything on Chaster's own side (no revocation endpoint
-        is confirmed to exist)."""
+        Section 19). Returns True if a connection existed, False if
+        there was nothing to delete. Does not, and cannot, revoke
+        anything on Chaster's own side (no revocation endpoint is
+        confirmed to exist).
+
+        In ONE transaction this removes, in FK-safe order:
+        - the user's provider observations
+          (`chaster_provider_observations.connection_id` REFERENCES
+          `chaster_connections(user_id)` with foreign keys enforced, so
+          the connection row cannot be deleted while they exist). This
+          is the single deliberate exception to that table's
+          append-only rule: the rows are children of the connection and
+          are meaningless without it; disconnecting removes the
+          user's Chaster data entirely rather than orphaning it.
+        - any pending OAuth state (so an outstanding authorization
+          link stops working the moment the user disconnects);
+        - the connection row itself.
+        `lock_state`'s user-reported lock history is a separate
+        concern and is never touched."""
         _require_user_id(user_id)
         with self._core.transaction() as tx:
+            existing = tx.fetch_one("SELECT 1 FROM chaster_connections WHERE user_id = ?", (user_id,))
+            tx.execute("DELETE FROM chaster_provider_observations WHERE connection_id = ?", (user_id,))
+            tx.execute("DELETE FROM chaster_oauth_states WHERE user_id = ?", (user_id,))
             tx.execute("DELETE FROM chaster_connections WHERE user_id = ?", (user_id,))
+        return existing is not None
 
     def _require_connection(self, user_id: str) -> ChasterConnection:
         connection = self.get(user_id)

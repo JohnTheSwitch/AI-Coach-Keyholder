@@ -352,3 +352,57 @@ class TestHeaderOrder:
         with patch("requests.Session.send", return_value=mock_response) as mock_send:
             _client().fetch_raw_profile(access_token="at")
         assert mock_send.call_args.kwargs["timeout"] is not None
+
+
+class TestRefreshFailureClassification:
+    """`transient` separates "Chaster could not be reached" from "Chaster
+    rejected this refresh token" -- only the latter may ever cause a
+    connection to be marked needs_reauthorization."""
+
+    @pytest.mark.parametrize("status", [400, 401, 403])
+    def test_client_error_rejections_are_definitive(self, status: int) -> None:
+        with patch("requests.Session.send", return_value=MagicMock(status_code=status)):
+            with pytest.raises(ChasterTokenExchangeError) as excinfo:
+                _client().refresh_tokens(refresh_token="rt")
+        assert excinfo.value.status_code == status
+        assert excinfo.value.transient is False
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503])
+    def test_rate_limit_and_server_errors_are_transient(self, status: int) -> None:
+        with patch("requests.Session.send", return_value=MagicMock(status_code=status)):
+            with pytest.raises(ChasterTokenExchangeError) as excinfo:
+                _client().refresh_tokens(refresh_token="rt")
+        assert excinfo.value.transient is True
+
+    def test_network_error_is_transient(self) -> None:
+        import requests
+        with patch("requests.Session.send", side_effect=requests.ConnectionError("down")):
+            with pytest.raises(ChasterTokenExchangeError) as excinfo:
+                _client().refresh_tokens(refresh_token="rt")
+        assert excinfo.value.transient is True
+        assert excinfo.value.status_code is None
+
+    def test_unparseable_success_body_is_not_transient(self) -> None:
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"access_token": "at"}
+        with patch("requests.Session.send", return_value=response):
+            with pytest.raises(ChasterTokenExchangeError) as excinfo:
+                _client().refresh_tokens(refresh_token="rt")
+        assert excinfo.value.transient is False
+
+    def test_refresh_request_uses_the_refresh_token_grant_at_the_token_url(self) -> None:
+        from chaster.oauth_client import TOKEN_URL
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "access_token": "a", "refresh_token": "r", "expires_in": 300, "refresh_expires_in": 1800, "scope": "locks",
+        }
+        with patch("requests.Session.send", return_value=response) as mock_send:
+            _client().refresh_tokens(refresh_token="old-rt")
+        prepared = mock_send.call_args.args[0]
+        assert prepared.url == TOKEN_URL
+        assert "grant_type=refresh_token" in prepared.body
+        assert "refresh_token=old-rt" in prepared.body
+
+    def test_plain_construction_defaults_to_definitive(self) -> None:
+        error = ChasterTokenExchangeError("x")
+        assert error.transient is False and error.status_code is None

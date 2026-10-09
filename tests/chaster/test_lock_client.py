@@ -247,3 +247,25 @@ class TestHeaderOrder:
         with patch("requests.Session.send", return_value=mock_response) as mock_send:
             _client().list_active_locks(access_token="at")
         assert mock_send.call_args.kwargs["timeout"] is not None
+
+
+class TestLockApiErrorStatusCode:
+    """`status_code` lets chaster/token_manager.py recognise an expired
+    token (HTTP 401) without parsing message text."""
+
+    def test_non_200_response_carries_its_status_code(self) -> None:
+        mock_response = MagicMock(status_code=401)
+        with patch("requests.Session.send", return_value=mock_response):
+            with pytest.raises(ChasterLockApiError) as excinfo:
+                _client().list_active_locks(access_token="at")
+        assert excinfo.value.status_code == 401
+
+    def test_network_error_has_no_status_code(self) -> None:
+        import requests
+        with patch("requests.Session.send", side_effect=requests.ConnectionError("down")):
+            with pytest.raises(ChasterLockApiError) as excinfo:
+                _client().list_active_locks(access_token="at")
+        assert excinfo.value.status_code is None
+
+    def test_error_can_still_be_constructed_with_only_a_message(self) -> None:
+        assert ChasterLockApiError("x").status_code is None

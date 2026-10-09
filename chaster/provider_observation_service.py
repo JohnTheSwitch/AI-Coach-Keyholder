@@ -36,17 +36,23 @@ and `lock_state/` are not imported or touched anywhere in this file.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 
 from chaster.lock_client import ChasterLockApiError, ChasterLockClient
 from chaster.models import ChasterProviderObservation, ChasterProviderStatus
-from chaster.oauth_client import ChasterOAuthClient, ChasterTokenExchangeError
+from chaster.oauth_client import ChasterOAuthClient
 from chaster.provider_observation_repository import (
     ChasterProviderObservationRecorder,
     ChasterProviderObservations,
 )
 from chaster.repository import ChasterConnectionRepository
+from chaster.token_manager import (
+    ChasterNotConnectedError,
+    ChasterReauthorizationRequiredError,
+    ChasterRefreshUnavailableError,
+    ChasterTokenManager,
+)
 
 __all__ = ["FetchObservationOutcome", "FetchObservationResult", "ChasterProviderObservationService"]
 
@@ -87,12 +93,16 @@ class ChasterProviderObservationService:
         self, *, connections: ChasterConnectionRepository, oauth_client: ChasterOAuthClient,
         lock_client: ChasterLockClient, observations: ChasterProviderObservations,
         recorder: ChasterProviderObservationRecorder,
+        token_manager: ChasterTokenManager | None = None,
     ) -> None:
         self._connections = connections
         self._oauth_client = oauth_client
         self._lock_client = lock_client
         self._observations = observations
         self._recorder = recorder
+        # Refresh / 401-retry logic lives in ChasterTokenManager (shared
+        # with `chaster status`); this service no longer owns a copy.
+        self._token_manager = token_manager or ChasterTokenManager(connections=connections, oauth_client=oauth_client)
 
     def fetch_and_record(self, *, connection_id: str, now: datetime) -> FetchObservationResult:
         """The on-demand fetch workflow. Never raises for an ordinary,
@@ -106,25 +116,24 @@ class ChasterProviderObservationService:
         if connection is None:
             return FetchObservationResult(outcome=FetchObservationOutcome.NO_CONNECTION, observation=None)
 
-        if connection.access_token_expires_at <= now:
-            refreshed = self._refresh_and_persist(connection_id=connection_id, connection=connection, now=now)
-            if refreshed is None:
-                return FetchObservationResult(
-                    outcome=FetchObservationOutcome.NEEDS_REAUTHORIZATION,
-                    observation=self._observations.get_latest(connection_id),
-                )
-
-        access_token = self._connections.get_decrypted_access_token(connection_id, now=now)
-
         try:
-            raw_locks = self._lock_client.list_active_locks(access_token=access_token)
-        except ChasterLockApiError:
-            # Network error, or any non-2xx HTTP response -- the
-            # underlying exception carries no structured status code
-            # to distinguish rate-limiting from a server error from a
-            # dropped connection, so all are reported the same,
-            # honest way: the live fetch failed, here is what we knew
-            # before (Section 14, "API failure").
+            raw_locks = self._token_manager.call_with_token(
+                connection_id, now=now,
+                operation=lambda token: self._lock_client.list_active_locks(access_token=token),
+            )
+        except ChasterNotConnectedError:
+            return FetchObservationResult(outcome=FetchObservationOutcome.NO_CONNECTION, observation=None)
+        except ChasterReauthorizationRequiredError:
+            return FetchObservationResult(
+                outcome=FetchObservationOutcome.NEEDS_REAUTHORIZATION,
+                observation=self._observations.get_latest(connection_id),
+            )
+        except (ChasterRefreshUnavailableError, ChasterLockApiError):
+            # Network error, a transient token-endpoint failure, or any
+            # non-2xx HTTP response (an HTTP 401 has already been
+            # refreshed-and-retried once by the token manager) -- the
+            # live fetch failed, here is what we knew before
+            # (Section 14, "API failure").
             return FetchObservationResult(
                 outcome=FetchObservationOutcome.API_UNAVAILABLE,
                 observation=self._observations.get_latest(connection_id),
@@ -186,30 +195,3 @@ class ChasterProviderObservationService:
             status=status, fetched_at=now, now=now,
         )
         return FetchObservationResult(outcome=FetchObservationOutcome.RECORDED, observation=recorded)
-
-    def _refresh_and_persist(self, *, connection_id: str, connection, now: datetime):
-        """Returns the new ChasterConnection on success, or None if
-        the refresh itself failed (Chaster rejected the refresh
-        token) -- marking the connection NEEDS_REAUTHORIZATION either
-        way a genuine failure occurs, the same outcome
-        get_decrypted_refresh_token() already applies automatically
-        for a local decryption failure."""
-        try:
-            refresh_token = self._connections.get_decrypted_refresh_token(connection_id, now=now)
-        except Exception:  # noqa: BLE001 -- TokenDecryptionError already marks NEEDS_REAUTHORIZATION itself
-            return None
-
-        try:
-            tokens = self._oauth_client.refresh_tokens(refresh_token=refresh_token)
-        except ChasterTokenExchangeError:
-            self._connections.mark_needs_reauthorization(connection_id, now=now)
-            return None
-
-        return self._connections.create_or_replace(
-            user_id=connection_id, chaster_account_id=connection.chaster_account_id,
-            chaster_username=connection.chaster_username,
-            access_token=tokens.access_token, refresh_token=tokens.refresh_token,
-            access_token_expires_at=now + timedelta(seconds=tokens.expires_in),
-            refresh_token_expires_at=now + timedelta(seconds=tokens.refresh_expires_in),
-            granted_scopes=tokens.granted_scopes, now=now,
-        )

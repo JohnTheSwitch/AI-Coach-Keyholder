@@ -142,16 +142,19 @@ class TestNotConnected:
         assert result.embed.color == "red"
         assert "chaster connect" in result.embed.description.lower()
 
-    def test_decryption_failure_also_gets_the_not_connected_embed(self, configured_service: ApplicationService) -> None:
+    def test_decryption_failure_gets_the_reconnect_embed(self, configured_service: ApplicationService) -> None:
         """A connection row exists but can't be decrypted (e.g. wrong
-        encryption key) -- must be treated the same as no connection
-        at all, never crash."""
+        encryption key). INTENTIONALLY CHANGED: this is now a red
+        "Reconnection Required" embed (the connection is marked
+        needs_reauthorization and `chaster connect` fixes it) rather
+        than the generic "Not Connected" one. Never crashes."""
         _complete_onboarding(configured_service)
         _connect_user(configured_service)
         with patch.object(configured_service.chaster_connections, "get_decrypted_access_token", side_effect=TokenDecryptionError("bad key")):
             result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
-        assert result.embed.title == "Chaster Account Not Connected"
+        assert result.embed.title == "Chaster Reconnection Required"
         assert result.embed.color == "red"
+        assert "chaster connect" in result.embed.description.lower()
 
 
 class TestZeroActiveLocks:
@@ -307,3 +310,111 @@ class TestNoSecretLeakage:
             result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
         assert "real-access-token" not in result.text
         assert result.embed is None or "real-access-token" not in (result.embed.description or "")
+
+
+class TestSelfHealingTokenRefresh:
+    """`chaster status` never needs manual database intervention: an
+    expired token is refreshed before the call, a 401 is refreshed and
+    retried once, and only a definitively rejected refresh token ends in
+    a reconnect prompt."""
+
+    @staticmethod
+    def _new_tokens():
+        from chaster.oauth_client import ChasterTokenResponse
+        return ChasterTokenResponse(
+            access_token="fresh-access-token", refresh_token="fresh-refresh-token",
+            expires_in=300, refresh_expires_in=1800, granted_scopes=("locks",),
+        )
+
+    def test_expired_access_token_is_refreshed_transparently(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", return_value=self._new_tokens()) as refresh, \
+             patch.object(ChasterLockClient, "list_active_locks", return_value=[]) as lock_call:
+            result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        refresh.assert_called_once_with(refresh_token="real-refresh-token")
+        assert lock_call.call_args.kwargs["access_token"] == "fresh-access-token"
+        assert result.embed.color == "blue"
+
+    def test_refreshed_tokens_are_persisted_so_the_next_call_needs_no_refresh(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", return_value=self._new_tokens()) as refresh, \
+             patch.object(ChasterLockClient, "list_active_locks", return_value=[]):
+            configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+            configured_service.handle_message(_incoming("chaster status", external_message_id="m2"))
+        assert refresh.call_count == 1
+
+    def test_a_401_refreshes_and_retries_once_then_succeeds(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service)
+        with patch.object(ChasterOAuthClient, "refresh_tokens", return_value=self._new_tokens()) as refresh, \
+             patch.object(ChasterLockClient, "list_active_locks",
+                          side_effect=[ChasterLockApiError("401", status_code=401), []]) as lock_call:
+            result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        assert lock_call.call_count == 2
+        assert lock_call.call_args_list[1].kwargs["access_token"] == "fresh-access-token"
+        refresh.assert_called_once()
+        assert result.embed.color == "blue"
+
+    def test_a_revoked_refresh_token_gives_the_red_reconnect_embed(self, configured_service: ApplicationService) -> None:
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
+            result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        assert result.embed.title == "Chaster Reconnection Required"
+        assert result.embed.color == "red"
+        assert "chaster connect" in result.embed.description.lower()
+        assert "chaster connect" in result.text.lower()
+
+    def test_a_revoked_refresh_token_marks_the_connection_needs_reauthorization(self, configured_service: ApplicationService) -> None:
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
+            configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        user = configured_service.user_service.get_or_create_user("discord", "42", now=FIXED_TIME)
+        assert configured_service.chaster_connections.get(user.id).connection_status.value == "needs_reauthorization"
+
+    def test_a_marked_connection_does_not_hit_the_network_again(self, configured_service: ApplicationService) -> None:
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)) as refresh:
+            configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+            configured_service.handle_message(_incoming("chaster status", external_message_id="m2"))
+        assert refresh.call_count == 1
+
+    def test_a_transient_outage_gives_a_red_retry_embed_and_keeps_the_connection(self, configured_service: ApplicationService) -> None:
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("down", transient=True)):
+            result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        assert result.embed.title == "Chaster Temporarily Unavailable"
+        assert result.embed.color == "red"
+        user = configured_service.user_service.get_or_create_user("discord", "42", now=FIXED_TIME)
+        assert configured_service.chaster_connections.get(user.id).connection_status.value == "active"
+
+    def test_reconnect_embed_never_leaks_token_values(self, configured_service: ApplicationService) -> None:
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
+            result = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        assert "real-refresh-token" not in result.text and "real-access-token" not in result.text
+
+    def test_status_after_a_reconnect_works_again(self, configured_service: ApplicationService) -> None:
+        """End-to-end self-heal: revoked -> reconnect prompt -> the
+        callback re-links (simulated) -> status works, no manual DB step."""
+        from chaster.oauth_client import ChasterTokenExchangeError
+        _complete_onboarding(configured_service)
+        _connect_user(configured_service, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
+            first = configured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
+        assert first.embed.title == "Chaster Reconnection Required"
+        _connect_user(configured_service)   # what a successful callback does (create_or_replace)
+        with patch.object(ChasterLockClient, "list_active_locks", return_value=[]):
+            second = configured_service.handle_message(_incoming("chaster status", external_message_id="m2"))
+        assert second.embed.color == "blue"

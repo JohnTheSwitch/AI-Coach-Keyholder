@@ -292,6 +292,48 @@ class TestTokenRefresh:
         assert second.observation == first.observation
 
 
+class TestSelfHealing:
+    """The service delegates to the shared ChasterTokenManager."""
+
+    def test_a_401_triggers_one_refresh_and_a_successful_retry(self, connections, service, oauth_client, lock_client) -> None:
+        _create_connection(connections)
+        oauth_client.refresh_tokens.return_value = ChasterTokenResponse(
+            access_token="new-access", refresh_token="new-refresh", expires_in=300,
+            refresh_expires_in=1800, granted_scopes=("locks",),
+        )
+        lock_client.list_active_locks.side_effect = [
+            ChasterLockApiError("401", status_code=401),
+            [{"_id": "lock1", "status": "locked"}],
+        ]
+        result = service.fetch_and_record(connection_id="u1", now=FIXED_TIME)
+        assert result.outcome == FetchObservationOutcome.RECORDED
+        assert lock_client.list_active_locks.call_args_list[1].kwargs["access_token"] == "new-access"
+        oauth_client.refresh_tokens.assert_called_once()
+
+    def test_a_401_with_a_revoked_refresh_token_returns_needs_reauthorization(self, connections, service, oauth_client, lock_client) -> None:
+        _create_connection(connections)
+        oauth_client.refresh_tokens.side_effect = ChasterTokenExchangeError("rejected", status_code=400)
+        lock_client.list_active_locks.side_effect = ChasterLockApiError("401", status_code=401)
+        result = service.fetch_and_record(connection_id="u1", now=FIXED_TIME)
+        assert result.outcome == FetchObservationOutcome.NEEDS_REAUTHORIZATION
+
+    def test_a_transient_refresh_failure_is_api_unavailable_and_does_not_mark_the_connection(self, connections, service, oauth_client, lock_client) -> None:
+        _create_connection(connections, access_token_expires_at=FIXED_TIME - timedelta(minutes=1))
+        oauth_client.refresh_tokens.side_effect = ChasterTokenExchangeError("network", transient=True)
+        result = service.fetch_and_record(connection_id="u1", now=FIXED_TIME)
+        assert result.outcome == FetchObservationOutcome.API_UNAVAILABLE
+        assert connections.get("u1").connection_status.value == "active"
+        lock_client.list_active_locks.assert_not_called()
+
+    def test_a_connection_already_marked_needs_reauthorization_makes_no_network_call(self, connections, service, oauth_client, lock_client) -> None:
+        _create_connection(connections)
+        connections.mark_needs_reauthorization("u1", now=FIXED_TIME)
+        result = service.fetch_and_record(connection_id="u1", now=FIXED_TIME)
+        assert result.outcome == FetchObservationOutcome.NEEDS_REAUTHORIZATION
+        lock_client.list_active_locks.assert_not_called()
+        oauth_client.refresh_tokens.assert_not_called()
+
+
 class TestNeverImportsRestrictedModules:
     def test_does_not_import_task_runtime_eligibility(self) -> None:
         import inspect

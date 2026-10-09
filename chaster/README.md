@@ -148,9 +148,17 @@ command fetches live, on the spot, and does not read or write that
 table at all. The two are separate, independent ways of reading live
 Chaster data, not the same mechanism; neither calls the other.
 
-- Not connected (no `chaster_connections` row, or the stored token
-  fails to decrypt): a red "Chaster Account Not Connected" reply
-  pointing at `chaster connect`.
+- Not connected (no `chaster_connections` row): a red "Chaster Account
+  Not Connected" reply pointing at `chaster connect`.
+- Connection can no longer be renewed (Chaster rejected the refresh
+  token, the stored ciphertext cannot be decrypted, or a freshly
+  refreshed token was still rejected): a red "Chaster Reconnection
+  Required" reply pointing at `chaster connect`. (Previously a
+  decryption failure showed "Not Connected"; it is now this more
+  accurate reply.)
+- Token endpoint temporarily unreachable (network error, HTTP 429/5xx):
+  a red "Chaster Temporarily Unavailable" reply; the connection is
+  left intact.
 - Connected, zero active locks: a blue "no active locks" reply.
 - Connected, active locks found: a green reply, one field per lock
   (`title`, `status`, and a computed "time remaining" — `Xd Yh Zm`,
@@ -173,6 +181,72 @@ is the only place a real `discord.Embed` is ever constructed, at the
 adapter boundary, and every pre-existing command's plain-text reply is
 completely unaffected by this addition.
 
+## What is implemented — self-healing tokens, `chaster connect` re-link, `chaster disconnect`
+
+**Goal: an expired token never requires manual database intervention.**
+
+`chaster/token_manager.py::ChasterTokenManager` is the single place
+that keeps a user's access token usable:
+
+1. **Pre-call refresh.** If the stored access token is expired or
+   within 30 seconds of expiring, the stored refresh token is exchanged
+   at Chaster's token endpoint (`ChasterOAuthClient.refresh_tokens()`,
+   `grant_type=refresh_token`; the endpoint is the existing confirmed
+   Keycloak `TOKEN_URL`) and the new pair plus both expiry timestamps
+   are persisted. No schema change was needed: migration 022 already
+   stores `encrypted_refresh_token`, `access_token_expires_at` and
+   `refresh_token_expires_at`.
+2. **401 retry.** `call_with_token(user_id, now=, operation=)` runs the
+   operation; if it fails with `ChasterLockApiError.status_code == 401`
+   it refreshes once and retries once. A second 401 marks the
+   connection `needs_reauthorization` — never a loop.
+3. **Honest failure classification.**
+   - `ChasterReauthorizationRequiredError` — Chaster definitively
+     rejected the refresh token (`ChasterTokenExchangeError.transient`
+     is `False`), the ciphertext cannot be decrypted, or a just-issued
+     token was rejected. The connection is marked
+     `needs_reauthorization`; later calls short-circuit with no
+     network traffic until the user runs `chaster connect`.
+   - `ChasterRefreshUnavailableError` — network error or HTTP 429/5xx
+     (`transient=True`). The stored connection is **not** modified, so
+     the next attempt can succeed on its own.
+   - `ChasterNotConnectedError` — no connection row.
+
+Design notes: the refresh token's own expiry is intentionally *not*
+pre-checked locally (Keycloak offline tokens report
+`refresh_expires_in` of 0); the token endpoint is the only authority.
+A per-user `threading.Lock` serialises refreshes so a rotating refresh
+token is never spent twice, and the connection is re-read inside the
+lock so a caller that lost the race reuses the winner's token.
+`ChasterProviderObservationService` previously contained its own copy
+of this refresh logic; it now delegates to the same manager (its
+`FetchObservationOutcome` values are unchanged, and a 401 is now also
+refreshed-and-retried there). The emergency-unlock plane does **not**
+use the manager and its behaviour is deliberately unchanged.
+
+**`chaster connect`** no longer blocks an already-connected user: it
+issues a fresh single-use authorization link (mentioning the current
+connection status). The existing connection is left untouched until
+the callback succeeds and replaces it atomically
+(`create_or_replace` upserts, resetting the status to `active`), so an
+abandoned link cannot destroy a working connection.
+
+**`chaster disconnect`** is deterministic (never reaches
+`ConversationEngine`) and **local-only**: no Chaster token-revocation
+endpoint has been confirmed, so none is called and the reply says "This
+does not notify Chaster". In one transaction
+`ChasterConnectionRepository.delete()` removes the user's provider
+observations (they `REFERENCE` the connection with foreign keys
+enforced, so the connection row cannot be deleted while they exist —
+this is the single deliberate exception to that table's append-only
+rule), any pending OAuth state (an outstanding link stops working), and
+the connection. It returns whether a connection existed. Replies: green
+"Chaster Disconnected", or blue "Nothing to Disconnect". `lock_state`
+is never touched. Note that after disconnecting, the bot holds no
+token for that user, so nothing that needs one (status, observations,
+the emergency-unlock plane's live discovery) can act for them until
+they reconnect.
+
 ## What is NOT implemented
 
 - **CHASTER-01B Increment 4** — a conversation-engine context
@@ -184,7 +258,6 @@ completely unaffected by this addition.
 - Any change to `lock_state`'s user-reported model or `task_runtime`'s
   eligibility logic — both completely untouched, confirmed by direct
   inspection every time CHASTER-01B work has touched anything nearby.
-- `chaster disconnect` command.
 - A command reading a *persisted* `chaster_provider_observations` row
   — that remains part of, or downstream of, Increment 4 specifically.
   (`chaster status`, below, is a separate, independent path — a live
@@ -265,8 +338,8 @@ piece is missing:
 
 - **Milestone A** (pure local, mocked Chaster HTTP): `tests/chaster/`
   — fully exercised, no domain/Cloudflare/real Chaster application
-  needed. 270 tests across this package alone as of the `chaster
-  status` command slice.
+  needed. 326 tests across this package alone as of the self-healing
+  tokens / `chaster disconnect` slice (1744 repository-wide).
 - **Milestone B** (real local listener, no Cloudflare):
   `tests/chaster/test_callback_listener.py`,
   `tests/bot/test_chaster_listener_lifecycle.py` — a real `aiohttp`

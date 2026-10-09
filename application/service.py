@@ -44,7 +44,12 @@ from application.user_service import UserService
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
 from chaster.oauth_client import ChasterOAuthClient
 from chaster.lock_client import ChasterLockApiError, ChasterLockClient
-from chaster.token_encryptor import TokenDecryptionError
+from chaster.token_manager import (
+    ChasterNotConnectedError,
+    ChasterReauthorizationRequiredError,
+    ChasterRefreshUnavailableError,
+    ChasterTokenManager,
+)
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import parse_iso
@@ -79,6 +84,7 @@ class ApplicationService:
         task_catalog: TaskCatalog | None = None,
         chaster_connections: ChasterConnectionRepository | None = None,
         chaster_oauth_client: ChasterOAuthClient | None = None,
+        chaster_token_manager: ChasterTokenManager | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -119,6 +125,12 @@ class ApplicationService:
         self.chaster_states = ChasterOAuthStateRepository(self.db_path, core=self._core)
         self.chaster_connections = chaster_connections
         self.chaster_oauth_client = chaster_oauth_client
+        # Self-healing token handling (refresh before expiry, refresh +
+        # retry once on HTTP 401). Only constructible when both the
+        # connection store and the OAuth client exist.
+        if chaster_token_manager is None and chaster_connections is not None and chaster_oauth_client is not None:
+            chaster_token_manager = ChasterTokenManager(connections=chaster_connections, oauth_client=chaster_oauth_client)
+        self.chaster_token_manager = chaster_token_manager
         # ChasterLockClient needs no credentials/config to construct
         # (just the two confirmed endpoints) -- always available,
         # unlike chaster_oauth_client above, matching lock_state's own
@@ -237,6 +249,7 @@ class ApplicationService:
 
         self.router.register("chaster connect", "Connect your Chaster account", self._handle_chaster_connect)
         self.router.register("chaster status", "Check your Chaster lock status", self._handle_chaster_status)
+        self.router.register("chaster disconnect", "Remove your Chaster connection from this bot", self._handle_chaster_disconnect)
         self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
@@ -542,11 +555,6 @@ class ApplicationService:
             return OutgoingMessage(text="Chaster integration is not configured on this bot.")
 
         existing = self.chaster_connections.get(ctx.user.id)
-        if existing is not None:
-            return OutgoingMessage(
-                text=f"You already have a Chaster connection (status: {existing.connection_status.value}). "
-                     f"Reconnecting is not yet supported in this slice."
-            )
 
         # Replaces (never accumulates) any earlier still-pending state
         # for this user -- the chaster_oauth_states table's own
@@ -555,8 +563,18 @@ class ApplicationService:
         # immediately dead the moment this runs again.
         state = self.chaster_states.create_or_replace(user_id=ctx.user.id, now=ctx.now)
         url = self.chaster_oauth_client.build_authorization_url(state=state)
+        # A user who is already connected (typically because the
+        # connection expired or was revoked) is never blocked: they get
+        # a fresh link. The existing connection is left untouched until
+        # the callback succeeds and atomically replaces it, so an
+        # abandoned link cannot destroy a working connection.
+        intro = (
+            f"You already have a Chaster connection (status: {existing.connection_status.value}). "
+            f"Use this fresh link to re-link your account: {url}"
+            if existing is not None else f"Connect your Chaster account: {url}"
+        )
         return OutgoingMessage(
-            text=f"Connect your Chaster account: {url}\n\n"
+            text=f"{intro}\n\n"
                  f"This link is single-use and expires in 10 minutes. If you run `chaster connect` "
                  f"again before finishing, this link will stop working."
         )
@@ -572,12 +590,19 @@ class ApplicationService:
         mapped to any kind of pass/fail decision -- this handler only
         displays what Chaster reports, it never gates or decides
         anything from it)."""
-        if self.chaster_connections is None:
+        if self.chaster_token_manager is None:
             return OutgoingMessage(text="Chaster integration is not configured on this bot.")
 
+        # Self-healing: the manager refreshes an expired token before the
+        # call, and on an HTTP 401 refreshes once and retries once. Only
+        # a refresh token Chaster definitively rejects ends in the
+        # reconnect prompt below.
         try:
-            access_token = self.chaster_connections.get_decrypted_access_token(ctx.user.id, now=ctx.now)
-        except (LookupError, TokenDecryptionError):
+            locks = self.chaster_token_manager.call_with_token(
+                ctx.user.id, now=ctx.now,
+                operation=lambda token: self.chaster_lock_client.list_active_locks(access_token=token),
+            )
+        except ChasterNotConnectedError:
             return OutgoingMessage(
                 text="Chaster Account Not Connected. Use `chaster connect` to link your account.",
                 embed=EmbedSpec(
@@ -586,9 +611,27 @@ class ApplicationService:
                     color="red",
                 ),
             )
-
-        try:
-            locks = self.chaster_lock_client.list_active_locks(access_token=access_token)
+        except ChasterReauthorizationRequiredError:
+            return OutgoingMessage(
+                text="Chaster Reconnection Required. Your Chaster authorization has expired or was revoked. "
+                     "Run `chaster connect` to get a fresh link.",
+                embed=EmbedSpec(
+                    title="Chaster Reconnection Required",
+                    description="Your Chaster authorization has expired or was revoked and could not be "
+                                "renewed automatically. Run `chaster connect` to get a fresh link.",
+                    color="red",
+                ),
+            )
+        except ChasterRefreshUnavailableError:
+            return OutgoingMessage(
+                text="Chaster Temporarily Unavailable. Your connection is intact; please try again shortly.",
+                embed=EmbedSpec(
+                    title="Chaster Temporarily Unavailable",
+                    description="Chaster could not be reached to renew your access. Your connection is "
+                                "intact; please try again shortly.",
+                    color="red",
+                ),
+            )
         except ChasterLockApiError as exc:
             return OutgoingMessage(
                 text=f"Chaster API Error: {exc}",
@@ -655,8 +698,37 @@ class ApplicationService:
         hours, minutes = divmod(rem_minutes, 60)
         return f"{days}d {hours}h {minutes}m"
 
+    def _handle_chaster_disconnect(self, ctx: RequestContext) -> OutgoingMessage:
+        """Deterministic local disconnect. Removes this bot's stored
+        Chaster tokens and observation history for the user. It does
+        NOT call Chaster: no token-revocation endpoint is confirmed to
+        exist, so none is guessed at, and the reply says so plainly."""
+        if self.chaster_connections is None:
+            return OutgoingMessage(text="Chaster integration is not configured on this bot.")
+
+        if not self.chaster_connections.delete(ctx.user.id):
+            return OutgoingMessage(
+                text="You have no Chaster connection to remove.",
+                embed=EmbedSpec(
+                    title="Nothing to Disconnect",
+                    description="You have no Chaster connection. Use `chaster connect` to link your account.",
+                    color="blue",
+                ),
+            )
+        return OutgoingMessage(
+            text="Chaster Disconnected. Your stored Chaster tokens were removed from this bot.",
+            embed=EmbedSpec(
+                title="Chaster Disconnected",
+                description="Your stored Chaster tokens and fetched lock history were removed from this bot. "
+                            "This does not notify Chaster. Use `chaster connect` to link again at any time.",
+                color="green",
+            ),
+        )
+
     def _handle_chaster_invalid(self, ctx: RequestContext) -> OutgoingMessage:
-        return OutgoingMessage(text="That's not a recognized `chaster` command. Try `chaster connect`.")
+        return OutgoingMessage(
+            text="That's not a recognized `chaster` command. Try `chaster connect`, `chaster status` or `chaster disconnect`."
+        )
 
     def _present_title(self, title: str | None) -> str:
         """

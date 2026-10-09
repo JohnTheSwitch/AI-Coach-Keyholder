@@ -142,22 +142,53 @@ class TestChasterConnectIdentityBinding:
 
 
 class TestChasterConnectAlreadyConnected:
-    def test_already_connected_gives_a_safe_deterministic_reply(
-        self, configured_service: ApplicationService, core: CoreDatabase,
-    ) -> None:
+    """INTENTIONALLY CHANGED from the CHASTER-01A slice, which refused to
+    issue a link to an already-connected user. A user whose connection
+    expired or was revoked must be able to re-link without any manual
+    database step, so `chaster connect` now always issues a fresh link."""
+
+    @staticmethod
+    def _connect(service: ApplicationService, *, status_needs_reauth: bool = False) -> str:
         from datetime import timedelta
-        _complete_onboarding(configured_service)
-        user = configured_service.user_service.get_or_create_user("discord", "42", now=FIXED_TIME)
-        configured_service.chaster_connections.create_or_replace(
+        user = service.user_service.get_or_create_user("discord", "42", now=FIXED_TIME)
+        service.chaster_connections.create_or_replace(
             user_id=user.id, chaster_account_id="chaster-acc-1", chaster_username="wearer1",
             access_token="at", refresh_token="rt",
             access_token_expires_at=FIXED_TIME + timedelta(minutes=5),
             refresh_token_expires_at=FIXED_TIME + timedelta(minutes=30),
             granted_scopes=("locks",), now=FIXED_TIME,
         )
+        if status_needs_reauth:
+            service.chaster_connections.mark_needs_reauthorization(user.id, now=FIXED_TIME)
+        return user.id
+
+    def test_already_connected_user_gets_a_fresh_authorization_link(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        self._connect(configured_service)
         result = configured_service.handle_message(_incoming("chaster connect", external_message_id="m1"))
         assert "already have a chaster connection" in result.text.lower()
-        assert "https://sso.chaster.app" not in result.text  # no second authorization URL issued
+        assert "https://sso.chaster.app/auth/realms/app/protocol/openid-connect/auth" in result.text
+        assert "state=" in result.text
+
+    def test_expired_connection_user_gets_a_fresh_link_mentioning_the_status(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        self._connect(configured_service, status_needs_reauth=True)
+        result = configured_service.handle_message(_incoming("chaster connect", external_message_id="m1"))
+        assert "needs_reauthorization" in result.text
+        assert "state=" in result.text
+
+    def test_relink_does_not_delete_the_existing_connection_before_the_callback(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        user_id = self._connect(configured_service)
+        configured_service.handle_message(_incoming("chaster connect", external_message_id="m1"))
+        assert configured_service.chaster_connections.get(user_id) is not None
+
+    def test_relink_issues_a_new_state_each_time_for_a_connected_user(self, configured_service: ApplicationService) -> None:
+        _complete_onboarding(configured_service)
+        self._connect(configured_service)
+        first = configured_service.handle_message(_incoming("chaster connect", external_message_id="m1"))
+        second = configured_service.handle_message(_incoming("chaster connect", external_message_id="m2"))
+        assert first.text.split("state=")[1].split()[0] != second.text.split("state=")[1].split()[0]
 
 
 class TestChasterNotConfigured:

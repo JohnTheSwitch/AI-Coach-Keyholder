@@ -47,7 +47,19 @@ class ChasterTokenExchangeError(RuntimeError):
     -- a non-2xx response, a malformed response body, or a network
     error. The message NEVER includes the authorization code, any
     token value, or the client secret -- only the HTTP status code
-    (if any) and a short, generic description."""
+    (if any) and a short, generic description.
+
+    `transient=True` marks a failure that says nothing about whether
+    the credentials themselves are valid (a network error, HTTP 429,
+    or a 5xx) -- a caller must NOT treat it as a revoked/expired
+    refresh token. The default (False) is the conservative reading: a
+    definitive rejection, an unparseable reply, or a code-exchange
+    failure."""
+
+    def __init__(self, message: str, *, status_code: int | None = None, transient: bool = False) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.transient = transient
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -175,11 +187,15 @@ class ChasterOAuthClient:
                 timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
             )
         except requests.RequestException as exc:
-            raise ChasterTokenExchangeError("Network error contacting Chaster's token endpoint.") from exc
+            raise ChasterTokenExchangeError(
+                "Network error contacting Chaster's token endpoint.", transient=True,
+            ) from exc
 
         if response.status_code != 200:
+            status = response.status_code
             raise ChasterTokenExchangeError(
-                f"Chaster's token endpoint returned HTTP {response.status_code} for a refresh attempt."
+                f"Chaster's token endpoint returned HTTP {status} for a refresh attempt.",
+                status_code=status, transient=(status == 429 or status >= 500),
             )
 
         try:
