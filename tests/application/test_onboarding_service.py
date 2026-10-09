@@ -93,14 +93,28 @@ class TestStepProgression:
         result = service.process_message(preferences, "1", now=FIXED_TIME)
         assert result.preferences.identity_id == "sophia"  # first Female entry in the catalog
 
-    def test_localized_name_is_accepted_when_language_is_czech(self, service: OnboardingService, core: CoreDatabase) -> None:
+    def test_localized_name_is_still_accepted_for_a_legacy_czech_preference(self, service: OnboardingService, core: CoreDatabase) -> None:
+        # Czech is no longer offered during onboarding, but accounts that
+        # stored "cs" earlier keep working: their localized name is accepted.
         _seed_user(core, "u1")
         preferences, _ = service.get_or_create_preferences("u1", now=FIXED_TIME)
-        preferences = service.process_message(preferences, "cs", now=FIXED_TIME).preferences
+        preferences = service._advance(
+            preferences, from_step=OnboardingStep.LANGUAGE, to_step=OnboardingStep.AI_GENDER,
+            column="language", value="cs", now=FIXED_TIME,
+        )
         preferences = service.process_message(preferences, "female", now=FIXED_TIME).preferences
         result = service.process_message(preferences, "Sofie", now=FIXED_TIME)
         assert result.preferences.identity_id == "sophia"
         assert "Sofie" in result.reply.text  # localized name used in the confirmation, not "Sophia"
+
+
+class TestOnlyEnglishIsOffered:
+    def test_the_language_prompt_offers_english_only_and_czech_is_not_recognised(self, service: OnboardingService, core: CoreDatabase) -> None:
+        _seed_user(core, "u1")
+        preferences, _ = service.get_or_create_preferences("u1", now=FIXED_TIME)
+        assert "English" in service.prompt_for(preferences).text and "2)" not in service.prompt_for(preferences).text
+        result = service.process_message(preferences, "cs", now=FIXED_TIME)
+        assert result.preferences.onboarding_step == OnboardingStep.LANGUAGE and result.preferences.language is None
 
 
 class TestInvalidAnswers:

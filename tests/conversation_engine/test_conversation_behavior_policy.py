@@ -44,14 +44,16 @@ def _system_text() -> str:
 
 
 class TestExactCommandVocabulary:
-    def test_all_eight_commands_are_present_verbatim(self) -> None:
+    def test_no_command_appears_in_the_prompt(self) -> None:
+        """Commands are banned from the model's vocabulary entirely (the
+        registered commands still exist and still work when typed)."""
         system_text = _system_text()
         for command in _KNOWN_COMMANDS:
-            assert f"`{command}`" in system_text, f"missing exact command: {command}"
+            assert f"`{command}`" not in system_text, f"command leaked into the prompt: {command}"
 
-    def test_states_the_vocabulary_is_exhaustive(self) -> None:
-        system_text = _system_text().lower()
-        assert "never invent" in system_text or "only commands that exist" in system_text
+    def test_states_that_commands_must_never_be_mentioned(self) -> None:
+        system_text = _system_text()
+        assert "NEVER mention, suggest or write any command" in system_text
 
 
 class TestAuthoritativeStateBehavioralRule:
@@ -67,8 +69,8 @@ class TestAuthoritativeStateBehavioralRule:
 class TestUnknownEpistemicProtection:
     def test_unknown_never_implies_unlocked(self) -> None:
         system_text = _system_text().lower()
-        assert "unknown" in system_text
-        assert "never infer the user is unlocked" in system_text
+        assert "no report is recorded" in system_text
+        assert "never assume the user is unlocked" in system_text
 
 
 class TestUserReportedNotPhysicallyVerifiedProtection:
@@ -94,7 +96,7 @@ class TestConversationalAcknowledgementIsNotAStateTransition:
 class TestUserControlsCommandInvocation:
     def test_does_not_imply_completion_is_warranted_merely_because_model_believes_it(self) -> None:
         system_text = _system_text().lower()
-        assert "user decides" in system_text or "user controls" in system_text
+        assert "never performs any change" in system_text and "only the application itself does" in system_text
 
 
 class TestNoTaskContentHallucination:

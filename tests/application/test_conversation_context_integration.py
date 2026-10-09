@@ -115,7 +115,7 @@ class TestOrdinaryConversationReceivesAuthoritativeContext:
         service.handle_message(_incoming("how am I doing?", external_message_id="m1"))
         assert len(model.calls) == 1
         system_text = model.calls[0].messages[0].content
-        assert "locked_user_reported" in system_text or "Lock: locked_user_reported" in system_text
+        assert "the user reported being locked" in system_text
 
     def test_active_task_context_reaches_the_model(self, core: CoreDatabase) -> None:
         model = _RecordingModel()
@@ -156,7 +156,7 @@ class TestWorkingMemoryDoesNotOverrideAuthoritativeState:
         service.handle_message(_incoming("what's my status?", external_message_id="m2"))
 
         system_text = model.calls[-1].messages[0].content
-        assert "locked_user_reported" in system_text
+        assert "the user reported being locked" in system_text
         # WM's own earlier "unlocked" text lives only as a role="user"/"assistant" turn, never in the system message:
         wm_turns_text = "".join(m.content for m in model.calls[-1].messages[1:-1])
         # (not asserting absence of the word "unlocked" in WM turns -- it's legitimately there as conversation history;
@@ -179,7 +179,7 @@ class TestPersistenceAcrossRestart:
         service2.handle_message(_incoming("what's going on?", external_user_id="42", external_message_id="m3"))
 
         system_text = model2.calls[0].messages[0].content
-        assert "locked_user_reported" in system_text
+        assert "the user reported being locked" in system_text
         assert "template_id=basic-chore" in system_text
 
 

@@ -284,7 +284,7 @@ class TestAuthoritativeContextRemainsAuthoritative:
         service.handle_message(_incoming("lock report locked", external_message_id="m1"))
         service.handle_message(_incoming("how am I doing?", external_message_id="m2"))
         system_text = model.calls[0].messages[0].content
-        assert "Lock: locked_user_reported" in system_text
+        assert "Lock: the user reported being locked" in system_text
         assert "has not been independently physically verified" in system_text
         assert "identity: Scarlett" in system_text
 
@@ -307,7 +307,7 @@ class TestAuthoritativeContextRemainsAuthoritative:
         service.handle_message(_incoming("hi", external_message_id="m2"))
         scarlett_text = model.calls[0].messages[0].content
         scarlett_domain_section = scarlett_text[scarlett_text.index("AUTHORITATIVE APPLICATION STATE"): scarlett_text.index("PERSONALITY / PRESENTATION")]
-        assert "Lock: locked_user_reported" in scarlett_domain_section
+        assert "Lock: the user reported being locked" in scarlett_domain_section
 
 
 # =============================================================================

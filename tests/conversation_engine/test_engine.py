@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from conversation_engine.guardrails import build_guardrails
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.model_types import LLMGenerationError, ModelGenerationRequest
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
@@ -175,7 +176,7 @@ class TestReadFailurePolicy:
         assert result.text == "ok despite empty history"
         assert len(model.calls) == 1
         contents = [m.content for m in model.calls[0].messages]
-        assert contents == [contents[0], "hi"]  # only system message + current user message -- empty history
+        assert contents == [contents[0], build_guardrails(), "hi"]  # only system message + current user message -- empty history
 
     def test_expected_read_failure_logs_working_memory_read_failed(self, caplog: pytest.LogCaptureFixture) -> None:
         engine = _engine(_FakeModel(response="ok"), reader=_FailingReader(WorkingMemoryError("boom")))

@@ -78,7 +78,7 @@ class TestSectionPresenceAndContent:
         )
         system_text = request.messages[0].content
         assert "AUTHORITATIVE APPLICATION STATE" in system_text
-        assert "Lock: unknown" in system_text
+        assert "Lock: no report from the user is recorded" in system_text
 
     def test_active_task_fragment_is_rendered(self) -> None:
         request = build_generation_request(

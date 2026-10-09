@@ -128,7 +128,7 @@ class TestNotConfigured:
         _complete_onboarding(unconfigured_service)
         result = unconfigured_service.handle_message(_incoming("chaster status", external_message_id="m1"))
         assert "not configured" in result.text.lower()
-        assert result.embed is None
+        assert result.embed is not None and result.embed.title == "Chaster Not Configured" and result.embed.color == "red"
 
 
 class TestNotConnected:

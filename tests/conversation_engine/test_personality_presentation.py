@@ -232,7 +232,7 @@ class TestAuthoritativeStateBeatsPersonality:
         explicit epistemic caveat, with Scarlett's real (high-teasing,
         high-assertiveness) profile in play."""
         system_text = _request(context_fragments={"lock_state": _lock_fragment(status="locked_user_reported")}).messages[0].content
-        assert "Lock: locked_user_reported" in system_text
+        assert "Lock: the user reported being locked" in system_text
         assert "has not been independently physically verified" in system_text
         # The personality block itself never mentions lock state at all --
         # confirming personality data and domain-state data occupy
@@ -252,7 +252,7 @@ class TestAuthoritativeStateBeatsPersonality:
         active, the exact required epistemic-caution wording from the
         category instructions is still present, unmodified."""
         system_text = _request(context_fragments={"lock_state": _lock_fragment(status="unknown", note="No current user-reported lock state is recorded.")}).messages[0].content
-        assert "never infer the user is unlocked" in system_text
+        assert "never assume the user is unlocked" in system_text
 
 
 # =============================================================================

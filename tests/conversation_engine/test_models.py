@@ -180,6 +180,10 @@ class TestResponseContextSnapshot:
 class TestConversationResponse:
     def test_has_no_field_expressing_a_domain_write(self) -> None:
         """Structural proof, not just a docstring claim -- the field
-        set is exactly {text, response_category}, nothing write-shaped."""
+        set is exactly {text, response_category, tool_outputs}, nothing
+        write-shaped. INTENTIONALLY EXTENDED for read-only tool calling:
+        `tool_outputs` records what a read-only tool READ (default
+        empty); it is not, and cannot express, a write request."""
         field_names = {f.name for f in dataclasses.fields(ConversationResponse)}
-        assert field_names == {"text", "response_category"}
+        assert field_names == {"text", "response_category", "tool_outputs"}
+        assert ConversationResponse(text="x", response_category=ResponseCategory.COACHING_DIALOGUE).tool_outputs == ()
