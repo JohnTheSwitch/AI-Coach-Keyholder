@@ -108,6 +108,12 @@ class Config:
     # path:
     chaster_emergency_unlock_secret: str | None = None
 
+    # Lets the LLM call the read-only `get_chaster_status` tool
+    # (conversation_engine/tools.py, chaster/llm_tools.py). OFF by
+    # default: it needs an Ollama model that supports tool calling, and
+    # puts provider-reported Chaster data in front of the model.
+    chaster_llm_tools_enabled: bool = False
+
     # General
     log_level: str = "INFO"
     quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
@@ -154,6 +160,7 @@ class Config:
             chaster_emergency_bind_host=get("CHASTER_EMERGENCY_BIND_HOST", "127.0.0.1") or "127.0.0.1",
             chaster_emergency_bind_port=int(get("CHASTER_EMERGENCY_BIND_PORT", "8421") or "8421"),
             chaster_emergency_unlock_secret=get("CHASTER_EMERGENCY_UNLOCK_SECRET"),
+            chaster_llm_tools_enabled=(get("CHASTER_LLM_TOOLS_ENABLED", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),

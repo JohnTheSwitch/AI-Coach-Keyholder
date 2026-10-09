@@ -26,6 +26,8 @@ __all__ = [
     "ResponseContextSnapshot",
     "ToolCallRequest",
     "ToolResult",
+    "ToolExecutionResult",
+    "MAX_TOOL_RESULT_CHARACTERS",
     "ResponsePlan",
     "ConversationResponse",
     "UnknownIdentityError",
@@ -202,19 +204,52 @@ class ResponseContextSnapshot:
 
 @dataclass(frozen=True, kw_only=True)
 class ToolCallRequest:
-    """Design sketch only (conversation_engine_technical_design.md
-    Section 11) -- no production code in this slice ever constructs
-    one. Tool calling is not approved for implementation."""
+    """A model-initiated request to run one read-only tool
+    (conversation_engine_technical_design.md Section 11). Constructed
+    only by a tool-capable ConversationModel adapter from the model's
+    own reply; executed by ConversationEngine through an injected
+    ToolExecutor, never planned in advance (ResponsePlan.tool_calls
+    stays empty). Tool calling was approved for READ-ONLY tools only."""
     tool_name: str
     parameters: Mapping[str, Any]
 
 
 @dataclass(frozen=True, kw_only=True)
 class ToolResult:
-    """Design sketch only -- see ToolCallRequest."""
+    """Design sketch only (superseded by ToolExecutionResult below,
+    which is what the engine actually uses)."""
     tool_name: str
     outcome: Any
     error: str | None = None
+
+
+MAX_TOOL_RESULT_CHARACTERS = 4000
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolExecutionResult:
+    """What a ToolExecutor returns for one call.
+
+    `content` is the ONLY field the model ever sees (bounded text,
+    treated as untrusted DATA by the prompt guidance). `data` is an
+    opaque, application-layer payload the engine passes through
+    untouched and never inspects -- it lets ApplicationService attach a
+    deterministic rich presentation (e.g. an embed) built from the real
+    tool output rather than from anything the model wrote. `ok=False`
+    means the tool could not produce its normal result; the model is
+    still given `content` so it can explain the situation honestly."""
+    tool_name: str
+    ok: bool
+    content: str
+    data: object | None = None
+
+    def __post_init__(self) -> None:
+        if not self.tool_name or not self.tool_name.strip():
+            raise ValueError("tool_name must be a non-empty string.")
+        if not self.content or not self.content.strip():
+            raise ValueError("content must be a non-empty string.")
+        if len(self.content) > MAX_TOOL_RESULT_CHARACTERS:
+            raise ValueError(f"content must be at most {MAX_TOOL_RESULT_CHARACTERS} characters.")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -240,6 +275,10 @@ class ResponsePlan:
 class ConversationResponse:
     """Pipeline stage 7's own output. No field here can express a
     domain write -- validation.py checks this shape structurally, not
-    merely by convention."""
+    merely by convention. `tool_outputs` records the read-only tool
+    results (if any) the reply was generated from, so the application
+    layer can attach a deterministic presentation; it is data about what
+    was READ, never an instruction to change anything."""
     text: str
     response_category: ResponseCategory
+    tool_outputs: tuple[ToolExecutionResult, ...] = ()

@@ -39,9 +39,12 @@ from application.models import EmbedSpec, IncomingMessage
 from application.service import ApplicationService
 from chaster.callback_listener import ChasterCallbackListener
 from chaster.callback_service import ChasterCallbackService, build_real_identity_resolver
+from chaster.llm_tools import ChasterToolExecutor
+from chaster.lock_client import ChasterLockClient
 from chaster.oauth_client import ChasterOAuthClient
 from chaster.repository import ChasterConnectionRepository
 from chaster.token_encryptor import TokenEncryptor, TokenEncryptorConfigurationError
+from chaster.token_manager import ChasterTokenManager
 from conversation_engine.context_providers.active_task_provider import ActiveTaskContextProvider
 from conversation_engine.context_providers.lock_state_provider import LockStateContextProvider
 from conversation_engine.engine import ConversationEngine
@@ -302,11 +305,6 @@ def main() -> None:
         ActiveTaskContextProvider(task_runtime=task_runtime, task_catalog=task_catalog),
     )
 
-    conversation_engine = ConversationEngine(
-        model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
-        queue=conversation_queue, providers=context_providers,
-    )
-
     # CHASTER-01A: TokenEncryptor/OAuth client are genuinely optional --
     # constructed only if fully configured; a missing/invalid key or
     # incomplete client config disables Chaster (chaster connect
@@ -326,10 +324,39 @@ def main() -> None:
             redirect_uri=config.chaster_redirect_uri,
         )
 
+    # ONE ChasterTokenManager (and one ChasterLockClient) shared by
+    # `chaster status` and the LLM tool, so refreshes are serialised by
+    # the same per-user lock. The read-only Chaster tool is attached
+    # only when explicitly enabled AND Chaster is fully configured.
+    chaster_token_manager = None
+    chaster_lock_client = ChasterLockClient()
+    tool_executor = None
+    if chaster_connections is not None and chaster_oauth_client is not None:
+        chaster_token_manager = ChasterTokenManager(connections=chaster_connections, oauth_client=chaster_oauth_client)
+        if config.chaster_llm_tools_enabled:
+            tool_executor = ChasterToolExecutor(token_manager=chaster_token_manager, lock_client=chaster_lock_client)
+            logger.info("Chaster LLM tool enabled (read-only get_chaster_status).")
+    if config.chaster_llm_tools_enabled and tool_executor is None:
+        # Loud, because the failure mode is otherwise silent: every
+        # message goes to the plain model path and no embed is built.
+        logger.warning(
+            "CHASTER_LLM_TOOLS_ENABLED is true but the Chaster tool is NOT active: Chaster is not fully "
+            "configured (needs CHASTER_TOKEN_ENCRYPTION_KEY, CHASTER_CLIENT_ID, CHASTER_CLIENT_SECRET "
+            "and CHASTER_REDIRECT_URI). Lock questions will go to the plain model path.",
+        )
+    elif not config.chaster_llm_tools_enabled:
+        logger.info("Chaster LLM tool disabled (set CHASTER_LLM_TOOLS_ENABLED=true to enable).")
+
+    conversation_engine = ConversationEngine(
+        model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
+        queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
+    )
+
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
         chaster_connections=chaster_connections, chaster_oauth_client=chaster_oauth_client,
+        chaster_token_manager=chaster_token_manager,
     )
     bot = build_bot(config, db, clock, application_service)
     bot.run(config.discord_token, log_handler=None)
