@@ -19,7 +19,7 @@ this layer's to call).
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ai.identity_catalog import get_identity
@@ -34,7 +34,7 @@ from advanced_mode.models import (
     OperatingMode,
 )
 from advanced_mode.repository import AdvancedMode, AdvancedModeAdministration
-from application.models import IncomingMessage, OutgoingMessage
+from application.models import EmbedField, EmbedSpec, IncomingMessage, OutgoingMessage
 from application.onboarding_service import OnboardingService
 from application.router import CommandRouter, RequestContext
 from conversation_engine.engine import ConversationEngine
@@ -43,8 +43,11 @@ from conversation_engine.models import UnknownIdentityError
 from application.user_service import UserService
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
 from chaster.oauth_client import ChasterOAuthClient
+from chaster.lock_client import ChasterLockApiError, ChasterLockClient
+from chaster.token_encryptor import TokenDecryptionError
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.time_format import parse_iso
 from lock_state.models import LockKnowledgeState, LockReportStatus
 from lock_state.repository import LockState, LockStateAdministration
 from penalty_engine.repository import PenaltyEngine
@@ -116,6 +119,12 @@ class ApplicationService:
         self.chaster_states = ChasterOAuthStateRepository(self.db_path, core=self._core)
         self.chaster_connections = chaster_connections
         self.chaster_oauth_client = chaster_oauth_client
+        # ChasterLockClient needs no credentials/config to construct
+        # (just the two confirmed endpoints) -- always available,
+        # unlike chaster_oauth_client above, matching lock_state's own
+        # self-construction pattern rather than chaster_oauth_client's
+        # genuinely-optional one.
+        self.chaster_lock_client = ChasterLockClient()
 
         self.router = CommandRouter()
         self._register_commands()
@@ -227,6 +236,7 @@ class ApplicationService:
         self.router.register_family("task", invalid_handler=self._handle_task_invalid)
 
         self.router.register("chaster connect", "Connect your Chaster account", self._handle_chaster_connect)
+        self.router.register("chaster status", "Check your Chaster lock status", self._handle_chaster_status)
         self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
@@ -550,6 +560,100 @@ class ApplicationService:
                  f"This link is single-use and expires in 10 minutes. If you run `chaster connect` "
                  f"again before finishing, this link will stop working."
         )
+
+    def _handle_chaster_status(self, ctx: RequestContext) -> OutgoingMessage:
+        """Deterministic -- never reaches ConversationEngine. Read-only:
+        makes exactly one real Chaster call (list_active_locks), never
+        a write/unlock endpoint. `chaster_lock_id`/status/title values
+        are the real, confirmed LockForWearer top-level fields (see
+        docs/architecture/chaster_integration_technical_design.md's own
+        diagnostic history) -- shown as-is, never interpreted beyond
+        display (e.g. `status`'s raw string is shown directly, never
+        mapped to any kind of pass/fail decision -- this handler only
+        displays what Chaster reports, it never gates or decides
+        anything from it)."""
+        if self.chaster_connections is None:
+            return OutgoingMessage(text="Chaster integration is not configured on this bot.")
+
+        try:
+            access_token = self.chaster_connections.get_decrypted_access_token(ctx.user.id, now=ctx.now)
+        except (LookupError, TokenDecryptionError):
+            return OutgoingMessage(
+                text="Chaster Account Not Connected. Use `chaster connect` to link your account.",
+                embed=EmbedSpec(
+                    title="Chaster Account Not Connected",
+                    description="Use `chaster connect` to link your Chaster account.",
+                    color="red",
+                ),
+            )
+
+        try:
+            locks = self.chaster_lock_client.list_active_locks(access_token=access_token)
+        except ChasterLockApiError as exc:
+            return OutgoingMessage(
+                text=f"Chaster API Error: {exc}",
+                embed=EmbedSpec(title="Chaster API Error", description=str(exc), color="red"),
+            )
+
+        if not locks:
+            return OutgoingMessage(
+                text="You currently have no active locks.",
+                embed=EmbedSpec(title="\U0001f512 Chaster Status", description="You currently have no active locks.", color="blue"),
+            )
+
+        fields = tuple(
+            EmbedField(
+                name=f"\U0001f512 {self._chaster_lock_title(lock)}",
+                value=f"**Status:** {self._chaster_lock_status_text(lock)}\n**Time Remaining:** {self._chaster_lock_time_remaining(lock, now=ctx.now)}",
+            )
+            for lock in locks
+        )
+        return OutgoingMessage(
+            text=f"Active Locks ({len(locks)})",
+            embed=EmbedSpec(title=f"\U0001f512 Active Locks ({len(locks)})", color="green", fields=fields),
+        )
+
+    @staticmethod
+    def _chaster_lock_title(lock: dict) -> str:
+        title = lock.get("title")
+        return title if isinstance(title, str) and title.strip() else "(untitled)"
+
+    @staticmethod
+    def _chaster_lock_status_text(lock: dict) -> str:
+        """Shows the real, raw status string exactly as Chaster
+        reported it -- never interpreted/mapped to an enum. This
+        project has confirmed `status`'s real field NAME and TYPE
+        (str) from a real response, but never confirmed every real
+        VALUE always matches a specific documented set -- displaying
+        the raw string as-is sidesteps that gap entirely, since no
+        decision is being made from it here, only a display."""
+        status = lock.get("status")
+        return status if isinstance(status, str) and status.strip() else "unknown"
+
+    @staticmethod
+    def _chaster_lock_time_remaining(lock: dict, *, now: datetime) -> str:
+        """`endDate` is the real, confirmed top-level field this
+        project has evidence for (NOT `endAt`, which has never been
+        confirmed present in a real response -- not used here).
+        Missing, non-string, or unparseable values all fall back to
+        "Unlimited / Permanent" rather than raising -- a formatting
+        detail is not a reason to fail the whole status reply."""
+        raw_end_date = lock.get("endDate")
+        if not isinstance(raw_end_date, str) or not raw_end_date.strip():
+            return "Unlimited / Permanent"
+        try:
+            end_date = parse_iso(raw_end_date)
+        except ValueError:
+            return "Unlimited / Permanent"
+
+        remaining = end_date - now
+        if remaining.total_seconds() <= 0:
+            return "Expired"
+
+        total_minutes = int(remaining.total_seconds() // 60)
+        days, rem_minutes = divmod(total_minutes, 24 * 60)
+        hours, minutes = divmod(rem_minutes, 60)
+        return f"{days}d {hours}h {minutes}m"
 
     def _handle_chaster_invalid(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text="That's not a recognized `chaster` command. Try `chaster connect`.")

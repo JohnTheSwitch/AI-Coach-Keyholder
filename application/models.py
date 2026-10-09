@@ -41,10 +41,41 @@ class IncomingMessage:
 
 
 @dataclass(frozen=True, kw_only=True)
+class EmbedField:
+    """One name/value field within an EmbedSpec. Channel-agnostic --
+    maps to whatever rich-field concept (if any) an adapter's own
+    channel supports."""
+    name: str
+    value: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class EmbedSpec:
+    """A plain, channel-agnostic description of a rich/structured
+    reply -- NOT a `discord.Embed` (this module imports no channel
+    package, deliberately, per its own header docstring). `color` is
+    one of a small fixed set of semantic names ("red", "blue",
+    "green") rather than a raw hex code or a Discord-specific color
+    object -- an adapter maps the name to whatever its own channel
+    expects (bot/discord_bot.py maps these to `discord.Color.red()`
+    etc.). A channel with no rich-message concept at all can simply
+    ignore this and fall back to `OutgoingMessage.text`."""
+    title: str
+    description: str | None = None
+    color: str = "blue"
+    fields: tuple[EmbedField, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
 class OutgoingMessage:
     """What ApplicationService.handle_message() returns -- an adapter
-    sends `.text` however its channel sends text."""
+    sends `.text` however its channel sends text. `embed`, when
+    present, is an optional, richer, channel-agnostic alternative
+    rendering an adapter MAY use instead of (or alongside) `.text` --
+    `.text` is always populated too (never embed-only), so an adapter
+    with no embed support can always fall back to it safely."""
     text: str
+    embed: EmbedSpec | None = None
 
 
 @dataclass(kw_only=True)

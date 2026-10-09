@@ -35,7 +35,7 @@ import uuid
 
 import discord
 
-from application.models import IncomingMessage
+from application.models import EmbedSpec, IncomingMessage
 from application.service import ApplicationService
 from chaster.callback_listener import ChasterCallbackListener
 from chaster.callback_service import ChasterCallbackService, build_real_identity_resolver
@@ -59,6 +59,21 @@ from infrastructure.database import Database as CoreDatabase
 from system.startup import StartupLeaseNotAcquired, on_system_startup
 
 logger = logging.getLogger("ai_coach_keyholder.bot")
+
+_EMBED_COLOR_BY_NAME = {"red": discord.Color.red(), "blue": discord.Color.blue(), "green": discord.Color.green()}
+
+
+def _build_discord_embed(spec: EmbedSpec) -> discord.Embed:
+    """Translates a channel-agnostic EmbedSpec (application/models.py)
+    into a real discord.Embed -- the only place in this project that
+    does so; application/ itself never imports discord, per its own
+    header docstring. An unrecognized color name falls back to the
+    default embed color rather than raising -- a cosmetic detail is
+    not a reason to fail an otherwise-valid reply."""
+    embed = discord.Embed(title=spec.title, description=spec.description, color=_EMBED_COLOR_BY_NAME.get(spec.color))
+    for f in spec.fields:
+        embed.add_field(name=f.name, value=f.value, inline=False)
+    return embed
 
 
 class CoachKeyholderBot(discord.Client):
@@ -168,9 +183,11 @@ class CoachKeyholderBot(discord.Client):
             # infrastructure/database.py's own thread-local guard).
             outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
+            reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
         except Exception:
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
             reply_text = "Something went wrong handling that. It's been logged."
+            reply_embed = None
 
         # Whatever state this reply reflects (including any onboarding
         # step transition) was already written by handle_message()
@@ -184,7 +201,15 @@ class CoachKeyholderBot(discord.Client):
         # never crashes the bot" posture this file already applies to
         # audit logging.
         try:
-            sent = await message.channel.send(reply_text)
+            # When an embed is present, it carries the full reply --
+            # .text is still always populated on OutgoingMessage (see
+            # its own docstring) but is not sent as separate plain
+            # content alongside the embed, to avoid a duplicated
+            # message body.
+            if reply_embed is not None:
+                sent = await message.channel.send(embed=reply_embed)
+            else:
+                sent = await message.channel.send(reply_text)
         except Exception:
             logger.exception("Failed to send a reply to user_id=%s -- persisted state is unaffected.", message.author.id)
             return

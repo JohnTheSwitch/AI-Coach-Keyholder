@@ -135,6 +135,44 @@ Section 15 ("Conflict with user-reported state").
     matches the documented enum — an unexpected value is an honest
     parse failure, never guessed at or coerced to a default.
 
+## What is implemented — `chaster status` command
+
+A deterministic Discord command (never reaches `ConversationEngine`)
+that shows the connected user's active locks. Read-only — makes
+exactly one real Chaster call (`ChasterLockClient.list_active_locks()`),
+never a write/unlock endpoint.
+
+**Structurally independent from `ChasterProviderObservationService`
+(CHASTER-01B Increment 3) and `chaster_provider_observations`** — this
+command fetches live, on the spot, and does not read or write that
+table at all. The two are separate, independent ways of reading live
+Chaster data, not the same mechanism; neither calls the other.
+
+- Not connected (no `chaster_connections` row, or the stored token
+  fails to decrypt): a red "Chaster Account Not Connected" reply
+  pointing at `chaster connect`.
+- Connected, zero active locks: a blue "no active locks" reply.
+- Connected, active locks found: a green reply, one field per lock
+  (`title`, `status`, and a computed "time remaining" — `Xd Yh Zm`,
+  `Expired`, or `Unlimited / Permanent` for a missing/unparseable
+  `endDate`). `status`'s raw string is shown exactly as Chaster
+  reports it — never interpreted into any kind of pass/fail decision,
+  the same display-only discipline `ChasterProviderObservationService`
+  already applies for a different, structural reason.
+- A Chaster API failure (network error or any non-2xx response): a
+  red "Chaster API Error" reply.
+
+**First use of a Discord Embed anywhere in this project.** Rather than
+making this command Discord-specific, `application/models.py` gained a
+small, deliberately channel-agnostic `EmbedSpec`/`EmbedField` pair —
+colors are semantic names (`"red"`/`"blue"`/`"green"`), never a raw
+Discord color object — and `OutgoingMessage.embed` is optional,
+defaulting to `None`. `application/` still imports no channel-specific
+package at all, per its own header docstring; `bot/discord_bot.py::_build_discord_embed()`
+is the only place a real `discord.Embed` is ever constructed, at the
+adapter boundary, and every pre-existing command's plain-text reply is
+completely unaffected by this addition.
+
 ## What is NOT implemented
 
 - **CHASTER-01B Increment 4** — a conversation-engine context
@@ -146,9 +184,11 @@ Section 15 ("Conflict with user-reported state").
 - Any change to `lock_state`'s user-reported model or `task_runtime`'s
   eligibility logic — both completely untouched, confirmed by direct
   inspection every time CHASTER-01B work has touched anything nearby.
-- `chaster disconnect` / `chaster status` commands (no Discord-facing
-  command reads a provider observation yet — that would be part of
-  or downstream of Increment 4).
+- `chaster disconnect` command.
+- A command reading a *persisted* `chaster_provider_observations` row
+  — that remains part of, or downstream of, Increment 4 specifically.
+  (`chaster status`, below, is a separate, independent path — a live
+  fetch, not a read of this table.)
 - Key rotation tooling (`encryption_key_version` is reserved,
   unused, always `NULL`).
 - **`LockForWearer`'s exact field-level JSON schema is now
@@ -225,8 +265,8 @@ piece is missing:
 
 - **Milestone A** (pure local, mocked Chaster HTTP): `tests/chaster/`
   — fully exercised, no domain/Cloudflare/real Chaster application
-  needed. 349 tests across this package alone as of CHASTER-01B
-  Increment 3.
+  needed. 270 tests across this package alone as of the `chaster
+  status` command slice.
 - **Milestone B** (real local listener, no Cloudflare):
   `tests/chaster/test_callback_listener.py`,
   `tests/bot/test_chaster_listener_lifecycle.py` — a real `aiohttp`

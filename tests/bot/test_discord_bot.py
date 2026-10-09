@@ -244,3 +244,89 @@ class TestModeCommandsThroughTheRealAdapter:
         assert row is not None
         assert row["requested_via_consent_id"] == "discord_message:777"
         assert row["status"] == "waiting"
+
+
+class TestBuildDiscordEmbed:
+    """`bot.discord_bot._build_discord_embed()` -- translates the
+    channel-agnostic `application.models.EmbedSpec` into a real
+    `discord.Embed`. The only place in this project that constructs
+    a discord.Embed at all -- application/ itself never imports
+    discord, per its own header docstring."""
+
+    def test_title_and_description_carry_over(self) -> None:
+        from application.models import EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        embed = _build_discord_embed(EmbedSpec(title="My Title", description="My description", color="red"))
+        assert embed.title == "My Title"
+        assert embed.description == "My description"
+
+    def test_none_description_is_accepted(self) -> None:
+        from application.models import EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        embed = _build_discord_embed(EmbedSpec(title="My Title", color="blue"))  # description defaults to None
+        assert embed.title == "My Title"
+
+    def test_red_blue_green_map_to_distinct_real_colors(self) -> None:
+        from application.models import EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        red = _build_discord_embed(EmbedSpec(title="t", color="red"))
+        blue = _build_discord_embed(EmbedSpec(title="t", color="blue"))
+        green = _build_discord_embed(EmbedSpec(title="t", color="green"))
+        assert red.color == discord.Color.red()
+        assert blue.color == discord.Color.blue()
+        assert green.color == discord.Color.green()
+        assert len({red.color, blue.color, green.color}) == 3
+
+    def test_unrecognized_color_name_does_not_raise(self) -> None:
+        from application.models import EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        embed = _build_discord_embed(EmbedSpec(title="t", color="not-a-real-color"))  # must not raise
+        assert embed.title == "t"
+
+    def test_fields_carry_over_in_order(self) -> None:
+        from application.models import EmbedField, EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        spec = EmbedSpec(title="t", color="green", fields=(EmbedField(name="A", value="1"), EmbedField(name="B", value="2")))
+        embed = _build_discord_embed(spec)
+        assert [f.name for f in embed.fields] == ["A", "B"]
+        assert [f.value for f in embed.fields] == ["1", "2"]
+
+    def test_empty_fields_produces_no_embed_fields(self) -> None:
+        from application.models import EmbedSpec
+        from bot.discord_bot import _build_discord_embed
+        embed = _build_discord_embed(EmbedSpec(title="t", color="blue"))
+        assert len(embed.fields) == 0
+
+
+class TestEmbedSendingThroughTheRealAdapter:
+    """Confirms on_message() actually sends via `embed=` when
+    OutgoingMessage carries one, and via plain text otherwise --
+    mocking only ApplicationService.handle_message()'s return value,
+    exercising the real adapter send logic around it."""
+
+    def test_an_outgoing_message_with_an_embed_is_sent_as_embed(self, bot) -> None:
+        from unittest.mock import patch
+
+        from application.models import EmbedSpec, OutgoingMessage
+        _complete_onboarding(bot)
+        message = _fake_dm_message("chaster status", message_id=200)
+        fake_outgoing = OutgoingMessage(text="fallback text", embed=EmbedSpec(title="Test Embed", color="red"))
+        with patch.object(bot.application_service, "handle_message", return_value=fake_outgoing):
+            _run(bot.on_message(message))
+        assert "embed" in message.channel.send.call_args.kwargs
+        sent_embed = message.channel.send.call_args.kwargs["embed"]
+        assert sent_embed.title == "Test Embed"
+        # Plain text content is NOT also sent alongside the embed.
+        assert message.channel.send.call_args.args == ()
+
+    def test_an_outgoing_message_without_an_embed_is_sent_as_plain_text(self, bot) -> None:
+        from unittest.mock import patch
+
+        from application.models import OutgoingMessage
+        _complete_onboarding(bot)
+        message = _fake_dm_message("some ordinary command", message_id=201)
+        fake_outgoing = OutgoingMessage(text="plain reply, no embed")
+        with patch.object(bot.application_service, "handle_message", return_value=fake_outgoing):
+            _run(bot.on_message(message))
+        assert message.channel.send.call_args.args == ("plain reply, no embed",)
+        assert "embed" not in message.channel.send.call_args.kwargs
