@@ -39,11 +39,17 @@ from application.onboarding_service import OnboardingService
 from application.router import CommandRouter, RequestContext
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
-from conversation_engine.models import UnknownIdentityError
+from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.user_service import UserService
+from chaster.models import ConnectionStatus
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
 from chaster.oauth_client import ChasterOAuthClient
 from chaster.lock_client import ChasterLockApiError, ChasterLockClient
+from chaster.llm_tools import (
+    ChasterToolOutcome, ChasterToolOutcomeKind, is_chaster_status_query, mentions_lock_topic,
+)
+from chaster.status_context import build_chaster_chat_context, build_chaster_status_context
+from chaster.presentation import lock_status_text, lock_time_remaining, lock_title
 from chaster.token_manager import (
     ChasterNotConnectedError,
     ChasterReauthorizationRequiredError,
@@ -52,7 +58,6 @@ from chaster.token_manager import (
 )
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
-from infrastructure.time_format import parse_iso
 from lock_state.models import LockKnowledgeState, LockReportStatus
 from lock_state.repository import LockState, LockStateAdministration
 from penalty_engine.repository import PenaltyEngine
@@ -184,17 +189,31 @@ class ApplicationService:
             if result.matched:
                 return result.outgoing
 
+            # Deterministic guardrail, BEFORE any model: a natural-language
+            # question about the user's Chaster lock is answered by the
+            # same read-only path as `chaster status` (embed, or a clear
+            # not-connected / reconnect / unavailable / not-configured
+            # embed). It does not depend on CHASTER_LLM_TOOLS_ENABLED, on
+            # the model supporting tools, or on the model being up, so a
+            # model can never improvise manual commands for it.
+            if is_chaster_status_query(incoming.text):
+                return self._answer_chaster_status_question(incoming, context, preferences)
+
             if self._conversation_engine is None:
                 return OutgoingMessage(text=self.router.unrecognized_text())
 
             if preferences.identity_id is None:
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
 
+            chat_context = self._chaster_chat_context(incoming.text, context)
+            context_kwargs = (
+                {"extra_system_context": chat_context, "remember_exchange": True} if chat_context is not None else {}
+            )
             try:
                 response = self._conversation_engine.generate_response(
                     subject_key=user.id, current_user_message=incoming.text,
-                    language=preferences.language or "en", identity_id=preferences.identity_id,
-                    now=incoming.received_at,
+                    language="en", identity_id=preferences.identity_id,
+                    now=incoming.received_at, **context_kwargs,
                 )
             except UnknownIdentityError:
                 # A stored identity_id that no longer matches any catalog
@@ -202,7 +221,8 @@ class ApplicationService:
                 # None, not the generic top-level error path; this is a
                 # "missing required context" situation, not a bug crash.
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
-            return OutgoingMessage(text=response.text)
+            embed = self._embed_from_tool_outputs(response.tool_outputs, now=incoming.received_at)
+            return OutgoingMessage(text=response.text, embed=embed)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
@@ -579,6 +599,93 @@ class ApplicationService:
                  f"again before finishing, this link will stop working."
         )
 
+    def _chaster_chat_context(self, text: str, ctx: RequestContext) -> str | None:
+        """Verified Chaster lock data for an ORDINARY conversation turn.
+
+        Loaded when the message mentions anything lock-related
+        (`mentions_lock_topic`) OR the user has an active Chaster
+        connection. It is supporting context only: any problem (not
+        connected, reconnect needed, outage, unexpected error) yields
+        None and the chat simply continues without it -- context loading
+        can never break or delay a reply beyond one bounded read-only
+        call."""
+        if self.chaster_token_manager is None:
+            return None
+        try:
+            if not (self._chaster_connection_is_active(ctx.user.id) or mentions_lock_topic(text)):
+                return None
+            outcome = self._read_chaster_outcome(ctx)
+        except Exception:
+            logger.warning("Chaster chat context could not be loaded -- continuing without it", exc_info=True)
+            return None
+        if outcome is None or outcome.kind != ChasterToolOutcomeKind.LOCKS:
+            return None
+        return build_chaster_chat_context(outcome.locks, now=ctx.now)
+
+    def _chaster_connection_is_active(self, user_id: str) -> bool:
+        connections = self.chaster_connections
+        if connections is None:
+            return False
+        connection = connections.get(user_id)
+        return connection is not None and connection.connection_status == ConnectionStatus.ACTIVE
+
+    def _answer_chaster_status_question(self, incoming, ctx: RequestContext, preferences) -> OutgoingMessage:
+        """Hybrid path for a natural-language lock-status question.
+
+        1. The application reads the lock data deterministically (same
+           read-only call and self-healing as `chaster status`), no LLM.
+        2. If the data was read, it is handed to the Conversation Engine
+           as verified `extra_system_context` (tools disabled) and the
+           model only phrases the answer -- text only, no embed.
+        3. Everything else -- not configured, not connected, reconnect
+           required, outage, API error, no engine / identity, an unknown
+           identity, or a failed generation -- is answered by the
+           deterministic `chaster status` reply (embed), never by free
+           model text, so the model can never improvise commands."""
+        outcome = self._read_chaster_outcome(ctx)
+        if outcome is None:
+            return self._handle_chaster_status(ctx)
+        if outcome.kind != ChasterToolOutcomeKind.LOCKS:
+            return self._chaster_message(outcome.kind, now=ctx.now, detail=outcome.detail)
+
+        deterministic = self._chaster_message(outcome.kind, now=ctx.now, locks=outcome.locks)
+        engine = self._conversation_engine
+        if engine is None or preferences.identity_id is None:
+            return deterministic
+        try:
+            response = engine.generate_response(
+                subject_key=ctx.user.id, current_user_message=incoming.text,
+                language="en", identity_id=preferences.identity_id, now=ctx.now,
+                extra_system_context=build_chaster_status_context(outcome.locks, now=ctx.now),
+            )
+        except UnknownIdentityError:
+            return deterministic
+        if response.response_category == ResponseCategory.ERROR_FALLBACK or not response.text.strip():
+            logger.warning("Chaster status reply generation failed -- using the deterministic reply")
+            return deterministic
+        logger.info("Chaster status question answered from verified data by the Conversation Engine")
+        return OutgoingMessage(text=response.text)
+
+    def _read_chaster_outcome(self, ctx: RequestContext) -> ChasterToolOutcome | None:
+        """One read-only Chaster call through the self-healing token
+        manager. None means Chaster is not configured on this bot."""
+        if self.chaster_token_manager is None:
+            return None
+        try:
+            locks = self.chaster_token_manager.call_with_token(
+                ctx.user.id, now=ctx.now,
+                operation=lambda token: self.chaster_lock_client.list_active_locks(access_token=token),
+            )
+        except ChasterNotConnectedError:
+            return ChasterToolOutcome(kind=ChasterToolOutcomeKind.NOT_CONNECTED)
+        except ChasterReauthorizationRequiredError:
+            return ChasterToolOutcome(kind=ChasterToolOutcomeKind.RECONNECT_REQUIRED)
+        except ChasterRefreshUnavailableError:
+            return ChasterToolOutcome(kind=ChasterToolOutcomeKind.TEMPORARILY_UNAVAILABLE)
+        except ChasterLockApiError as exc:
+            return ChasterToolOutcome(kind=ChasterToolOutcomeKind.API_ERROR, detail=str(exc))
+        return ChasterToolOutcome(kind=ChasterToolOutcomeKind.LOCKS, locks=tuple(locks))
+
     def _handle_chaster_status(self, ctx: RequestContext) -> OutgoingMessage:
         """Deterministic -- never reaches ConversationEngine. Read-only:
         makes exactly one real Chaster call (list_active_locks), never
@@ -591,18 +698,27 @@ class ApplicationService:
         displays what Chaster reports, it never gates or decides
         anything from it)."""
         if self.chaster_token_manager is None:
-            return OutgoingMessage(text="Chaster integration is not configured on this bot.")
-
-        # Self-healing: the manager refreshes an expired token before the
-        # call, and on an HTTP 401 refreshes once and retries once. Only
-        # a refresh token Chaster definitively rejects ends in the
-        # reconnect prompt below.
-        try:
-            locks = self.chaster_token_manager.call_with_token(
-                ctx.user.id, now=ctx.now,
-                operation=lambda token: self.chaster_lock_client.list_active_locks(access_token=token),
+            return OutgoingMessage(
+                text="Chaster integration is not configured on this bot.",
+                embed=EmbedSpec(
+                    title="Chaster Not Configured",
+                    description="Chaster integration is not configured on this bot.",
+                    color="red",
+                ),
             )
-        except ChasterNotConnectedError:
+
+        outcome = self._read_chaster_outcome(ctx)
+        assert outcome is not None  # guarded above
+        return self._chaster_message(outcome.kind, now=ctx.now, locks=outcome.locks, detail=outcome.detail)
+
+    @staticmethod
+    def _chaster_message(
+        kind: ChasterToolOutcomeKind, *, now: datetime, locks: tuple[dict, ...] = (), detail: str | None = None,
+    ) -> OutgoingMessage:
+        """The single place Chaster state becomes a text + embed reply.
+        Used by `chaster status` (the whole reply) and by the LLM tool
+        path (only the embed is used there; the text is the model's)."""
+        if kind == ChasterToolOutcomeKind.NOT_CONNECTED:
             return OutgoingMessage(
                 text="Chaster Account Not Connected. Use `chaster connect` to link your account.",
                 embed=EmbedSpec(
@@ -611,7 +727,7 @@ class ApplicationService:
                     color="red",
                 ),
             )
-        except ChasterReauthorizationRequiredError:
+        if kind == ChasterToolOutcomeKind.RECONNECT_REQUIRED:
             return OutgoingMessage(
                 text="Chaster Reconnection Required. Your Chaster authorization has expired or was revoked. "
                      "Run `chaster connect` to get a fresh link.",
@@ -622,7 +738,7 @@ class ApplicationService:
                     color="red",
                 ),
             )
-        except ChasterRefreshUnavailableError:
+        if kind == ChasterToolOutcomeKind.TEMPORARILY_UNAVAILABLE:
             return OutgoingMessage(
                 text="Chaster Temporarily Unavailable. Your connection is intact; please try again shortly.",
                 embed=EmbedSpec(
@@ -632,10 +748,11 @@ class ApplicationService:
                     color="red",
                 ),
             )
-        except ChasterLockApiError as exc:
+        if kind == ChasterToolOutcomeKind.API_ERROR:
+            message = detail or "Chaster returned an error."
             return OutgoingMessage(
-                text=f"Chaster API Error: {exc}",
-                embed=EmbedSpec(title="Chaster API Error", description=str(exc), color="red"),
+                text=f"Chaster API Error: {message}",
+                embed=EmbedSpec(title="Chaster API Error", description=message, color="red"),
             )
 
         if not locks:
@@ -643,11 +760,10 @@ class ApplicationService:
                 text="You currently have no active locks.",
                 embed=EmbedSpec(title="\U0001f512 Chaster Status", description="You currently have no active locks.", color="blue"),
             )
-
         fields = tuple(
             EmbedField(
-                name=f"\U0001f512 {self._chaster_lock_title(lock)}",
-                value=f"**Status:** {self._chaster_lock_status_text(lock)}\n**Time Remaining:** {self._chaster_lock_time_remaining(lock, now=ctx.now)}",
+                name=f"\U0001f512 {lock_title(lock)}",
+                value=f"**Status:** {lock_status_text(lock)}\n**Time Remaining:** {lock_time_remaining(lock, now=now)}",
             )
             for lock in locks
         )
@@ -656,47 +772,28 @@ class ApplicationService:
             embed=EmbedSpec(title=f"\U0001f512 Active Locks ({len(locks)})", color="green", fields=fields),
         )
 
+    def _embed_from_tool_outputs(self, tool_outputs: tuple, *, now: datetime) -> EmbedSpec | None:
+        """Builds a deterministic embed from the REAL read-only tool
+        output (never from model-written text), so a card can only show
+        what Chaster actually reported. Only the first Chaster outcome
+        is used; anything else yields no embed."""
+        for output in tool_outputs:
+            data = getattr(output, "data", None)
+            if isinstance(data, ChasterToolOutcome):
+                return self._chaster_message(data.kind, now=now, locks=data.locks, detail=data.detail).embed
+        return None
+
     @staticmethod
     def _chaster_lock_title(lock: dict) -> str:
-        title = lock.get("title")
-        return title if isinstance(title, str) and title.strip() else "(untitled)"
+        return lock_title(lock)
 
     @staticmethod
     def _chaster_lock_status_text(lock: dict) -> str:
-        """Shows the real, raw status string exactly as Chaster
-        reported it -- never interpreted/mapped to an enum. This
-        project has confirmed `status`'s real field NAME and TYPE
-        (str) from a real response, but never confirmed every real
-        VALUE always matches a specific documented set -- displaying
-        the raw string as-is sidesteps that gap entirely, since no
-        decision is being made from it here, only a display."""
-        status = lock.get("status")
-        return status if isinstance(status, str) and status.strip() else "unknown"
+        return lock_status_text(lock)
 
     @staticmethod
     def _chaster_lock_time_remaining(lock: dict, *, now: datetime) -> str:
-        """`endDate` is the real, confirmed top-level field this
-        project has evidence for (NOT `endAt`, which has never been
-        confirmed present in a real response -- not used here).
-        Missing, non-string, or unparseable values all fall back to
-        "Unlimited / Permanent" rather than raising -- a formatting
-        detail is not a reason to fail the whole status reply."""
-        raw_end_date = lock.get("endDate")
-        if not isinstance(raw_end_date, str) or not raw_end_date.strip():
-            return "Unlimited / Permanent"
-        try:
-            end_date = parse_iso(raw_end_date)
-        except ValueError:
-            return "Unlimited / Permanent"
-
-        remaining = end_date - now
-        if remaining.total_seconds() <= 0:
-            return "Expired"
-
-        total_minutes = int(remaining.total_seconds() // 60)
-        days, rem_minutes = divmod(total_minutes, 24 * 60)
-        hours, minutes = divmod(rem_minutes, 60)
-        return f"{days}d {hours}h {minutes}m"
+        return lock_time_remaining(lock, now=now)
 
     def _handle_chaster_disconnect(self, ctx: RequestContext) -> OutgoingMessage:
         """Deterministic local disconnect. Removes this bot's stored

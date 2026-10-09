@@ -5,6 +5,84 @@ Canonical design: `docs/architecture/conversation_engine_technical_design.md`
 whole document** — this README describes exactly which specific slice
 of that draft has been implemented here, and nothing more).
 
+## What is implemented here — read-only tool calling (Chaster)
+
+**Approved scope:** model-initiated, **read-only**, on-demand tools
+only. This lifts CE-21 ("no tool calling") and CHASTER-01B Increment 4's
+gate for exactly one tool, `get_chaster_status`, and nothing broader.
+
+- **`tools.py`** — `ToolDefinition` (name pattern, bounded description,
+  closed JSON-Schema object with `additionalProperties: false`, validated
+  eagerly), `ToolExecutionContext(subject_key, now)`, the `ToolExecutor`
+  Protocol, and `TOOL_USE_GUIDANCE`. Domain-independent: it imports no
+  Chaster, `lock_state`, `task_runtime` or `application` code (guard
+  test). Concrete tools live with the domain they read
+  (`chaster/llm_tools.py`) and are injected at the composition root.
+- **`model_types.py`** — additive: `ModelMessageRole.TOOL`,
+  `ModelMessage.tool_calls`/`tool_name`, `ModelTurn` (exactly one of text
+  or tool calls), and the runtime-checkable `ToolCapableConversationModel`
+  Protocol (`generate_with_tools`). `ConversationModel.generate()` is
+  unchanged.
+- **`ollama_adapter.py`** — `generate_with_tools()` sends Ollama's native
+  `tools` array and maps `message.tool_calls` to a `ModelTurn`. The plain
+  `generate()` payload is byte-for-byte what it was. A model that does
+  not support tools makes Ollama answer HTTP 400; that is reported as
+  `ollama_tools_unsupported`.
+- **`engine.py`** — `ConversationEngine(tool_executor=...)`. Hard bounds:
+  **one tool call, one round, per message** (`MAX_TOOL_CALLS_PER_MESSAGE`).
+  Extra calls in a reply are dropped, and the follow-up request carries
+  **no tools**, so a second round is structurally impossible; a model
+  that still asks for one gets the deterministic fallback. An unknown
+  tool name, or an executor that raises or returns the wrong shape,
+  becomes an honest `ok=False` result the model can explain — it never
+  crashes the turn. If the model rejects tools (`*_tools_unsupported`) the
+  engine transparently uses the plain path, so enabling tools on an
+  unsupported model degrades instead of breaking conversation. If the
+  adapter has no `generate_with_tools`, tools are disabled with one
+  warning at construction.
+- **Prompt layout.** The tool guidance is its own SYSTEM message inserted
+  immediately **before the final user message** (after all Working Memory
+  turns), only on the tool path. It is last on purpose: the original
+  system text contains older, general advice (point the user at
+  `lock status` / `lock report ...`), and a small local model follows the
+  instruction nearest the question. An executor may expose a `guidance`
+  string that is appended to the generic `TOOL_USE_GUIDANCE`
+  (`build_tool_guidance()`); Chaster uses this for its routing rules.
+  `_SYSTEM_BOUNDARIES` and the plain-path prompt are untouched (md5
+  unchanged). The generic guidance frames tool results as untrusted data
+  (never instructions), requires "Chaster reports ..." phrasing, forbids
+  "verified/confirmed", and sends reconnect situations to `chaster connect`.
+- **Forced (deterministic) tool calls.** An executor may implement
+  `match_forced_call(message)`: a pure, model-free check. When it returns
+  a call, the engine runs that tool itself *before and instead of* asking
+  the model to choose one, then asks the model only to write the reply
+  from the result (the single model call already contains the assistant
+  tool-call + tool-result messages and offers no tools). This exists
+  because small local models (`llama3.1` 8B) do not reliably choose to
+  call a tool. The bounds are identical to the model-chosen path (one
+  call, one round). A matcher that raises, or returns something that is
+  not a known tool's call, is ignored with one warning and the normal
+  model-chosen path applies. If the model fails after a forced tool, the
+  deterministic fallback is returned as before.
+- **`ConversationResponse.tool_outputs`** (default `()`): what the tool
+  READ, passed through untouched. `ToolExecutionResult.data` is an opaque
+  application-layer payload the engine never inspects; it is how
+  `ApplicationService` builds a **deterministic** `EmbedSpec` from the
+  real tool output (the model writes only the conversational text, so a
+  card cannot show lock details Chaster never reported).
+- **Working Memory.** A tool-augmented exchange is **not** committed to
+  Working Memory (provider-reported data must not be replayed later as
+  if current). Trade-off: the next turn does not see that one exchange.
+  Ordinary exchanges are committed exactly as before.
+
+Chaster side: see `chaster/README.md` ("LLM tool — `get_chaster_status`").
+Enabling is opt-in: `CHASTER_LLM_TOOLS_ENABLED=true` (default `false`),
+and it needs an Ollama model with tool-calling support.
+
+**Test counts:** 341 tests in `tests/conversation_engine/` (up from 245
+at Slice 2; the tool-calling slice added `test_tools.py`,
+`test_ollama_tool_calling.py`, `test_engine_tool_calling.py`).
+
 ## What is implemented here — Slice D (Authoritative Conversation Context Integration)
 
 Ordinary unmatched conversation now knows two authoritative facts,
@@ -419,7 +497,7 @@ unchanged.**
   checks (Section "Validation" below).
 - **`fallback.py`** — `render_fallback()`, the deterministic renderer
   that works with zero dependencies on the rest of this package.
-- **245 tests** in `tests/conversation_engine/`, including a recursive-
+- **245 tests** (as of Slice 2; 323 now) in `tests/conversation_engine/`, including a recursive-
   immutability proof (not just top-level), a static AST scan proving
   no existing package imports this one, and direct exercise of
   existing command paths through a real `ApplicationService`.
@@ -511,14 +589,18 @@ namespace present in the snapshot, non-empty `language`/
 comparison (ID-3) — that remains explicitly open (design document
 Section 19, Open Questions 4/5), not pretended to be solved here.
 
-## Tool calling — sketches only, never constructed by production code
+## Tool calling — read-only, model-initiated, never planned
 
-`ToolCallRequest`/`ToolResult` exist as types so the pipeline doesn't
-need a structural rewrite the day tool calling is separately approved
-(Slice 6). In this slice: no production code path ever constructs a
-`ToolCallRequest`; `validate_response()` rejects a non-empty
-`tool_calls` outright; no tool dispatcher or registry exists anywhere
-in this package.
+*(Historical note: through Slice 3 these types were unused sketches and
+CE-21 forbade tool calling. Read-only tool calling is now approved and
+implemented — see "read-only tool calling (Chaster)" above.)*
+
+`ResponsePlan.tool_calls` is **still always empty**, and
+`validate_response()` still rejects a non-empty one: tool calls are
+never planned in advance. They are requested by the model during
+generation and executed by the engine through an injected
+`ToolExecutor`. `ToolResult` remains an unused sketch, superseded by
+`ToolExecutionResult`.
 
 ## System independence (CE-20) — verified, not merely asserted
 
@@ -540,9 +622,9 @@ step (see the project's own root `README.md`).
   domain/memory providers — the prompt's own "domain context"/
   "conversation context" sections are simply omitted, not emitted
   empty.
-- **No tool calling, no tool dispatcher.** `ToolCallRequest`/`ToolResult`
-  remain unused type sketches; Slice 6, separately designed and
-  approved.
+- **No write-capable tools and no tool chaining.** Only read-only tool
+  calling exists (one call, one round per message — see above).
+  Anything that could change state remains unapproved.
 - **No new database table, no migration.** Slice 2 is pure runtime
   types, library functions, and one small infrastructure fix
   (`Database`'s own thread-local guard).
@@ -564,3 +646,31 @@ step (see the project's own root `README.md`).
   separate default path. Making any identity a true skip-the-choice
   default would be an onboarding-flow product decision, not something
   this slice inferred on its own.
+
+
+Visibility (v0.27): the engine logs `tool calling ACTIVE` when tools are wired, and per message either `Tool call forced by deterministic match` or `No forced tool match -- the model decides`. Messages are never logged.
+
+
+Note (v0.28): lock-status questions are now intercepted in `ApplicationService` before the engine is called, so the engine's forced tool routing is a second layer and only sees such messages if called directly.
+
+
+`generate_response(..., extra_system_context=None)` (v0.29): when given, the text is inserted as a SYSTEM message right before the user turn, tools are never offered (plain `generate`), a blank value raises ValueError, and the exchange is not committed to Working Memory. Callers must pass sanitised, application-verified data only.
+
+
+Guardrails (v0.31): `guardrails.CONVERSATION_GUARDRAILS` is inserted as a system message immediately before the final user message on every generation (prompt/state confidentiality, pleas for early unlock with a safety exception, consistent informal address). It sits before any tool guidance or `extra_system_context`, which therefore stay last. `_SYSTEM_BOUNDARIES` is unchanged.
+
+
+v0.32: commands are banned from model output globally (prompt_builder + guardrails); lock-state tokens are rendered as plain sentences; `build_guardrails(language)` adds the Czech rules for `cs`. `_SYSTEM_BOUNDARIES` unchanged.
+
+
+v0.33: `CZECH_LANGUAGE_RULES` adds natural word order, correct verb forms and the odemknout/zamknout conjugation, with the reported bad forms as BAD examples.
+
+
+v0.34: `CZECH_LANGUAGE_RULES` adds a rule against word-for-word English constructions when explaining limits (BAD/GOOD examples for "I cannot decide to unlock").
+
+
+v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_context` and `remember_exchange=True` the user/assistant text is committed to Working Memory (the context never is). `CZECH_LANGUAGE_RULES` adds the imperative and negative-opener rules.
+
+v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
+
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 2110 tests.

@@ -76,6 +76,10 @@ _SYSTEM_BOUNDARIES = (
 # tests/application/test_prompt_command_contract.py. Still never
 # imported BY application/CommandRouter -- the dependency direction
 # stays conversation_engine -> (nothing), test-only reverse direction.
+# NOTE: no longer rendered into the prompt -- the model is told never to
+# mention commands at all. The tuple is retained only so the contract
+# test (tests/application/test_prompt_command_contract.py) can still
+# detect drift against the real router.
 KEYHOLDER_COMMAND_GUIDANCE = (
     "lock status", "lock report locked", "lock report unlocked",
     "task request", "task active", "task complete", "task cancel", "help",
@@ -87,26 +91,18 @@ _CATEGORY_INSTRUCTIONS = {
         "Keep responses concise and focused on what the user actually said.\n"
         "When an authoritative application state section is present below, use it naturally when relevant to "
         "what the user is saying -- do not mechanically repeat it if it isn't relevant.\n"
-        "Lock-state epistemics are exact and must never be upgraded: UNKNOWN means no report is "
-        "recorded -- never infer the user is unlocked. LOCKED_USER_REPORTED and UNLOCKED_USER_REPORTED "
-        "mean only that the user reported that state -- never claim the physical device has been "
-        "independently verified, regardless of which way the report goes.\n"
+        "Lock facts are exact and must never be upgraded: when the section below says no report is "
+        "recorded, say you do not know the lock state -- never assume the user is unlocked. When it says "
+        "the user reported being locked or unlocked, that is only the user's own word -- never claim the "
+        "physical device has been independently verified, whichever way the report goes.\n"
         "An active task is authoritative application state: you may coach around it, but "
         "conversational statements like \"I finished it\" or \"done\" do NOT change its recorded "
         "state, and you must never claim they did.\n"
         "Conversational acknowledgement is not a state transition: saying you understand, or that "
-        "something sounds done, never performs any change -- only the deterministic commands below do.\n"
-        "The only commands that exist are exactly these -- never invent different wording or syntax: "
-        + ", ".join(f"`{c}`" for c in KEYHOLDER_COMMAND_GUIDANCE) + ".\n"
-        "When the user's own intent matches one of these, mention the specific command naturally, only "
-        "when it's actually relevant -- do not force a recommendation into unrelated conversation: "
-        "reporting locked -> `lock report locked`; reporting unlocked -> `lock report unlocked`; "
-        "requesting a task -> `task request`; completing the active task -> `task complete`; "
-        "cancelling the active task -> `task cancel`; checking current lock state -> `lock status`; "
-        "checking the active task -> `task active`; finding other commands -> `help`. "
-        "The user decides whether to actually invoke a command -- do not imply `task complete` is "
-        "warranted merely because you believe the task is done.\n"
-        "You can only describe these commands in words; your own text never executes them.\n"
+        "something sounds done, never performs any change -- only the application itself does.\n"
+        "NEVER mention, suggest or write any command, code, slash command or special syntax, and never "
+        "tell the user to type, send or use something. Talk naturally, like a human coach, not like a "
+        "terminal. You can only talk; your words never change any record.\n"
         "If the active task's own recorded details are sparse, work with what is actually there -- "
         "never invent task instructions that were not provided."
     ),
@@ -121,8 +117,19 @@ _DOMAIN_CONTEXT_PREAMBLE = (
 )
 
 
+# Plain-language wording for the raw status tokens. The tokens themselves
+# (e.g. "locked_user_reported") are machine jargon that a small model
+# garbles when it writes Czech, so they never reach the prompt.
+_LOCK_STATUS_PHRASES = {
+    "unknown": "no report from the user is recorded",
+    "locked_user_reported": "the user reported being locked",
+    "unlocked_user_reported": "the user reported being unlocked",
+}
+
+
 def _render_lock_state(data: object) -> str:
-    return f"Lock: {data['status']}. {data['note']}"
+    status = data["status"]
+    return f"Lock: {_LOCK_STATUS_PHRASES.get(status, status)}. {data['note']}"
 
 
 def _to_plain_data(value: object) -> object:

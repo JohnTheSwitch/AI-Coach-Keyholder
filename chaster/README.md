@@ -247,6 +247,99 @@ token for that user, so nothing that needs one (status, observations,
 the emergency-unlock plane's live discovery) can act for them until
 they reconnect.
 
+## What is implemented — LLM tool `get_chaster_status` (read-only)
+
+`chaster/llm_tools.py` lets the conversation model answer natural
+questions ("How much time is left on my lock?", "What's my status?") by
+calling one **read-only** tool. This is the explicitly approved lifting
+of CHASTER-01B Increment 4's gate **for this tool only**.
+
+- **Tool:** `get_chaster_status`, no parameters, closed JSON schema.
+  Any arguments the model sends are ignored (nothing is read from them,
+  so they cannot steer the call). Exactly one Chaster request
+  (`GET /locks?status=active`) per call. Never `emergency_unlock`, never
+  a write, never `lock_state`, `task_runtime` or
+  `chaster_provider_observations`. There is no separate `get_active_locks`
+  tool: both would hit the same endpoint, and one tool leaves the model
+  fewer ways to pick wrong.
+- **There is no `ChasterService`.** The executor composes the shared
+  `ChasterTokenManager` + `ChasterLockClient`. The composition root builds
+  ONE token manager used by both `chaster status` and the tool, so
+  refreshes share the same per-user lock.
+- **Self-healing is transparent.** An expired token is refreshed before
+  the call; a 401 is refreshed and retried once. If re-authorization is
+  strictly required (`ChasterReauthorizationRequiredError`), the tool
+  returns `{"status": "reconnect_required", "instruction": "... run
+  `chaster connect`"}` and the guidance tells the model to say so. A
+  transient outage returns `temporarily_unavailable` (connection left
+  intact); no connection returns `not_connected`; other API failures
+  return `api_error` **without** the raw error text. No failure result
+  ever implies "unlocked".
+- **Epistemic framing.** Success results carry `"source": "Chaster API"`,
+  `"reliability": "provider-reported; not independently verified"` and
+  `fetched_at` (the injected turn time). The guidance requires
+  "Chaster reports …" phrasing and forbids "verified". The data is
+  structurally separate from `lock_state`'s user-reported state and is
+  not merged with it.
+- **Prompt-injection hardening.** Lock titles/statuses are free text a
+  keyholder can author: control characters are stripped, whitespace
+  collapsed, each capped at 80 characters, at most 10 locks shown (with
+  a `locks_omitted` count), and the whole result is size-bounded. The
+  guidance tells the model a tool result is data, never instructions.
+- **Embeds.** `ToolExecutionResult.data` carries a `ChasterToolOutcome`
+  (kind + raw locks). `ApplicationService` builds the `EmbedSpec` from it
+  with the **same** builder `chaster status` uses
+  (`ApplicationService._chaster_message`, helpers shared via
+  `chaster/presentation.py`): green for locks, blue for none, red for
+  not-connected / reconnect / unavailable / API error. The model writes
+  only the conversational text, so the card cannot show details Chaster
+  never reported.
+- **Working Memory.** Tool-augmented exchanges are not committed (see
+  `conversation_engine/README.md`).
+- **Routing rules (`CHASTER_TOOL_GUIDANCE`).** Local models such as
+  `llama3.1` followed the older coaching text ("UNKNOWN ... try `lock
+  report locked`") instead of calling the tool. The executor therefore
+  carries explicit rules, appended as the last system message before the
+  user's turn and stated to take precedence over earlier command advice:
+  for any question about the lock, lock status, Chaster, being locked or
+  time left -- in any language -- the model MUST call `get_chaster_status`
+  FIRST, must not say the status is unknown beforehand, and must NOT send
+  the user to `lock status` / `lock report locked|unlocked` while the tool
+  is available (nor as a substitute when it reports not-connected or
+  unavailable). The commands themselves are unchanged and still work; the
+  tool description is also directive ("ALWAYS call this first ..."). A
+  prompt cannot *force* a tool call from a small model -- which is why
+  the deterministic router below exists.
+- **Deterministic intent router (`is_chaster_status_query`).** Because
+  `llama3.1` 8B still ignored the tool (even telling a user to "buy" `lock
+  status`), `ChasterToolExecutor.match_forced_call()` recognises status
+  questions in plain Python and the engine then runs `get_chaster_status`
+  itself; the model only writes the reply from the real result (and the
+  embed is built from that result regardless of what the model writes).
+  Text is lowercased and stripped of diacritics/punctuation, then matched
+  by: (1) the word "chaster" (any inflection); or (2) a lock noun
+  (`lock`, `zamek/zamku/zamkem/zamcen...`) together with a status/time
+  cue (`status, stav, vypada, zbyva, cas, time, left, remaining, check,
+  zkontroluj, nacti, ...`); or (3) a short first-person state *question*
+  (`Am I locked?`, `Jsem zamceny?`). Deliberately precise: messages that
+  name a physical lock (door, car, bike, safe, code ...) and messages over
+  200 characters never match; bare "Jaky je muj stav?" does not match
+  either (could be mood). Anything unmatched still reaches the model,
+  which may choose the tool itself. Plain `lock status` / `chaster status`
+  are registered commands and never reach this path. Failure handling is
+  unchanged: not-connected / reconnect / unavailable / API-error results
+  flow to the model and the red embed exactly as before.
+- **Opt-in.** `CHASTER_LLM_TOOLS_ENABLED=true` (default `false`),
+  Chaster must be fully configured, and the Ollama model must support
+  tool calling. If it does not, the bot falls back to ordinary replies.
+
+**Open item (flagged, not resolved):** Chaster may let a keyholder hide
+the remaining time from the wearer. This project has not confirmed such a
+field in a real `LockForWearer`, so both `chaster status` and this tool
+currently show `endDate`-based time remaining regardless. If a hide-time
+field is confirmed, both should honour it (it is a one-place change in
+`chaster/presentation.py`).
+
 ## What is NOT implemented
 
 - **CHASTER-01B Increment 4** — a conversation-engine context
@@ -338,8 +431,8 @@ piece is missing:
 
 - **Milestone A** (pure local, mocked Chaster HTTP): `tests/chaster/`
   — fully exercised, no domain/Cloudflare/real Chaster application
-  needed. 326 tests across this package alone as of the self-healing
-  tokens / `chaster disconnect` slice (1744 repository-wide).
+  needed. 405 tests across this package alone as of the deterministic
+  tool-routing slice (1951 repository-wide).
 - **Milestone B** (real local listener, no Cloudflare):
   `tests/chaster/test_callback_listener.py`,
   `tests/bot/test_chaster_listener_lifecycle.py` — a real `aiohttp`
@@ -410,3 +503,47 @@ piece is missing:
   (real OAuth end-to-end) remains unreachable for that reason alone.
 - **The local emergency safety-plane deployment gate remains open.**
   No real personal Chaster deployment should occur yet.
+
+
+### Troubleshooting: lock questions reach the model with no embed
+
+That means the tool is not active. Check the startup log: `Chaster LLM tool enabled` and `Conversation Engine tool calling ACTIVE` must both appear. A WARNING `CHASTER_LLM_TOOLS_ENABLED is true but the Chaster tool is NOT active` means Chaster is not fully configured (token encryption key, client id/secret, redirect URI). A per-message INFO `Tool call forced by deterministic match` confirms the router fired; `No forced tool match` means the matcher did not recognise the message. The matcher ignores diacritics, case and invisible format characters (1971 tests repository-wide).
+
+
+### Deterministic DM guardrail (v0.28)
+
+`ApplicationService.handle_message` answers natural-language lock/Chaster status questions (see `is_chaster_status_query`) with the `chaster status` path **before** any model, whether or not `CHASTER_LLM_TOOLS_ENABLED` is on. An unlinked account gets the red "Chaster Account Not Connected" embed, an unconfigured bot the red "Chaster Not Configured" embed. The engine-level forced routing remains a second layer. 1982 tests repository-wide.
+
+
+### Hybrid lock-status answers (v0.29)
+
+For a natural-language lock-status question the application fetches the locks deterministically and gives the model a verified `extra_system_context` (`chaster/status_context.py`: count, sanitised titles, raw status, time remaining, fetch time, provider-reported label; no other fields). The model only phrases the reply (tools off, text only). Not configured / not connected / reconnect / outage / API error, or any generation failure, produce the deterministic embed with no model text. 1994 tests repository-wide.
+
+
+### English phrasing (v0.37; was Czech phrasing, v0.30)
+
+`czech_text.format_time_czech(seconds)` inflects days/hours/minutes in code (1 -> singular, exactly 2-4 -> `dny/hodiny/minuty`, else `dní/hodin/minut`; zero units omitted; < 1 minute -> `méně než minuta`; negative -> ValueError). `llm_lock_view.build_lock_view(lock, now=, language=)` produces the dict the model sees (`lock_name`, `status`, `time_remaining_formatted`, `time_expired`, `has_end_time`, `can_be_unlocked`, `is_frozen`, `is_keyholder_lock`). Only `title`/`status`/`endDate` are confirmed Chaster fields; the three optional ones are `null` unless present with a boolean/object of the expected type. `status_context.build_chaster_status_context(..., language="cs")` appends `CZECH_STATUS_SYSTEM_PROMPT`. 2050 tests repository-wide.
+
+
+### Live-test fixes (v0.31)
+
+The lock view now carries `state` (frozen > expired > no_end_time > running). Frozen removes the countdown, sets `time_expired` false and `can_be_unlocked` null. The Czech prompt gained confidentiality, begging, no-commands (with negative examples) and numeral-verb-agreement rules (`Zbývající čas: **X**`). 2066 tests repository-wide.
+
+
+v0.32: the Czech status prompt also forbids quoting the raw `status` field. 2069 tests repository-wide.
+
+
+### Several locks (v0.33)
+
+Each lock is turned into a view from its own dict only (`build_lock_views`); nothing is carried between iterations and inputs are not mutated (tested with a frozen keyholder lock plus a running self-lock, in both orders). The investigation found no Python path that drops a lock or moves a frozen flag, so if the live model still omits a lock, check the log line `Chaster status context built` (`lock_count`, `lock_states`, `chaster_statuses`, `lock_types`): `lock_count` 1 means Chaster's `GET /locks?status=active` itself returned one lock (a server-side filter -- not changeable in the view layer), while `lock_count` 2 with correct states means the model is mis-reading a correct context. 2082 tests repository-wide.
+
+
+v0.34: the Czech status prompt carries the same direct-wording rule for explaining limits. 2084 tests repository-wide.
+
+
+### Passive context in ordinary chat (v0.35)
+
+`mentions_lock_topic()` (broad word-prefix check, diacritics-insensitive) or an active connection makes `ApplicationService` load the lock data for the normal conversation path via `build_chaster_chat_context`. Any failure yields no context (chat continues). With context present the model-chosen `get_chaster_status` tool is not offered (the data is already there); explicit status questions still use the status path. 2122 tests repository-wide. The Czech status prompt also requires the infinitive after helper verbs (`můžeš zkusit`, not `můžeš zkus`).
+
+
+v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 2110 tests repository-wide.

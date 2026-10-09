@@ -215,6 +215,11 @@ fallback.
   `chaster connect` issues a fresh link even for an already-connected
   user. New `chaster disconnect` is a deterministic, local-only removal
   with a green/blue embed. See `chaster/README.md` for the full detail.
+- **Chaster LLM tool embeds.** When `ConversationResponse.tool_outputs`
+  holds a `ChasterToolOutcome`, `ApplicationService` attaches the
+  `EmbedSpec` built by the shared `_chaster_message()` (the same builder
+  `chaster status` uses) to the model's conversational reply. The embed
+  is built from the real tool output, never from model text.
 - **First Testable Keyholder Milestone, Slice D.** `ApplicationService.__init__`
   gained new, optional `lock_state`/`task_runtime`/`task_catalog`
   parameters — see `conversation_engine/README.md`'s own "Slice D"
@@ -301,3 +306,17 @@ fallback.
 - **Any channel other than Discord** — the boundary above is designed
   to make a second adapter possible without touching `application/`,
   but no second adapter exists yet.
+
+
+v0.28: `handle_message` runs `is_chaster_status_query` after the command router and before the engine; a match returns the `chaster status` reply (embed) without involving any model. `_handle_chaster_status` now returns a red "Chaster Not Configured" embed when no token manager is configured.
+
+
+v0.29: `_answer_chaster_status_question` implements the hybrid path (read data -> `extra_system_context` -> engine text; deterministic embed for every non-success state and for generation failure). `_read_chaster_outcome` is shared with `chaster status`.
+
+
+v0.30: the hybrid lock-status path passes the user's language to `build_chaster_status_context`; `cs` selects the Czech prompt and pre-formatted Czech time.
+
+
+v0.35: general chat turns load Chaster context (`_chaster_chat_context`) for lock-related wording or an active connection; failures are swallowed so chat is never blocked.
+
+v0.37: English only. The hybrid status path and the passive chat context no longer take a language (`build_chaster_*_context(locks, now=)`), the engine is always called with `en`, and onboarding offers English only (accounts that stored `cs` keep working and get English). 2110 tests.

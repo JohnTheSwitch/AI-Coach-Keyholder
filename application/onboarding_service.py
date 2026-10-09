@@ -36,7 +36,6 @@ __all__ = ["OnboardingService"]
 
 _LANGUAGE_CHOICES: dict[str, str] = {
     "1": "en", "english": "en", "en": "en",
-    "2": "cs", "cs": "cs", "čeština": "cs", "cestina": "cs", "czech": "cs",
 }
 
 _AI_GENDER_CHOICES: dict[str, IdentityGroup] = {
@@ -148,8 +147,7 @@ class OnboardingService:
         return (
             "Welcome! Let's get you set up — this only takes a moment.\n\n"
             "What language would you like to use?\n"
-            "1) English\n"
-            "2) Čeština"
+            "1) English"
         )
 
     def _handle_language(self, preferences: UserPreferences, normalized: str, *, now: datetime) -> OnboardingResult:
