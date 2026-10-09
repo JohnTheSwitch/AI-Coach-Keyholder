@@ -49,3 +49,5 @@ build/
 # Secrets
 secrets/
 data/
+
+test_llm.py
