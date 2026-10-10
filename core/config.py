@@ -131,6 +131,20 @@ class Config:
     quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
     quiet_hours_end: str = "07:00"
 
+    # v0.39 scheduling windows (schedule_windows/). All local-time rules use APP_TIMEZONE.
+    app_timezone: str = "Europe/Prague"
+    workday_start: str = "07:00"
+    workday_end: str = "16:30"
+    holiday_country: str = "CZ"
+    # Adaptive release: target = WORKDAY_END + a pseudorandom offset in this range (minutes).
+    unlock_window_min_offset_minutes: int = 30
+    unlock_window_max_offset_minutes: int = 210
+    # Safety backstop: a barrier held longer than this is released at the next valid
+    # window regardless of tokens (placeholder value pending owner tuning).
+    max_barrier_hold_hours: int = 72
+    # Proactive supervision (trust-driven state; consumes trust_domain.recalculated). OFF by default.
+    enable_supervision: bool = False
+
     @classmethod
     def load(cls, env_path: Path | None = None) -> Config:
         """
@@ -181,4 +195,12 @@ class Config:
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),
+            app_timezone=get("APP_TIMEZONE", "Europe/Prague") or "Europe/Prague",
+            workday_start=get("WORKDAY_START", "07:00") or "07:00",
+            workday_end=get("WORKDAY_END", "16:30") or "16:30",
+            holiday_country=get("HOLIDAY_COUNTRY", "CZ") or "CZ",
+            unlock_window_min_offset_minutes=int(get("UNLOCK_WINDOW_MIN_OFFSET_MINUTES", "30") or "30"),
+            unlock_window_max_offset_minutes=int(get("UNLOCK_WINDOW_MAX_OFFSET_MINUTES", "210") or "210"),
+            max_barrier_hold_hours=int(get("MAX_BARRIER_HOLD_HOURS", "72") or "72"),
+            enable_supervision=(get("ENABLE_SUPERVISION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
         )

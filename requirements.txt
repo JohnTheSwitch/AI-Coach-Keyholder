@@ -12,3 +12,9 @@ cryptography>=42.0.0
 # Note: SQLite is part of the Python stdlib, no dependency needed.
 # Note: .env is parsed by our own minimal loader in core/config.py --
 #       python-dotenv is deliberately not used (see the comment in that file).
+
+# v0.39 -- local-time scheduling windows (schedule_windows/). `holidays` supplies the
+# Czech public-holiday calendar; `tzdata` provides the IANA time-zone database that
+# zoneinfo needs on Windows. See docs/architecture/v039_adaptive_release_and_supervision_proposal.md.
+holidays>=0.106
+tzdata>=2026.1
