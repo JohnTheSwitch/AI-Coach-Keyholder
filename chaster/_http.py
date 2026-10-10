@@ -44,8 +44,8 @@ __all__ = ["send_with_ordered_headers"]
 
 def send_with_ordered_headers(
     method: str, url: str, *,
-    params: dict | None = None, data: dict | None = None, headers: dict | None = None,
-    timeout: tuple[float, float] | float,
+    params: dict | None = None, data: dict | None = None, json: object | None = None,
+    headers: dict | None = None, timeout: tuple[float, float] | float,
 ) -> requests.Response:
     """Sends a request through `requests`, with the final header set
     reordered so `Authorization` comes first and `User-Agent` comes
@@ -56,7 +56,7 @@ def send_with_ordered_headers(
     verification, retry behavior, or any setting beyond the header
     order itself."""
     session = requests.Session()
-    request = requests.Request(method, url, params=params, data=data, headers=headers or {})
+    request = requests.Request(method, url, params=params, data=data, json=json, headers=headers or {})
     prepared = session.prepare_request(request)
 
     ordered: CaseInsensitiveDict = CaseInsensitiveDict()

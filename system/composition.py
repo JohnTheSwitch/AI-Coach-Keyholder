@@ -18,7 +18,8 @@ from chaster_execution.control import ExecutionControl
 from chaster_execution.executor import ChasterExecutor
 from chaster_execution.hydration import make_snapshot_provider
 from chaster_execution.models import ExecStatus
-from chaster_execution.transport import TRANSPORT_UNAVAILABLE_REASON, build_keyholder_transport
+from chaster_execution.transport import build_keyholder_transport
+from infrastructure.clock import Clock, SystemClock
 from rules_engine.repository import RulesEngineService
 from trust_manager.repository import TrustManager
 
@@ -40,10 +41,10 @@ class RulesExecutionWiring:
 
 def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
-    transport=None,
+    transport=None, clock: Clock | None = None,
 ) -> RulesExecutionWiring:
-    """`transport` is injectable for tests; production passes None and gets the
-    gated factory (currently unavailable, see chaster_execution/transport.py)."""
+    """`transport` is injectable for tests; production passes None and gets the real
+    ChasterHttpTransport bound to the KEYHOLDER connection (chaster_execution/transport.py)."""
     out = RulesExecutionWiring()
     if not config.enable_rules_engine:
         out.notes.append("Rules Engine disabled (ENABLE_RULES_ENGINE=false).")
@@ -71,9 +72,12 @@ def build_rules_and_execution(
             problem = ("it needs Chaster fully configured plus CHASTER_EXECUTION_WEARER_USER_ID and "
                        "CHASTER_EXECUTION_KEYHOLDER_USER_ID")
         else:
-            transport = transport if transport is not None else build_keyholder_transport()
             if transport is None:
-                problem = TRANSPORT_UNAVAILABLE_REASON
+                transport = build_keyholder_transport(
+                    token_manager=token_manager, keyholder_user_id=keyholder_id, clock=clock or SystemClock(),
+                )
+            if transport is None:
+                problem = "no Chaster transport is available"
         if problem is not None:
             out.notes.append(f"ENABLE_CHASTER_EXECUTION is true but execution is NOT active: {problem}.")
         else:

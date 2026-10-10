@@ -1,24 +1,37 @@
 # chaster_execution — Phase 3 (execution plane)
 
 Canonical: `docs/architecture/chaster_execution_phase3_proposal.md` (approved).
-Applies Rules Engine decisions to a Chaster lock. **Built, tested and wired, but
-the real Chaster transport is deliberately unavailable** (see "Blocker").
+Applies Rules Engine decisions to a Chaster lock. **Built, tested and wired; the real
+transport exists but `ENABLE_CHASTER_EXECUTION` stays false until live testing.**
 
-## Blocker: the update-time request body is undocumented
+## The Chaster transport (`ChasterHttpTransport`, Route A)
 
-Read directly from Chaster's OpenAPI (`api.chaster.app/api-json`, v0.35.0):
-`POST /locks/{lockId}/update-time` (scope `locks`; needs the caller to hold
-`lock.time.add` / `lock.time.remove`; 204 / 400 / 401 / 403 / 404), but its
-request schema `UpdateTimeDto` has **no properties**. Nothing documents how the
-amount, direction or unit are sent. The only documented time bodies are the
-Extensions API actions (`{"action":{"name":"add_time","params":<seconds>}}`,
-scope `developer`), which is not the approved Route A. We do not guess a body
-for an irreversible action, so `chaster_execution/transport.py` returns `None`
-(`UPDATE_TIME_REQUEST_BODY_CONFIRMED = False`). With
-`ENABLE_CHASTER_EXECUTION=true` the app logs why and keeps recording dry-run
-decisions. To unblock: a documented schema, or a request captured from Chaster's
-own client for a keyholder adding/removing time, then implement
-`build_keyholder_transport()` and flip the constant.
+`POST https://api.chaster.app/locks/{lockId}/update-time`, authenticated with the
+KEYHOLDER connection's access token (the existing token manager: transparent
+refresh, one refresh-and-retry on a 401), JSON body `{"duration": <integer
+seconds>}`, positive = add time, negative = remove time.
+
+**This request contract is owner-supplied, not documented by Chaster.** Chaster's
+OpenAPI (v0.35.0) defines the endpoint (scope `locks`; permissions
+`lock.time.add` / `lock.time.remove`; 204 / 400 / 401 / 403 / 404) but leaves its
+request schema `UpdateTimeDto` with no properties. Before trusting it:
+the first live use must be one 1-hour change on a test lock, comparing the lock's
+end date before and after (`lock_decision_executions.end_date_before` records the
+"before"). A wrong sign convention would otherwise move time the wrong way
+without any error.
+
+- Outcomes: 204 OK; 400 not eligible; 403 forbidden; 404 not found; 401 refresh
+  once then unauthorised. Any other status (including any other 2xx and every
+  5xx), a read timeout or a dropped connection is **unknown** and ends as
+  `needs_review`, never retried. Only a connect timeout, a missing/unrefreshable
+  connection or rejected input is "not sent".
+- Defence in depth: the lock id must match `[A-Za-z0-9_-]{1,64}` (it is placed in
+  the URL), and the amount must be a positive int of at most 6 hours.
+- The token lives only in the Authorization header of the single request; it is
+  never logged, stored or returned. TLS verification is untouched. Tests inject a
+  fake `send` or patch `requests.Session.send`; nothing touches the network.
+- `chaster/_http.py::send_with_ordered_headers` gained an optional `json=`
+  parameter (header order and TLS behaviour unchanged).
 
 ## What is implemented
 
@@ -72,7 +85,7 @@ emergency plane. No token, header or body is stored or logged. TLS is untouched.
 
 ## Tests
 
-`tests/chaster_execution/` (71 tests, fake transport, no network): switches and
+`tests/chaster_execution/` (122 tests, fake transport, no network): switches and
 halt (including mid-run), every status transition, claim uniqueness, crash
 recovery, no automatic retry, staleness, each pre-flight refusal, limits on
 executed history only, observation extraction, composition flags, an end-to-end

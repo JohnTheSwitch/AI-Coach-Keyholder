@@ -1,40 +1,146 @@
 """
 chaster_execution/transport.py
 
-Factory for the real Chaster write transport.
+The real Chaster write transport (Route A: the KEYHOLDER connection's OAuth token).
 
-BLOCKED (do not remove this gate without evidence): the official OpenAPI
-document (api.chaster.app/api-json, v0.35.0, read directly) defines
-`POST /locks/{lockId}/update-time` (scope `locks`, permissions
-`lock.time.add` / `lock.time.remove`, 204 on success) but its request schema
-`UpdateTimeDto` is an object with NO properties. How an amount of time and
-its direction/unit are sent is therefore undocumented, and this project must
-not guess a request body for an irreversible action. The only documented time
-bodies belong to the Extensions API (`add_time` / `remove_time`, `params` in
-seconds, scope `developer`), which is a different route from the approved
-Route A.
+Request contract -- OWNER-SUPPLIED, not in Chaster's OpenAPI:
+    POST https://api.chaster.app/locks/{lockId}/update-time
+    Authorization: Bearer <keyholder access token>
+    Content-Type: application/json
+    {"duration": <integer seconds>}      positive = ADD time, negative = REMOVE time
 
-Until the body is confirmed (a documented schema, or a captured real request
-from the owner), the factory returns None and the execution plane is not
-started: with ENABLE_CHASTER_EXECUTION=true the app logs why and keeps
-recording dry-run decisions only.
+Chaster's published OpenAPI (v0.35.0) leaves `UpdateTimeDto` with no properties,
+so this body and its sign convention come from the project owner and have not
+been verified against Chaster. The first live use must therefore be a single
+1-hour change on a test lock, checked against the lock's end date before and
+after (the audit log stores `end_date_before`). A wrong sign convention would
+otherwise fail silently in the wrong direction.
+
+Outcome mapping (documented codes of the endpoint): 204 -> OK; 400 -> NOT_ELIGIBLE;
+403 -> FORBIDDEN (missing lock.time.add / lock.time.remove); 404 -> NOT_FOUND;
+401 -> the token manager refreshes once and retries once (a 401 means the request
+was not processed), else UNAUTHORIZED. Anything else, including any other 2xx,
+a 5xx, a read timeout or a dropped connection, is UNKNOWN (ambiguous, never
+retried). Only a connect timeout, a missing/unrefreshable connection or a
+rejected input counts as NOT_SENT.
+
+Secrets: the token only ever lives in the Authorization header of the one
+request; it is never logged, returned or stored. TLS verification is untouched.
 """
 
 from __future__ import annotations
 
-from chaster_execution.models import LockActionTransport
+import logging
+import re
+from typing import Callable
 
-__all__ = ["UPDATE_TIME_REQUEST_BODY_CONFIRMED", "TRANSPORT_UNAVAILABLE_REASON", "build_keyholder_transport"]
+import requests
 
-UPDATE_TIME_REQUEST_BODY_CONFIRMED = False
-
-TRANSPORT_UNAVAILABLE_REASON = (
-    "the request body of POST /locks/{lockId}/update-time is not documented in Chaster's OpenAPI "
-    "(UpdateTimeDto has no properties); refusing to guess it for an irreversible action"
+from chaster import CHASTER_USER_AGENT
+from chaster._http import send_with_ordered_headers
+from chaster.lock_client import (
+    DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_READ_TIMEOUT_SECONDS,
+    LOCKS_URL,
+    ChasterLockApiError,
 )
+from chaster.token_manager import (
+    ChasterNotConnectedError,
+    ChasterReauthorizationRequiredError,
+    ChasterRefreshUnavailableError,
+    ChasterTokenManager,
+)
+from chaster_execution.models import LockActionTransport, TransportOutcome, TransportResult
+from infrastructure.clock import Clock
+from rules_engine.limits import MAX_SINGLE_ACTION_HOURS
+
+logger = logging.getLogger("ai_coach_keyholder.chaster_execution.transport")
+
+__all__ = ["ChasterHttpTransport", "build_keyholder_transport", "UPDATE_TIME_REQUEST_BODY_CONFIRMED"]
+
+# True because the owner supplied the contract above. It is NOT confirmed by
+# Chaster's documentation; see the module docstring before the first live call.
+UPDATE_TIME_REQUEST_BODY_CONFIRMED = True
+
+_LOCK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_SECONDS = MAX_SINGLE_ACTION_HOURS * 3600
 
 
-def build_keyholder_transport() -> LockActionTransport | None:
+class ChasterHttpTransport:
+    def __init__(
+        self,
+        *,
+        token_manager: ChasterTokenManager,
+        keyholder_user_id: str,
+        clock: Clock,
+        send: Callable[..., requests.Response] = send_with_ordered_headers,
+    ) -> None:
+        if not keyholder_user_id or not keyholder_user_id.strip():
+            raise ValueError("keyholder_user_id must be non-empty")
+        self._tokens = token_manager
+        self._keyholder_user_id = keyholder_user_id
+        self._clock = clock
+        self._send = send            # injectable so tests never touch the network
+
+    def add_time(self, *, lock_id: str, seconds: int) -> TransportResult:
+        return self._update_time(lock_id, seconds, sign=1)
+
+    def remove_time(self, *, lock_id: str, seconds: int) -> TransportResult:
+        return self._update_time(lock_id, seconds, sign=-1)
+
+    # ------------------------------------------------------------------
+
+    def _update_time(self, lock_id: str, seconds: int, *, sign: int) -> TransportResult:
+        if (
+            not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id)
+            or isinstance(seconds, bool) or not isinstance(seconds, int)
+            or not (1 <= seconds <= _MAX_SECONDS)
+        ):
+            return TransportResult(outcome=TransportOutcome.NOT_SENT)   # rejected input; nothing left the process
+
+        url = f"{LOCKS_URL}/{lock_id}/update-time"
+        body = {"duration": sign * seconds}
+
+        def operation(token: str) -> TransportResult:
+            try:
+                response = self._send(
+                    "POST", url, json=body,
+                    headers={"Authorization": f"Bearer {token}", "User-Agent": CHASTER_USER_AGENT},
+                    timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+                )
+            except requests.ConnectTimeout:
+                return TransportResult(outcome=TransportOutcome.NOT_SENT)
+            except requests.RequestException:
+                # Read timeout, reset connection, ...: the request may have been processed.
+                return TransportResult(outcome=TransportOutcome.UNKNOWN)
+
+            status = response.status_code
+            if status == 401:
+                raise ChasterLockApiError("Chaster rejected the access token.", status_code=401)
+            mapping = {
+                204: TransportOutcome.OK,
+                400: TransportOutcome.NOT_ELIGIBLE,
+                403: TransportOutcome.FORBIDDEN,
+                404: TransportOutcome.NOT_FOUND,
+            }
+            return TransportResult(outcome=mapping.get(status, TransportOutcome.UNKNOWN), http_status=status)
+
+        try:
+            return self._tokens.call_with_token(self._keyholder_user_id, now=self._clock.now(), operation=operation)
+        except (ChasterNotConnectedError, ChasterRefreshUnavailableError):
+            return TransportResult(outcome=TransportOutcome.NOT_SENT)
+        except ChasterReauthorizationRequiredError:
+            return TransportResult(outcome=TransportOutcome.UNAUTHORIZED, http_status=401)
+        except ChasterLockApiError:
+            return TransportResult(outcome=TransportOutcome.UNKNOWN)
+        except Exception:
+            logger.exception("Unexpected error in the Chaster transport; outcome treated as unknown.")
+            return TransportResult(outcome=TransportOutcome.UNKNOWN)
+
+
+def build_keyholder_transport(
+    *, token_manager: ChasterTokenManager, keyholder_user_id: str, clock: Clock,
+) -> LockActionTransport | None:
     if not UPDATE_TIME_REQUEST_BODY_CONFIRMED:
         return None
-    raise NotImplementedError("Implement the confirmed request body here.")  # pragma: no cover
+    return ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=keyholder_user_id, clock=clock)

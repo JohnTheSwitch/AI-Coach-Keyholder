@@ -227,3 +227,13 @@ Also confirmed in the raw spec: `LockForWearer` / `LockForKeyholder` carry `stat
 `{isFrozen: boolean}`; permission names `lock.time.add`, `lock.time.remove`,
 `lock.freeze`, `lock.unfreeze` exist. `tests/` and the schema treat the keyholder
 connection as an ordinary `chaster_connections` row under its own internal user id.
+
+### 10.1 Update (transport unblocked by the owner)
+
+The owner supplied the `update-time` contract: `POST /locks/{lockId}/update-time`,
+Bearer token of the keyholder connection, body `{"duration": <seconds>}`, positive
+adds and negative removes. This is **not** in Chaster's OpenAPI and is unverified;
+`ChasterHttpTransport` implements it with the conservative outcome mapping in
+`chaster_execution/README.md`, and the first live use must be a single 1-hour change
+on a test lock checked against the end date before and after. Execution remains off
+by default (`ENABLE_CHASTER_EXECUTION=false`, plus the seeded runtime halt).

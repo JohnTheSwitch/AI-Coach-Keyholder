@@ -19,7 +19,6 @@ from chaster.token_manager import ChasterTokenManager
 from chaster_execution.control import ExecutionControl
 from chaster_execution.hydration import snapshot_from_observation
 from chaster_execution.models import TransportOutcome, TransportResult
-from chaster_execution.transport import UPDATE_TIME_REQUEST_BODY_CONFIRMED, build_keyholder_transport
 from goal_management.models import GoalInterventionType, GoalOutcome
 from goal_management.repository import GoalManager
 from infrastructure.clock import FrozenClock
@@ -129,12 +128,6 @@ class TestControl:
             ExecutionControl(core.db_path, core=core).set_halted(False, reason=" ", now=NOW)
 
 
-class TestTransportGate:
-    def test_real_transport_stays_unavailable_until_the_body_is_confirmed(self) -> None:
-        assert UPDATE_TIME_REQUEST_BODY_CONFIRMED is False
-        assert build_keyholder_transport() is None
-
-
 def _config(core, **kw):
     base = dict(db_path=core.db_path, enable_rules_engine=True, enable_chaster_execution=False,
                 chaster_execution_wearer_user_id="w", chaster_execution_keyholder_user_id="k")
@@ -168,10 +161,14 @@ class TestComposition:
         w = build_rules_and_execution(_config(core), core, **_chaster_parts(core))
         assert w.rules_engine is not None and w.executor is None
 
-    def test_execution_without_a_real_transport_is_not_active_and_says_why(self, core) -> None:
+    def test_execution_builds_the_real_http_transport_by_default(self, core) -> None:
+        from chaster_execution.transport import ChasterHttpTransport
         w = build_rules_and_execution(_config(core, enable_chaster_execution=True), core, **_chaster_parts(core))
-        assert w.executor is None and w.rules_engine is not None
-        assert any("NOT active" in n and "update-time" in n for n in w.notes)
+        assert w.executor is not None and isinstance(w.executor._transport, ChasterHttpTransport)
+
+    def test_execution_flag_off_builds_no_transport_and_no_executor(self, core) -> None:
+        w = build_rules_and_execution(_config(core), core, **_chaster_parts(core))
+        assert w.executor is None
 
     def test_execution_needs_both_identities(self, core) -> None:
         w = build_rules_and_execution(

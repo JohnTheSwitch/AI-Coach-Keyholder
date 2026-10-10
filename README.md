@@ -50,7 +50,7 @@ real architectural findings surfaced while building it:
 - [`rules_engine/README.md`](rules_engine/README.md) -- Phase 2 deterministic
   lock-decision core (strict dry run; executes nothing).
 - [`chaster_execution/README.md`](chaster_execution/README.md) -- Phase 3 execution
-  plane (state machine, audit, halt switch; real transport blocked, see its README).
+  plane (state machine, audit, halt switch, Chaster HTTP transport; execution off by default).
 - [`penalty_engine/README.md`](penalty_engine/README.md) -- the
   PenaltyWindow state machine, freeze-as-a-set-of-reasons, Extension
   (`should_extend()`), and Recovery Credit.
@@ -66,7 +66,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**2285 passing tests** across the whole repository (`pytest`), including
+**2336 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
