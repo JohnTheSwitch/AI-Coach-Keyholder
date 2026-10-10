@@ -546,3 +546,53 @@ Interpretations made (please confirm):
    `system_verified`. It also lowers Trust through the normal incident path, in addition to the per-check-in evidence
    (-0.06 per missed check-in).
 7. **Retroactivity.** Goals completed while the release engine is off are not paid back when it is switched on.
+
+### 11.8 Behavioural refinements (owner directive) -- specification, pure modules, and conflicts
+
+**Implemented as pure, UNWIRED modules (no behaviour of the running system changed):**
+`release_engine/token_pool.py` (Token Progress Pool), `trust_manager/clean_streak.py` (Clean Day recovery),
+`penalty_engine/duration.py` (dynamic window duration, headroom cap, severity ranges), `penalty_engine/violations_catalog.py`
+(catalog by domain). Tests: `tests/system/test_behavior_model.py`.
+
+**Specified values.**
+- *Token Progress Pool.* `P_daily = (0.75 * completed/total + 0.25 * trust) * 0.286`, evaluated at local midnight; at `P >= 1.0` earn
+  one token (`token_pool.earned`) and subtract 1.0. Decimal arithmetic. A perfect week yields exactly 2 tokens.
+- *Clean Day.* No violation, every assigned goal met, every check-in on time and sufficient. Streak recovery +0.008 (days 1-3),
+  +0.015 (4-7), +0.025 (8+), Trust capped at 1.00; any violation / failed goal / missed check-in resets the streak.
+- *Penalty duration.* `PW_Days = MaxDays - Trust * (MaxDays - MinDays)` in whole hours. Ranges (days): minor 1-3 / 2-5, moderate
+  3-5 / 5-10, severe 5-7 / 8-15 (Standard / Advanced). First minor offense = warning, 0 hours. A new window never exceeds 168 h
+  (Standard) / 360 h (Advanced); the rest of the hard cap (336 h / 720 h) is reserved for extensions.
+- *Catalog.* 13 violation codes in three domains with severity, first-offense Trust drop and side effects. Only the three check-in
+  codes can be detected today; hygiene / status-report / settings-tamper / misrepresentation codes are `detectable=False`
+  because the modules that would observe them do not exist.
+
+**Conflicts with already-approved and committed behaviour (NOT applied; decision needed before wiring).**
+1. *Token earning.* Phase 3 resolution: a completed goal earns +1 token immediately (`goal.completed`, committed in c8a4597). The
+   pool replaces that. Both cannot run: choose, then the `goal.completed` consumer is removed.
+2. *Barrier mechanics.* Section 2 says not to enforce `isFrozen` loops and to keep freeze endpoints deferred, but the committed
+   release engine lowers and re-raises the barrier through freeze / unfreeze (`barrier.release`, `barrier.freeze`), and the
+   documented freeze endpoint is the only Chaster mechanism used. The alternative ("lock preventers" / a Single Barrier that is
+   not `isFrozen`) names no API we can call. Which mechanism do you want? Also: an archived lock cannot be re-frozen; the
+   engine already refuses to act unless the lock is `locked` with a keyholder, and a release that unlocks fully ends the lock.
+3. *Check-in penalties.* Committed (Phase 2/3): missed -0.06, insufficient -0.02, incident after 2 consecutive (or 3 in 48 h).
+   Directive: 1st -0.02, 2nd -0.04 plus strict mode, 3rd -0.06 plus incident, insufficient -0.01. Different numbers AND a different
+   escalation point (the committed rule files the incident at the second miss). The 2nd-miss "strict Supervision Mode" also
+   conflicts with strict mode being derived from Trust < 0.40 with hysteresis.
+4. *Incident severity.* The committed escalation incident is low severity (`minor`); the catalog lists it MODERATE.
+5. *Hard cap.* The Penalty Engine caps a window at 336 h for all modes; Advanced 720 h and the 168 h / 360 h initial caps would
+   change `penalty_engine/window.py` (I5) and the Advanced Mode module.
+6. *Goal failures and Trust.* Today a MISSED goal lowers Trust by 0.08 through the goal-assessment path and never opens an
+   Incident; this agrees with the directive (goal failures drive only Trust and the pool).
+7. *Emergency Override.* `philosophy.md` is respected; nothing here touches it, and `application/service.py` still contains no
+   such text.
+
+**Open questions (the directive does not define them).**
+- A day with no assigned goals: the goal ratio is undefined (the pool function refuses `total = 0`). Skip the day, or count 100 %?
+- Is a day with no goals and no check-ins due (Trust level 4) a Clean Day that earns recovery?
+- `last_unlock_timestamp`: evaluation covers goals "since the last unlock"; is the pool otherwise independent of the window?
+- Where the daily evaluation lives (a periodic job under the cycle lease, once per local midnight, idempotent per date) and how
+  streak recovery is recorded (a new Trust evidence type, subject to the 0.5 per row / 0.15 per recalculation caps).
+- Partnered Intimacy (2 tokens, debt down to -2, freezes the timer) has no module yet; the ledger currently forbids a negative
+  balance.
+- Hygiene penalties/lockout and the "complete abandonment of supervision" status need the deferred hygiene module (migration 031).
+- Trust drops for moderate/severe catalog entries are unspecified (stored as 0.00).
