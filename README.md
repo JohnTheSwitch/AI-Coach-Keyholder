@@ -100,8 +100,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Twenty-two sequential database migrations are applied so far
-(`database/migrations/001` through `022`), covering the initial Phase 0
+Twenty-three sequential database migrations are applied so far
+(`database/migrations/001` through `023`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
