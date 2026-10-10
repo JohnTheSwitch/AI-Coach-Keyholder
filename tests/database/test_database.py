@@ -61,7 +61,7 @@ class TestMigrate:
         database = Database(tmp_path / "test.db", backup_dir=tmp_path / "backups")
         first = database.migrate(now=FIXED_TIME)
         second = database.migrate(now=FIXED_TIME)
-        assert first == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]  # 001..026
+        assert first == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]  # 001..028
         assert second == []
 
 

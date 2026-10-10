@@ -31,7 +31,7 @@ __all__ = ["run_periodic_cycle", "periodic_loop", "CYCLE_LEASE_DURATION"]
 CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
-def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor) -> bool:
+def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -40,7 +40,7 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
     try:
         registry = build_consumer_registry(
             TrustManager(core.db_path, core=core), PenaltyEngine(core.db_path, core=core),
-            RecoveryPlanManager(core.db_path, core=core), rules_engine,
+            RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
         )
         process_pending_events(core, registry, claimant=process_id, now=now)
         if rules_engine is not None:
@@ -55,11 +55,12 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
-                        interval_seconds: int = 60) -> None:
+                        interval_seconds: int = 60, supervision=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
+                supervision=supervision,
             )
         except asyncio.CancelledError:
             raise

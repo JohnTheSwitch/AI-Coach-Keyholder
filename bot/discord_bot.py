@@ -107,10 +107,10 @@ class CoachKeyholderBot(discord.Client):
         itself from ever connecting. Chaster callback infrastructure
         being unavailable must never take down the whole bot."""
         if self.periodic is not None:
-            core, rules_engine, executor, interval = self.periodic
+            core, rules_engine, executor, interval, supervision = self.periodic
             self._periodic_task = asyncio.create_task(
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
-                              interval_seconds=interval)
+                              interval_seconds=interval, supervision=supervision)
             )
         if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
             logger.info("Chaster is not configured -- callback listener not started.")
@@ -367,7 +367,7 @@ def main() -> None:
         (logger.warning if "NOT active" in note else logger.info)(note)
 
     try:
-        on_system_startup(core, str(uuid.uuid4()), clock, wiring.rules_engine)
+        on_system_startup(core, str(uuid.uuid4()), clock, wiring.rules_engine, wiring.supervision)
     except StartupLeaseNotAcquired:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)
@@ -384,8 +384,9 @@ def main() -> None:
         chaster_token_manager=chaster_token_manager,
     )
     bot = build_bot(config, db, clock, application_service)
-    if wiring.rules_engine is not None:
-        bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds)
+    if wiring.rules_engine is not None or wiring.supervision is not None:
+        bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
+                        wiring.supervision)
     bot.run(config.discord_token, log_handler=None)
 
 

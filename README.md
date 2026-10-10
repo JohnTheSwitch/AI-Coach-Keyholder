@@ -49,6 +49,11 @@ real architectural findings surfaced while building it:
   recalculation pipeline.
 - [`rules_engine/README.md`](rules_engine/README.md) -- Phase 2 deterministic
   lock-decision core (strict dry run; executes nothing).
+- [`schedule_windows/README.md`](schedule_windows/README.md) -- v0.39 pure local-time windows
+  (quiet / work / discretionary, Czech holidays, DST).
+- [`release_engine/README.md`](release_engine/README.md) -- v0.39 Single Barrier release domain core
+  (hidden token ledger, secret adaptive target, commit point; not yet wired).
+- [`supervision/README.md`](supervision/README.md) -- v0.39 trust-driven supervision state and levels.
 - [`chaster_execution/README.md`](chaster_execution/README.md) -- Phase 3 execution
   plane (state machine, audit, halt switch, Chaster HTTP transport; execution off by default).
 - [`penalty_engine/README.md`](penalty_engine/README.md) -- the
@@ -66,7 +71,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**2336 passing tests** across the whole repository (`pytest`), including
+**2489 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -104,8 +109,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Twenty-six sequential database migrations are applied so far
-(`database/migrations/001` through `026`), covering the initial Phase 0
+Twenty-eight sequential database migrations are applied so far
+(`database/migrations/001` through `028`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -132,7 +137,9 @@ table (the Goal -> Trust bridge), and (025) the Rules Engine's
 [`rules_engine/README.md`](rules_engine/README.md)), and (026) the Phase 3 execution
 plane's foundations (observation frozen/keyholder/end-date columns, an append-only
 execution audit log and the runtime halt switch; see
-[`chaster_execution/README.md`](chaster_execution/README.md)). See
+[`chaster_execution/README.md`](chaster_execution/README.md)), (027) the v0.39 release
+engine's token ledger, release plans and authorizations ([`release_engine/README.md`](release_engine/README.md)),
+and (028) proactive-supervision state ([`supervision/README.md`](supervision/README.md)). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -537,6 +544,9 @@ infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
 trust_manager/   # first domain module (Slice 1+2 -- see trust_manager/README.md)
 rules_engine/    # Phase 2 dry-run decision core (see rules_engine/README.md)
 chaster_execution/ # Phase 3 execution plane (see chaster_execution/README.md)
+schedule_windows/ # v0.39 local-time windows (see schedule_windows/README.md)
+release_engine/  # v0.39 Single Barrier release domain core (see release_engine/README.md)
+supervision/     # v0.39 proactive supervision state (see supervision/README.md)
 penalty_engine/  # second domain module (Slice 1 + Extension + Recovery Credit -- see penalty_engine/README.md)
 recovery_plan/   # third domain module (see recovery_plan/README.md)
 goal_management/ # fourth domain module, first independent of the Trust

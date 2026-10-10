@@ -21,6 +21,7 @@ from chaster_execution.models import ExecStatus
 from chaster_execution.transport import build_keyholder_transport
 from infrastructure.clock import Clock, SystemClock
 from rules_engine.repository import RulesEngineService
+from supervision.repository import SupervisionService
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.system.composition")
@@ -36,6 +37,7 @@ _LIVE_LIMIT_STATUSES = (
 class RulesExecutionWiring:
     rules_engine: RulesEngineService | None = None
     executor: ChasterExecutor | None = None
+    supervision: SupervisionService | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -46,6 +48,9 @@ def build_rules_and_execution(
     """`transport` is injectable for tests; production passes None and gets the real
     ChasterHttpTransport bound to the KEYHOLDER connection (chaster_execution/transport.py)."""
     out = RulesExecutionWiring()
+    if getattr(config, "enable_supervision", False):
+        out.supervision = SupervisionService(config.db_path, core=core)
+        out.notes.append("Proactive supervision state enabled (derived from Trust recalculations).")
     if not config.enable_rules_engine:
         out.notes.append("Rules Engine disabled (ENABLE_RULES_ENGINE=false).")
         return out
