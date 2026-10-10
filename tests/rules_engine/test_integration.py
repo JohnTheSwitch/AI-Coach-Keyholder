@@ -187,7 +187,7 @@ class TestFlagAndIsolation:
                     assert name.split(".")[0] not in forbidden, (path.name, name)
 
     def test_no_other_package_except_wiring_imports_rules_engine(self) -> None:
-        allowed = {"rules_engine", "system", "bot", "tests", ".venv", "venv", "env", "scripts"}
+        allowed = {"rules_engine", "chaster_execution", "system", "bot", "tests", ".venv", "venv", "env", "scripts"}
         for path in ROOT.rglob("*.py"):
             rel = path.relative_to(ROOT)
             if rel.parts[0] in allowed or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:

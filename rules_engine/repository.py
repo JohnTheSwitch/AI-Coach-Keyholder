@@ -63,6 +63,7 @@ class RulesEngineService:
         get_trust_state: Callable[[str], object | None],
         get_lock_snapshot: Callable[[], LockSnapshot | None] | None = None,
         ruleset: Ruleset = DEFAULT_RULESET,
+        limit_history_statuses: tuple[str, ...] | None = None,
     ) -> None:
         """
         `get_trust_state(domain_id)` returns an object with `.score` and
@@ -76,6 +77,10 @@ class RulesEngineService:
         self._get_trust_state = get_trust_state
         self._get_lock_snapshot = get_lock_snapshot
         self._ruleset = validate_ruleset(ruleset)
+        # None (dry run): every recorded actionable decision counts, so the limits
+        # are simulated. In live mode pass the statuses that represent real or
+        # possibly-real actions (executed / executing / pending / needs_review).
+        self._limit_statuses = limit_history_statuses
 
     # -------------------------------------------------------------------
     # Outbox handler (inside consume_event()'s transaction)
@@ -125,10 +130,14 @@ class RulesEngineService:
                 "SELECT inputs_json FROM lock_decisions WHERE trust_domain = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (domain,),
             )
+            status_clause, status_args = "", ()
+            if self._limit_statuses is not None:
+                status_clause = " AND status IN (" + ",".join("?" for _ in self._limit_statuses) + ")"
+                status_args = tuple(self._limit_statuses)
             recent_rows = tx.fetch_all(
                 "SELECT created_at, action_type, hours FROM lock_decisions "
-                "WHERE action_type != ? AND created_at >= ? ORDER BY created_at",
-                (ActionType.NO_ACTION.value, _iso(now - ROLLING_WINDOW)),
+                "WHERE action_type != ? AND created_at >= ?" + status_clause + " ORDER BY created_at",
+                (ActionType.NO_ACTION.value, _iso(now - ROLLING_WINDOW), *status_args),
             )
 
         direction = GoalDirection(trigger["direction"])
