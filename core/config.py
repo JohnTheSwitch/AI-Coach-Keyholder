@@ -114,6 +114,10 @@ class Config:
     # puts provider-reported Chaster data in front of the model.
     chaster_llm_tools_enabled: bool = False
 
+    # Rules Engine (Phase 2). STRICT DRY RUN: when enabled it only records
+    # auditable Decisions; it never calls Chaster. OFF unless explicitly enabled.
+    enable_rules_engine: bool = False
+
     # General
     log_level: str = "INFO"
     quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
@@ -161,6 +165,7 @@ class Config:
             chaster_emergency_bind_port=int(get("CHASTER_EMERGENCY_BIND_PORT", "8421") or "8421"),
             chaster_emergency_unlock_secret=get("CHASTER_EMERGENCY_UNLOCK_SECRET"),
             chaster_llm_tools_enabled=(get("CHASTER_LLM_TOOLS_ENABLED", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_rules_engine=(get("ENABLE_RULES_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),

@@ -179,6 +179,7 @@ Handoff Pattern (`implementation_conventions.md` Section 3).
 | `goal_evaluation.recorded` | goal_management | — | GoalEvaluation | Goal | No | ✔ | ✖ | same |
 | `goal_change_proposal.created`/`.resolved` | goal_management | — | GoalChangeProposal | Goal | No | ✔ | ✖ | same |
 | `goal_accountability_assessment.recorded` | goal_management | trust_manager | GoalAccountabilityAssessment | Goal | **Yes** | ✔ | ✖ | same |
+| `lock_decision.recorded` | rules_engine | — | Decision (dry run) | Lock Decision | No | ✔ | ✖ | `rules_engine_phase2_proposal.md` |
 | `goal_negotiation.opened`/`.round_added`/`.resolved`/`.escalated`/`.moot` | goal_management | — | GoalNegotiation | Goal | No | ✔ | ✖ | same |
 | `recovery_plan.created`/`.frozen`/`.resumed`/`.regenerated`/`.completed` | recovery_plan | — | RecoveryPlan | RecoveryPlan (== PenaltyWindow 1:1) | No | ✔ | ✖ | `recovery_plan_technical_design.md` §5 |
 | `recovery_plan.task_proposed`/`.task_accepted`/`.task_withdrawn` | recovery_plan | — | RecoveryTask | RecoveryPlan | No | ✔ | ✔ (Discord) | same |

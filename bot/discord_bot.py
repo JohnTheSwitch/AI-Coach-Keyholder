@@ -271,8 +271,22 @@ def main() -> None:
     # (Phase 0-2.x had no adapter calling it at all). process_id is a
     # fresh uuid per process start, sufficient for the startup lease's
     # purpose (distinguishing THIS run from a concurrently-running one).
+    rules_engine = None
+    if config.enable_rules_engine:
+        # Phase 2: STRICT DRY RUN. No lock-snapshot provider is wired yet (that
+        # arrives with the Chaster execution phase), so every evaluation records
+        # a NO_ACTION decision explaining that no lock data is available.
+        from rules_engine.repository import RulesEngineService
+        from trust_manager.repository import TrustManager as _TrustManager
+        rules_engine = RulesEngineService(
+            config.db_path, core=core, get_trust_state=_TrustManager(config.db_path, core=core).get_domain_state,
+        )
+        logger.info("Rules Engine enabled (dry run only; nothing is sent to Chaster).")
+    else:
+        logger.info("Rules Engine disabled (set ENABLE_RULES_ENGINE=true to record dry-run decisions).")
+
     try:
-        on_system_startup(core, str(uuid.uuid4()), clock)
+        on_system_startup(core, str(uuid.uuid4()), clock, rules_engine)
     except StartupLeaseNotAcquired:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)

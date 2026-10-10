@@ -47,6 +47,8 @@ real architectural findings surfaced while building it:
 - [`trust_manager/README.md`](trust_manager/README.md) -- Incident
   lifecycle, confirmation, severity assessment, the trust score
   recalculation pipeline.
+- [`rules_engine/README.md`](rules_engine/README.md) -- Phase 2 deterministic
+  lock-decision core (strict dry run; executes nothing).
 - [`penalty_engine/README.md`](penalty_engine/README.md) -- the
   PenaltyWindow state machine, freeze-as-a-set-of-reasons, Extension
   (`should_extend()`), and Recovery Credit.
@@ -62,7 +64,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**2146 passing tests** across the whole repository (`pytest`), including
+**2214 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -100,8 +102,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Twenty-four sequential database migrations are applied so far
-(`database/migrations/001` through `024`), covering the initial Phase 0
+Twenty-five sequential database migrations are applied so far
+(`database/migrations/001` through `025`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -123,7 +125,9 @@ own new `title`/`instructions` columns on `task_template_versions`
 column-free, no fabricated defaults, encrypted-token TEXT columns --
 see `chaster/README.md`), (023) the Chaster provider-observation log, and
 (024) Goal Management's append-only `goal_accountability_assessments`
-table (the Goal -> Trust bridge). See
+table (the Goal -> Trust bridge), and (025) the Rules Engine's
+`lock_decision_triggers`/`lock_decisions` (dry-run decisions only; see
+[`rules_engine/README.md`](rules_engine/README.md)). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -526,6 +530,7 @@ infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
                  # Consumer Registry, Startup Lease, Plugin SDK/Fault
                  # Boundary -- see infrastructure/README.md)
 trust_manager/   # first domain module (Slice 1+2 -- see trust_manager/README.md)
+rules_engine/    # Phase 2 dry-run decision core (see rules_engine/README.md)
 penalty_engine/  # second domain module (Slice 1 + Extension + Recovery Credit -- see penalty_engine/README.md)
 recovery_plan/   # third domain module (see recovery_plan/README.md)
 goal_management/ # fourth domain module, first independent of the Trust
