@@ -385,7 +385,8 @@ def main() -> None:
         (logger.warning if "NOT active" in note else logger.info)(note)
 
     try:
-        on_system_startup(core, str(uuid.uuid4()), clock, wiring.rules_engine, wiring.supervision)
+        on_system_startup(core, str(uuid.uuid4()), clock, wiring.rules_engine, wiring.supervision,
+                          release_task=wiring.release_task)
     except StartupLeaseNotAcquired:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)

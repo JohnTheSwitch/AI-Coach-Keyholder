@@ -148,7 +148,12 @@ class Config:
     # v0.39 Phase 2 (all OFF by default).
     enable_release_engine: bool = False       # periodic Single Barrier release tick
     enable_check_ins: bool = False            # proactive Discord check-ins (needs a trust domain + user)
-    check_in_trust_domain: str | None = None  # the Trust domain whose score sets the level and takes the evidence
+    check_in_trust_domain: str | None = "routine"  # the Trust domain whose score sets the level and takes the evidence
+    # Check-in deadlines (minutes). Strict Supervision Mode (Trust < 0.40) uses the shorter strict values.
+    checkin_response_timeout_minutes: int = 60
+    checkin_follow_up_minutes: int = 30
+    checkin_strict_response_timeout_minutes: int = 30
+    checkin_strict_follow_up_minutes: int = 15
     check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
 
     @classmethod
@@ -212,6 +217,10 @@ class Config:
             enable_supervision=(get("ENABLE_SUPERVISION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_release_engine=(get("ENABLE_RELEASE_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_check_ins=(get("ENABLE_CHECK_INS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            check_in_trust_domain=get("CHECK_IN_TRUST_DOMAIN"),
+            check_in_trust_domain=get("CHECK_IN_TRUST_DOMAIN", "routine") or "routine",
+            checkin_response_timeout_minutes=int(get("CHECKIN_RESPONSE_TIMEOUT_MINUTES", "60") or "60"),
+            checkin_follow_up_minutes=int(get("CHECKIN_FOLLOW_UP_MINUTES", "30") or "30"),
+            checkin_strict_response_timeout_minutes=int(get("CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES", "30") or "30"),
+            checkin_strict_follow_up_minutes=int(get("CHECKIN_STRICT_FOLLOW_UP_MINUTES", "15") or "15"),
             check_in_user_id=get("CHECK_IN_USER_ID"),
         )

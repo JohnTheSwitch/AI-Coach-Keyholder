@@ -175,9 +175,10 @@ class TestLimits:
     def test_single_action_never_exceeds_6_hours(self) -> None:
         assert apply_limits(A.ADD_TIME, 99, (), NOW) == (6, None)
 
-    def test_freeze_counts_against_frequency_and_cooldown(self) -> None:
-        assert apply_limits(A.FREEZE, 0, (ra(100, A.UNFREEZE, 0),), NOW)[1] is not None
+    def test_freeze_is_never_limited_but_unfreeze_is(self) -> None:
+        assert apply_limits(A.FREEZE, 0, (ra(100, A.UNFREEZE, 0),), NOW) == (0, None)
         assert apply_limits(A.FREEZE, 0, (), NOW) == (0, None)
+        assert apply_limits(A.UNFREEZE, 0, (ra(100, A.UNFREEZE, 0),), NOW)[1] is not None
 
     def test_property_no_sequence_exceeds_the_caps(self) -> None:
         """Replay many triggers over a day: totals never exceed the caps."""

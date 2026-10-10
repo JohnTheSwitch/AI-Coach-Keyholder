@@ -26,13 +26,33 @@ from rules_engine.repository import RulesEngineService
 from schedule_windows.windows import WindowConfig, WindowKind, classify
 from supervision.checkin_evaluator import evaluate_check_in
 from supervision.checkins import CheckInSender, CheckInService
+from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
+from supervision.escalation import CheckInEscalation
 from supervision.repository import SupervisionService
 from system.release_tick import ReleaseEnginePeriodicTask
+from trust_manager.models import (
+    BreachDirectness,
+    ConfirmationSource,
+    EvidenceConfidenceLevel,
+    ImpactLevel,
+    IncidentConfirmation,
+    IncidentEvidence,
+    IntentAssessment,
+    RepetitionEvidence,
+)
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.system.composition")
 
 __all__ = ["RulesExecutionWiring", "build_rules_and_execution", "window_config_from"]
+
+# A repeated-non-compliance Incident is always LOW severity: low impact, unclear intent, partial breach,
+# no repetition weighting (severity points 0 + 0 + 1 + 0 -> minor).
+_LOW_SEVERITY_EVIDENCE = IncidentEvidence(
+    actual_or_potential_impact=ImpactLevel.LOW, rule_breach_directness=BreachDirectness.PARTIAL,
+    repetition=RepetitionEvidence(same_rule_confirmed_count=0, evaluation_window_days=2),
+    evidence_confidence=EvidenceConfidenceLevel.HIGH, intentionality=IntentAssessment.UNCLEAR,
+)
 
 _LIVE_LIMIT_STATUSES = (
     ExecStatus.PENDING.value, ExecStatus.EXECUTING.value, ExecStatus.EXECUTED.value, ExecStatus.NEEDS_REVIEW.value,
@@ -105,10 +125,27 @@ def build_rules_and_execution(
                 state = trust.get_domain_state(domain)
                 return None if state is None else state.score
 
+            supervision = out.supervision
+            minutes = lambda name, default: timedelta(minutes=int(getattr(config, name, default)))  # noqa: E731
             out.check_ins = CheckInService(
                 config.db_path, core=core, window_config=window_cfg, user_id=user, trust_domain=domain,
                 get_trust_score=score, sender=check_in_sender,
                 evaluate=lambda prompt, reply: evaluate_check_in(prompt, reply, check_in_complete),
+                # Strict Supervision Mode (Trust < 0.40) shortens the deadlines.
+                is_strict=(lambda: supervision.is_active(domain)) if supervision is not None else (lambda: False),
+                response_timeout=minutes("checkin_response_timeout_minutes", 60),
+                follow_up_window=minutes("checkin_follow_up_minutes", 30),
+                strict_response_timeout=minutes("checkin_strict_response_timeout_minutes", 30),
+                strict_follow_up_window=minutes("checkin_strict_follow_up_minutes", 15),
+                escalation=CheckInEscalation(
+                    config.db_path, core=core, user_id=user,
+                    register_incident=lambda description, now: trust.register_incident_report(
+                        rule_group_id=ESCALATION_RULE_GROUP, trust_domain=domain, description=description,
+                        evidence=_LOW_SEVERITY_EVIDENCE, now=now).id,
+                    confirm_incident=lambda incident_id, evidence, now: trust.confirm_incident(
+                        incident_id, new_confirmation=IncidentConfirmation.CONFIRMED,
+                        source=ConfirmationSource.SYSTEM_VERIFIED, evidence_description=evidence, now=now),
+                ),
             )
             out.notes.append("Proactive check-ins enabled (discretionary window only).")
 

@@ -53,10 +53,18 @@ def apply_limits(
     remains, it is a refusal. FREEZE / UNFREEZE carry no hours but still
     count against the frequency and cooldown limits.
     """
+    if action is ActionType.FREEZE:
+        # Raising the barrier only restrains: it is never blocked by the pool or the cooldown, and it does
+        # not use up the release budget (otherwise a release followed by its re-freeze would block the
+        # next day's release).
+        return 0, None
     is_barrier = action in BARRIER_ACTIONS
-    # Two independent pools: barrier actions are counted only against barrier actions, and
-    # time adjustments only against time adjustments.
-    recent = tuple(a for a in recent if (a.action_type in BARRIER_ACTIONS) == is_barrier)
+    # Two independent pools. The barrier pool limits RELEASES (unfreezes); time adjustments are counted
+    # only against time adjustments.
+    if is_barrier:
+        recent = tuple(a for a in recent if a.action_type is ActionType.UNFREEZE)
+    else:
+        recent = tuple(a for a in recent if a.action_type not in BARRIER_ACTIONS)
     max_actions = BARRIER_MAX_ACTIONS_PER_WINDOW if is_barrier else MAX_ACTIONS_PER_WINDOW
     cooldown = BARRIER_COOLDOWN if is_barrier else ACTION_COOLDOWN
 

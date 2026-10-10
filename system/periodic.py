@@ -42,6 +42,8 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
         registry = build_consumer_registry(
             TrustManager(core.db_path, core=core), PenaltyEngine(core.db_path, core=core),
             RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
+            release_engine=None if release_task is None else release_task.engine,
+            release_user_id=None if release_task is None else release_task.user_id,
         )
         process_pending_events(core, registry, claimant=process_id, now=now)
         if rules_engine is not None:

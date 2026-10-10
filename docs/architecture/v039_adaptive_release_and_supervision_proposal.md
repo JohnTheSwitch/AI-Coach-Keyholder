@@ -516,3 +516,33 @@ Findings made while implementing Phase 2 (need your confirmation):
    flagging rule is not specified. Only the Trust evidence path exists.
 7. **The rubric is a classifier, not an authority:** a prompt-injection attempt can at worst obtain `SUFFICIENT`; nothing else
    the model says is used.
+
+### 11.7 Phase 3 resolutions (binding) and implementation
+
+| Topic | Resolution | Implementation |
+|---|---|---|
+| Token earning | A COMPLETED goal earns one token; missed / partially met earns 0. | Consumer `release_engine` on `goal.completed` (`system/startup.py`), idempotent per event id. |
+| Re-freeze | `FREEZE` (`barrier.freeze`) when the discretionary window ends, the balance drops below 1 outside a session, or the daily session expires. | `ReleaseEnginePeriodicTask._maybe_refreeze()`; one decision per release; see below. |
+| Strict Supervision Mode | Check-in deadline 60 -> 30 min, follow-up 30 -> 15 min when Trust < 0.40. | `CheckInService` (`is_strict`), `CHECKIN_*` env values. |
+| Escalation | 2 consecutive misses, or 3 within 48 h -> low-severity Incident `CHECKIN_REPEATED_NONCOMPLIANCE`. | `supervision/escalation.py`, migration 030. |
+| Check-in Trust domain | `CHECK_IN_TRUST_DOMAIN` defaults to `routine`. | `core/config.py`, `.env.example`. |
+| Test-lock verification | Manual, before `ENABLE_CHASTER_EXECUTION=true`. | Still pending (owner). |
+
+Interpretations made (please confirm):
+1. **Balance < 1 right after a release.** Spending the token for a release always leaves the balance at 0, so a literal
+   "re-freeze when the balance is below 1" would undo the release at once. The re-freeze therefore waits for the end of the
+   *release session* (the discretionary window in which the provider confirmed the release). Outside a session an unfrozen lock
+   without a token is re-frozen; "window ended", "session expired" and "no token" all resolve to the same moment in practice.
+2. **Only a barrier this system lowered is re-raised.** Without a confirmed release of the engine, an unfrozen lock is left alone,
+   so enabling the release engine can never freeze a lock that was never managed as a barrier.
+3. **Re-freeze and the barrier pool.** The pool (2 per 24 h, 4 h cooldown) limits releases. A re-freeze is exempt and does not
+   count, otherwise a release at 20:30 could not be re-frozen at 22:00 (cooldown) and a release plus its re-freeze would block the
+   next day's release.
+4. **One re-freeze decision per release**, retried (max 3, 30-minute back-off) after blocked / failed / expired, never after
+   `needs_review`. A barrier lowered again by hand later is not re-raised automatically.
+5. **Env names.** The strict value you named (`CHECKIN_RESPONSE_TIMEOUT_MINUTES=30`) is implemented as the strict setting
+   `CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES=30`; `CHECKIN_RESPONSE_TIMEOUT_MINUTES` stays the normal 60.
+6. **Escalation evidence.** The Incident is filed as low impact / partial breach / unclear intent (severity `minor`) and confirmed as
+   `system_verified`. It also lowers Trust through the normal incident path, in addition to the per-check-in evidence
+   (-0.06 per missed check-in).
+7. **Retroactivity.** Goals completed while the release engine is off are not paid back when it is switched on.

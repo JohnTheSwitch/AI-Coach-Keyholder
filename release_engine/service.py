@@ -114,14 +114,22 @@ class ReleaseEngine:
             raise ValueError("amount must be a positive int")
 
         def write(tx: Transaction, _s: object) -> str | None:
-            if source_event_id is not None and tx.fetch_one(
-                "SELECT 1 FROM token_ledger WHERE source_event_id = ? AND entry_type = 'earn'", (source_event_id,)
-            ):
-                return None
-            return insert_entry(tx, user_id=user_id, delta=amount, entry_type=LedgerEntryType.EARN,
-                                reason_code=reason_code, now=now, source_event_id=source_event_id)
+            return self._earn_in_transaction(
+                tx, user_id=user_id, amount=amount, reason_code=reason_code, source_event_id=source_event_id, now=now)
 
         return apply_transition(self._core, write=write)
+
+    def _earn_in_transaction(self, tx: Transaction, *, user_id: str, amount: int, reason_code: str,
+                             source_event_id: str | None, now: datetime) -> str | None:
+        """Consumer-handler form of `earn_tokens` (runs inside the outbox consumer's transaction)."""
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount < 1:
+            raise ValueError("amount must be a positive int")
+        if source_event_id is not None and tx.fetch_one(
+            "SELECT 1 FROM token_ledger WHERE source_event_id = ? AND entry_type = 'earn'", (source_event_id,)
+        ):
+            return None
+        return insert_entry(tx, user_id=user_id, delta=amount, entry_type=LedgerEntryType.EARN,
+                            reason_code=reason_code, now=now, source_event_id=source_event_id)
 
     def get_balance(self, user_id: str) -> int:
         with self._core.transaction() as tx:
@@ -180,6 +188,23 @@ class ReleaseEngine:
                 (user_id, *_OPEN_STATES),
             )
         return [(r["id"], ProviderState(r["state"])) for r in rows]
+
+    def last_confirmed_release(self, user_id: str) -> tuple[str, datetime] | None:
+        """The most recent release the provider confirmed, as (authorization id, confirmation time).
+        It opens a *release session* (see `release_session_over`)."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one(
+                "SELECT id, updated_at FROM release_authorizations WHERE user_id = ? AND state = 'provider_confirmed' "
+                "ORDER BY updated_at DESC, rowid DESC LIMIT 1", (user_id,))
+        return None if row is None else (row["id"], _parse_iso(row["updated_at"]))
+
+    def release_session_over(self, confirmed_at: datetime, now: datetime) -> bool:
+        """A release session is the discretionary window in which the release was confirmed. It is over
+        as soon as that window has ended (quiet hours or workday hours begin) or the local date has
+        changed; this is also the daily release session expiry."""
+        if classify(self._cfg, now) is not WindowKind.DISCRETIONARY:
+            return True
+        return self._cfg.local(now).date() != self._cfg.local(confirmed_at).date() or now < confirmed_at
 
     def coarse_phase(self, user_id: str) -> str:
         """The ONLY release datum that may reach a model: requirements_met_pending when a token is

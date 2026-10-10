@@ -54,7 +54,20 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
   composition root hands it to the prompt through `ReleasePhaseContextProvider` (guardrail rule 6 forbids any timing).
 - Weekends and public holidays use a 10:00 base (`WEEKEND_RELEASE_START`) + the same 30-210 minute offset.
 
-## Not built yet
-Token earning from goal/task events (no amount was specified; tokens can only be earned through the domain service
-today), automatic barrier raising, hygiene.
+## Phase 3: token earning and the re-freeze
+- **Earning (owner rule):** a COMPLETED goal (`goal.completed`) earns exactly one token. `system/startup.py` registers the
+  consumer `release_engine` only when the engine is wired; it calls `ReleaseEngine._earn_in_transaction()` (idempotent per
+  event id, reason code `goal.completed`). Goals that are missed, partially met, paused, abandoned or archived earn nothing.
+  Events consumed while the engine is off are not paid back when it is enabled later.
+- **Release session:** the discretionary window in which the provider confirmed a release (`last_confirmed_release()`,
+  `release_session_over()`). It ends when quiet or workday hours begin or the local date changes (this is also the daily
+  session expiry). While it lasts the token balance is naturally 0 (the token paid for this release), so the balance rule below
+  applies only outside a session.
+- **Re-freeze (`system/release_tick.py`, `barrier.freeze`):** once the session is over and a fresh observation shows a locked
+  keyholder lock that is NOT frozen, one `FREEZE` decision is recorded per release (reason code: window ended / no token).
+  It only ever re-raises a barrier this system lowered (a lock that was never released by the engine is left alone), is not done
+  while a release is in flight, needs execution to be active and the runtime halt clear, and is retried up to 3 times with a
+  30-minute back-off after a blocked / failed / expired attempt. `needs_review` is never retried.
+- **Limits:** the barrier pool (2 per 24 h, 4 h cooldown) counts RELEASES (unfreezes). A re-freeze is never blocked and does not
+  use the release budget, otherwise a release and its re-freeze would block the next day's release.
 

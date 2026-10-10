@@ -41,6 +41,15 @@ prompts, answers, evaluation and penalties are later phases.
   follow-up window (a sufficient follow-up clears it); still not sufficient -> `check_in.insufficient`. The Trust Manager
   records `CHECKIN_MISSED` (-0.06) / `CHECKIN_INSUFFICIENT` (-0.02) evidence (placeholders, `BOOTSTRAP_DEFAULT`),
   idempotent, with an immediate recalculation. The last check-in being `missed` vetoes a release.
-- Not built: filing a missed check-in as a low-severity Incident when "flagged" (the flagging rule is unspecified).
-- Config: `CHECK_IN_TRUST_DOMAIN` (required; sets the level and receives the evidence), `CHECK_IN_USER_ID`
+- **Strict Supervision Mode (Trust < 0.40, owner rule):** the response deadline drops from 60 to 30 minutes and the
+  follow-up window after an `INSUFFICIENT` answer from 30 to 15 minutes (`SupervisionService.is_active(domain)` is read when the
+  prompt is sent / the verdict arrives; stored per check-in). Env: `CHECKIN_RESPONSE_TIMEOUT_MINUTES` (60),
+  `CHECKIN_FOLLOW_UP_MINUTES` (30), `CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES` (30), `CHECKIN_STRICT_FOLLOW_UP_MINUTES` (15).
+- **Escalation (`escalation.py`, migration 030):** two CONSECUTIVE missed check-ins, or three missed within any rolling 48 hours,
+  register one low-severity Incident (rule group `CHECKIN_REPEATED_NONCOMPLIANCE`: low impact, partial breach, severity `minor`)
+  through the Trust Manager and confirm it as `system_verified`; the Penalty Engine then consumes it like any confirmed Incident.
+  Only concluded check-ins count; skipped, undeliverable and needs_review prompts are ignored (neither a miss nor a streak
+  breaker). Misses up to an escalation are covered and never counted again; the ledger is
+  `UNIQUE` per triggering check-in and a crash between register and confirm is finished on the next pass.
+- Config: `CHECK_IN_TRUST_DOMAIN` (default `routine`; sets the level and receives the evidence), `CHECK_IN_USER_ID`
   (defaults to `CHASTER_EXECUTION_WEARER_USER_ID`).

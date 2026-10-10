@@ -21,6 +21,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import parse_iso
 from release_engine.service import ProviderState as P
 from release_engine.service import ReleaseEngine
+from rules_engine.models import ActionType as A
 from rules_engine.repository import RulesEngineService
 from schedule_windows.windows import WindowConfig, WindowKind, classify
 from system.release_tick import ReleaseEnginePeriodicTask
@@ -358,3 +359,118 @@ class TestBackstop:
         world = World(tmp_path, can_execute=False, frozen_since=timedelta(days=5))
         world.cycle(local(MON, 18, 0))
         assert world.auth_states() == []
+
+
+def released_world(tmp_path, **kw):
+    """A world in which one token was spent and the provider confirmed the release (barrier now down)."""
+    world = World(tmp_path, **kw)
+    world.tokens()
+    world.cycle()
+    world.cycle(world.target())
+    assert world.auth_states() == ["provider_confirmed"]
+    world.frozen = False                       # the provider really lowered the barrier
+    return world
+
+
+class TestRefreeze:
+    def test_not_during_the_release_session_even_though_the_balance_is_zero(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        assert world.engine.get_balance(U) == 0
+        report = world.cycle(world.now + timedelta(minutes=30))
+        assert not any(n.startswith("barrier_refreeze") for n in report.notes)
+        assert [d["action_type"] for d in world.decisions()] == ["unfreeze"]
+
+    def test_when_the_discretionary_window_ends_the_barrier_is_raised_again(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        report = world.cycle(local(MON, 22, 5))                # quiet hours have begun
+        assert "barrier_refreeze:no_token" in report.notes
+        assert world.transport.calls == [("unfreeze", "lock-1"), ("freeze", "lock-1")]
+        assert world.decisions()[-1] == {"action_type": "freeze", "rule_id": "barrier.freeze", "status": "executed"}
+
+    def test_one_freeze_per_release(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        world.cycle(local(MON, 22, 5))
+        world.frozen = False                                   # even if someone lowers it again by hand
+        world.cycle(local(MON, 23, 30))
+        world.cycle(local(MON + timedelta(days=1), 8, 0))
+        assert [c[0] for c in world.transport.calls] == ["unfreeze", "freeze"]
+
+    def test_the_next_day_also_ends_the_session(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        report = world.cycle(local(MON + timedelta(days=1), 17, 30))      # a new day, back in a discretionary window
+        assert "barrier_refreeze:no_token" in report.notes
+
+    def test_nothing_when_the_barrier_is_still_up(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        world.frozen = True
+        world.cycle(local(MON, 22, 5))
+        assert [c[0] for c in world.transport.calls] == ["unfreeze"]
+
+    def test_never_for_a_barrier_this_system_did_not_lower(self, tmp_path) -> None:
+        world = World(tmp_path, frozen=False)
+        world.cycle(local(MON, 22, 5))
+        assert world.transport.calls == [] and world.decisions() == []
+
+    def test_not_when_execution_is_unavailable_or_halted(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        world.control.set_halted(True, reason="stop", now=world.now)
+        world.cycle(local(MON, 22, 5))
+        assert [c[0] for c in world.transport.calls] == ["unfreeze"]
+        (tmp_path / "x").mkdir()
+        planning_only = released_world(tmp_path / "x")
+        planning_only.task._can_execute = False
+        planning_only.cycle(local(MON, 22, 5))
+        assert [c[0] for c in planning_only.transport.calls] == ["unfreeze"]
+
+    def test_not_with_a_stale_or_ambiguous_observation(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        world.frozen = None
+        world.cycle(local(MON, 22, 5))
+        assert world.decisions()[-1]["action_type"] == "unfreeze"
+        world.status = ChasterProviderStatus.UNLOCKED          # the lock is gone: nothing to freeze
+        world.frozen = False
+        world.cycle(local(MON, 23, 30))
+        assert [c[0] for c in world.transport.calls] == ["unfreeze"]
+
+    def test_failed_attempts_are_retried_with_a_backoff_and_a_cap(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        auth_id, _ = world.engine.last_confirmed_release(U)
+        world.rules.record_barrier_decision(
+            trigger_id=f"barrier-freeze:{auth_id}:0", action=A.FREEZE, rule_id="barrier.freeze",
+            reason="x", now=local(MON, 22, 0))
+        with world.core.transaction() as tx:
+            tx.execute("UPDATE lock_decisions SET status = 'blocked' WHERE trigger_id = ?", (f"barrier-freeze:{auth_id}:0",))
+        world.at(local(MON, 22, 10))
+        world.task.run(world.now)
+        assert world.rules.get_decision_for_trigger(f"barrier-freeze:{auth_id}:1") is None       # back-off
+        world.at(local(MON, 22, 31))
+        world.task.run(world.now)
+        assert world.rules.get_decision_for_trigger(f"barrier-freeze:{auth_id}:1") is not None
+
+    def test_an_in_flight_or_review_decision_is_never_doubled(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        auth_id, _ = world.engine.last_confirmed_release(U)
+        world.rules.record_barrier_decision(
+            trigger_id=f"barrier-freeze:{auth_id}:0", action=A.FREEZE, rule_id="barrier.freeze", reason="x", now=local(MON, 22, 0))
+        with world.core.transaction() as tx:
+            tx.execute("UPDATE lock_decisions SET status = 'needs_review' WHERE trigger_id = ?", (f"barrier-freeze:{auth_id}:0",))
+        world.at(local(MON, 23, 59))
+        world.task.run(world.now)
+        assert world.rules.get_decision_for_trigger(f"barrier-freeze:{auth_id}:1") is None
+
+    def test_a_refreeze_does_not_block_the_next_days_release(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        world.cycle(local(MON, 22, 5))
+        world.frozen = True                                    # the freeze took effect
+        tue = MON + timedelta(days=1)
+        world.at(local(tue, 8, 0))
+        world.tokens(2)
+        world.cycle()
+        world.cycle(world.target())
+        assert [c[0] for c in world.transport.calls] == ["unfreeze", "freeze", "unfreeze"]
+        assert world.decisions()[-1]["status"] == "executed"
+
+    def test_reports_stay_free_of_timestamps(self, tmp_path) -> None:
+        world = released_world(tmp_path)
+        notes = world.cycle(local(MON, 22, 5)).notes
+        assert notes and all(re.fullmatch(r"[a-z_]+(:[a-z_]+)?", n) for n in notes)

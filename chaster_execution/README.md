@@ -95,12 +95,13 @@ periodic cycle (missed goal -> executed decision), and import guards.
 
 The Phase 3 ban on freeze/unfreeze is lifted **only** for barrier management:
 - A `freeze`/`unfreeze` decision executes only when the executor was built with `allow_barrier_actions` (set only with
-  `ENABLE_RELEASE_ENGINE`) **and** its rule id is in `BARRIER_RULE_IDS` (`barrier.release`). A freeze/unfreeze from any
+  `ENABLE_RELEASE_ENGINE`) **and** its rule id is in `BARRIER_RULE_IDS` (`barrier.release`, `barrier.freeze`). A freeze/unfreeze from any
   other rule (for example a custom Rules Engine ruleset) never executes.
 - `ChasterHttpTransport.set_frozen()` uses the **documented** endpoint `POST /locks/{lockId}/freeze` with
   `{"isFrozen": <bool>}` (needs `lock.freeze` / `lock.unfreeze`); same outcome mapping and token handling as the time calls.
-- **Separate limit pool** (`rules_engine/limits.py`): at most 2 barrier actions per 24 h and a 4 h cooldown, counted only
-  against barrier actions; the time pool is unchanged and independent in both directions.
+- **Separate limit pool** (`rules_engine/limits.py`): at most 2 RELEASES (unfreezes) per 24 h and a 4 h cooldown between them;
+  a `FREEZE` (re-raising the barrier, rule `barrier.freeze`) is never blocked by the pool and does not use up the release
+  budget. The time pool is unchanged and independent in both directions.
 - Pre-flight for a barrier action: an `UNFREEZE` needs the barrier up (`isFrozen` exactly true) and, when a window check is
   supplied, a discretionary window at the moment of the call; a `FREEZE` needs it down. Locked + keyholder lock + fresh
   data + scope + halt clear as before.

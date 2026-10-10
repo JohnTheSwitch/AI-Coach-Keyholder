@@ -14,6 +14,7 @@ Lifecycle (compare-and-set transitions, every one idempotent):
   sent --60 min, no reply--> missed                       (event check_in.missed)
   insufficient_pending --follow-up reply--> responded ... (30 minute follow-up window)
   insufficient_pending --30 min, still not sufficient--> insufficient   (event check_in.insufficient)
+  (strict Supervision Mode, Trust < 0.40: the deadline is 30 minutes and the follow-up window 15)
   scheduled --too late / wrong window / level now 4--> skipped          (never a penalty)
 
 Never a penalty: UNCERTAIN / NOT_EVALUATED verdicts, undeliverable or skipped prompts, a
@@ -40,16 +41,20 @@ from infrastructure.time_format import parse_iso as _parse_iso
 from schedule_windows.windows import WindowConfig, WindowKind, classify
 from supervision.checkin_evaluator import RUBRIC_VERSION, Verdict
 from supervision.checkin_schedule import slots_for_day
+from supervision.escalation import CheckInEscalation
 from supervision.models import TrustLevel, check_ins_per_day, trust_level
 
 logger = logging.getLogger("ai_coach_keyholder.supervision.checkins")
 
 __all__ = [
     "CheckInService", "CheckInSender", "SendOutcome", "RESPONSE_TIMEOUT", "FOLLOW_UP_WINDOW", "MAX_LATE", "PROMPTS",
+    "STRICT_RESPONSE_TIMEOUT", "STRICT_FOLLOW_UP_WINDOW",
 ]
 
 RESPONSE_TIMEOUT = timedelta(minutes=60)     # CHECKIN_RESPONSE_TIMEOUT_MINUTES
 FOLLOW_UP_WINDOW = timedelta(minutes=30)     # after an INSUFFICIENT verdict
+STRICT_RESPONSE_TIMEOUT = timedelta(minutes=30)   # strict Supervision Mode (Trust < 0.40)
+STRICT_FOLLOW_UP_WINDOW = timedelta(minutes=15)
 MAX_LATE = timedelta(minutes=30)             # a slot that is this overdue is skipped, not sent
 _STALE_SENDING = timedelta(minutes=5)
 _MAX_RESPONSE_CHARS = 4000
@@ -93,6 +98,12 @@ class CheckInService:
         sender: CheckInSender,
         evaluate: Callable[[str, str], Verdict],
         rand_fraction: Callable[[], float] = random.SystemRandom().random,
+        is_strict: Callable[[], bool] = lambda: False,
+        response_timeout: timedelta = RESPONSE_TIMEOUT,
+        follow_up_window: timedelta = FOLLOW_UP_WINDOW,
+        strict_response_timeout: timedelta = STRICT_RESPONSE_TIMEOUT,
+        strict_follow_up_window: timedelta = STRICT_FOLLOW_UP_WINDOW,
+        escalation: "CheckInEscalation | None" = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -103,6 +114,10 @@ class CheckInService:
         self._sender = sender
         self._evaluate = evaluate
         self._rand = rand_fraction
+        self._is_strict = is_strict
+        self._timeouts = (response_timeout, follow_up_window)
+        self._strict_timeouts = (strict_response_timeout, strict_follow_up_window)
+        self._escalation = escalation
 
     # ------------------------------------------------------------------ driver
 
@@ -112,6 +127,25 @@ class CheckInService:
         self._apply_deadlines(now)
         self._schedule_today(now)
         self._send_due(now)
+        if self._escalation is not None:
+            try:
+                self._escalation.run(now)
+            except Exception:
+                logger.exception("Check-in escalation failed; will retry next cycle.")
+
+    def _response_timeout(self) -> timedelta:
+        """Strict Supervision Mode (Trust < 0.40) shortens the response deadline (60 -> 30 minutes)."""
+        return (self._strict_timeouts if self._strict() else self._timeouts)[0]
+
+    def _follow_up_window(self) -> timedelta:
+        return (self._strict_timeouts if self._strict() else self._timeouts)[1]
+
+    def _strict(self) -> bool:
+        try:
+            return bool(self._is_strict())
+        except Exception:
+            logger.exception("Could not read the supervision state; using the normal deadlines.")
+            return False
 
     # ------------------------------------------------------------------ user replies
 
@@ -221,7 +255,7 @@ class CheckInService:
                 logger.exception("Check-in delivery raised; outcome unknown.")
                 outcome = SendOutcome.UNKNOWN
             if outcome is SendOutcome.DELIVERED:
-                self._cas(row["id"], ("sending",), "sent", now, sent_at=_iso(now), deadline_at=_iso(now + RESPONSE_TIMEOUT))
+                self._cas(row["id"], ("sending",), "sent", now, sent_at=_iso(now), deadline_at=_iso(now + self._response_timeout()))
             elif outcome is SendOutcome.UNDELIVERABLE:
                 self._cas(row["id"], ("sending",), "undeliverable", now)
             else:
@@ -239,7 +273,7 @@ class CheckInService:
             if verdict is Verdict.SUFFICIENT:
                 self._cas(row["id"], ("responded",), "answered", now, **common)
             elif verdict is Verdict.INSUFFICIENT:
-                follow_up = row["follow_up_until"] or _iso(now + FOLLOW_UP_WINDOW)
+                follow_up = row["follow_up_until"] or _iso(now + self._follow_up_window())
                 self._cas(row["id"], ("responded",), "insufficient_pending", now, follow_up_until=follow_up, **common)
             else:     # UNCERTAIN / NOT_EVALUATED: zero consequence (fail closed towards no penalty)
                 self._cas(row["id"], ("responded",), "answered_uncertain", now, **common)

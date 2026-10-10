@@ -363,3 +363,61 @@ class TestSecrecy:
                     [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
                 for n in names:
                     assert n.split(".")[0] not in forbidden, (path.name, n)
+
+
+class TestReleaseSession:
+    def _confirmed(self, core, eng, at):
+        eng.earn_tokens(user_id=U, amount=1, reason_code="r", source_event_id="e", now=local(MON, 9))
+        eng.ensure_plan(user_id=U, now=local(MON, 9))
+        out = eng.commit_authorization(user_id=U, gates=OK, now=target_of(core))
+        eng.mark_provider_requested(authorization_id=out.authorization_id, now=at)
+        eng.mark_provider_confirmed(authorization_id=out.authorization_id, now=at)
+        return out.authorization_id
+
+    def test_no_confirmed_release_means_no_session(self, core) -> None:
+        assert make(core).last_confirmed_release(U) is None
+
+    def test_the_last_confirmed_release_is_reported(self, core) -> None:
+        eng = make(core)
+        auth = self._confirmed(core, eng, local(MON, 18))
+        assert eng.last_confirmed_release(U) == (auth, local(MON, 18))
+        assert eng.last_confirmed_release("someone-else") is None
+
+    def test_failed_or_unknown_releases_are_not_confirmed(self, core) -> None:
+        eng = make(core)
+        eng.earn_tokens(user_id=U, amount=1, reason_code="r", source_event_id="e", now=local(MON, 9))
+        eng.ensure_plan(user_id=U, now=local(MON, 9))
+        out = eng.commit_authorization(user_id=U, gates=OK, now=target_of(core))
+        eng.mark_provider_requested(authorization_id=out.authorization_id, now=local(MON, 18))
+        eng.mark_physical_state_unknown(authorization_id=out.authorization_id, detail="x", now=local(MON, 18))
+        assert eng.last_confirmed_release(U) is None
+
+    @pytest.mark.parametrize("hh,mm,over", [(18, 0, False), (21, 59, False), (22, 0, True), (23, 30, True), (3, 0, True)])
+    def test_the_session_ends_with_the_discretionary_window(self, core, hh, mm, over) -> None:
+        eng = make(core)
+        day = MON if hh >= 7 else MON + timedelta(days=1)
+        assert eng.release_session_over(local(MON, 17, 0), local(day, hh, mm)) is over
+
+    def test_work_hours_of_the_next_day_end_the_session(self, core) -> None:
+        eng = make(core)
+        assert eng.release_session_over(local(MON, 17, 0), local(MON + timedelta(days=1), 10, 0)) is True
+
+    def test_the_next_days_discretionary_window_is_a_new_session(self, core) -> None:
+        eng = make(core)
+        assert eng.release_session_over(local(MON, 17, 0), local(MON + timedelta(days=1), 18, 0)) is True
+
+    def test_a_weekend_session_lasts_until_quiet_hours(self, core) -> None:
+        eng = make(core)
+        sat = date(2026, 10, 17)
+        assert eng.release_session_over(local(sat, 11, 0), local(sat, 15, 0)) is False
+        assert eng.release_session_over(local(sat, 11, 0), local(sat, 22, 0)) is True
+
+    def test_earning_in_a_transaction_is_idempotent_per_event(self, core) -> None:
+        eng = make(core)
+        with core.transaction() as tx:
+            assert eng._earn_in_transaction(tx, user_id=U, amount=1, reason_code="goal.completed", source_event_id="ev", now=local(MON, 9))
+            assert eng._earn_in_transaction(tx, user_id=U, amount=1, reason_code="goal.completed", source_event_id="ev", now=local(MON, 9)) is None
+        assert eng.get_balance(U) == 1
+        with pytest.raises(ValueError):
+            with core.transaction() as tx:
+                eng._earn_in_transaction(tx, user_id=U, amount=0, reason_code="x", source_event_id="e2", now=local(MON, 9))

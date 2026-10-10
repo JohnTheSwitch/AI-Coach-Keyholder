@@ -12,6 +12,8 @@ One pass (`run`):
   4. requirement met (balance >= 1) and the barrier confirmed up -> ensure the secret plan;
   5. plan due -> commit_authorization() (spends the token) -> record an UNFREEZE decision
      under rule `barrier.release` for the executor;
+  2b. re-freeze: once a confirmed release session is over (its discretionary window ended, the day
+     changed) and no token backs an open barrier, record a FREEZE decision (`barrier.freeze`);
   6. maximum-hold backstop (no token) when the barrier has been up for MAX_BARRIER_HOLD_HOURS.
 
 Nothing is committed unless execution is actually possible (`can_execute`) and the runtime
@@ -35,9 +37,13 @@ from rules_engine.repository import RulesEngineService
 
 logger = logging.getLogger("ai_coach_keyholder.system.release_tick")
 
-__all__ = ["ReleaseEnginePeriodicTask", "TickReport", "BARRIER_RELEASE_RULE_ID"]
+__all__ = ["ReleaseEnginePeriodicTask", "TickReport", "BARRIER_RELEASE_RULE_ID", "BARRIER_FREEZE_RULE_ID"]
 
 BARRIER_RELEASE_RULE_ID = "barrier.release"
+BARRIER_FREEZE_RULE_ID = "barrier.freeze"
+_REFREEZE_MAX_ATTEMPTS = 3
+_REFREEZE_BACKOFF = timedelta(minutes=30)     # between attempts after a blocked / failed / expired decision
+_REFREEZE_RECHECK = timedelta(hours=6)        # how long an observation of "frozen" is trusted while watching
 _DECISION_GRACE = timedelta(minutes=16)      # executor expires a decision after 15 minutes
 
 
@@ -77,6 +83,14 @@ class ReleaseEnginePeriodicTask:
         self._can_execute = can_execute
         self._max_hold = max_hold
 
+    @property
+    def engine(self) -> ReleaseEngine:
+        return self._engine
+
+    @property
+    def user_id(self) -> str:
+        return self._user
+
     # ------------------------------------------------------------------ public
 
     def run(self, now: datetime) -> TickReport:
@@ -84,6 +98,9 @@ class ReleaseEnginePeriodicTask:
         self.sync(now, report)
         if self._engine.open_authorizations(self._user):
             report.add("release_in_flight")
+            return report
+
+        if self._maybe_refreeze(now, report):
             return report
 
         veto = ReleaseGates(
@@ -145,6 +162,58 @@ class ReleaseEnginePeriodicTask:
                 self._note(report, "release_needs_review")
 
     # ------------------------------------------------------------------ internals
+
+    def _maybe_refreeze(self, now: datetime, report: TickReport) -> bool:
+        """Raise the barrier again after a release session. Only for a barrier this system lowered (there
+        is a confirmed release), never during the session, and only when a fresh observation shows a
+        locked keyholder lock that is not frozen. One decision per release; failed attempts are retried
+        with a back-off. Returns True when a decision was recorded."""
+        if not self._can_execute or self._halted():
+            return False
+        last = self._engine.last_confirmed_release(self._user)
+        if last is None:
+            return False
+        auth_id, confirmed_at = last
+        if not self._engine.release_session_over(confirmed_at, now):
+            return False                      # the token was spent for this very release: balance 0 is expected
+        attempt, previous = 0, None
+        while attempt < _REFREEZE_MAX_ATTEMPTS:
+            existing = self._rules.get_decision_for_trigger(self._freeze_trigger(auth_id, attempt))
+            if existing is None:
+                break
+            if existing.status not in (DecisionStatus.BLOCKED, DecisionStatus.FAILED, DecisionStatus.EXPIRED):
+                return False                  # in flight, executed, or awaiting human review: never doubled
+            previous, attempt = existing, attempt + 1
+        else:
+            return False
+        if previous is not None and now - previous.created_at < _REFREEZE_BACKOFF:
+            return False
+
+        obs = self._get_obs()
+        if (obs is None or obs.fetched_at <= confirmed_at or now - obs.fetched_at > _REFREEZE_RECHECK
+                or (obs.is_frozen is not True and now - obs.fetched_at > LOCK_DATA_MAX_AGE)):
+            obs = self._fresh_observation(now)
+        if obs is None or not self._barrier_down(obs, now):
+            return False
+        no_token = self._engine.get_balance(self._user) < 1
+        reason = "No token available for an open barrier" if no_token else "Release window ended"
+        self._rules.record_barrier_decision(
+            trigger_id=self._freeze_trigger(auth_id, attempt), action=ActionType.FREEZE,
+            rule_id=BARRIER_FREEZE_RULE_ID, reason=reason, now=now,
+        )
+        report.add("barrier_refreeze:no_token" if no_token else "barrier_refreeze:window_ended")
+        return True
+
+    @staticmethod
+    def _freeze_trigger(authorization_id: str, attempt: int) -> str:
+        return f"barrier-freeze:{authorization_id}:{attempt}"
+
+    @staticmethod
+    def _barrier_down(obs: ChasterProviderObservation, now: datetime) -> bool:
+        age = now - obs.fetched_at
+        if age.total_seconds() < 0 or age > LOCK_DATA_MAX_AGE:
+            return False
+        return obs.status is ChasterProviderStatus.LOCKED and obs.has_keyholder is True and obs.is_frozen is False
 
     def _maybe_backstop(self, now: datetime, report: TickReport) -> None:
         if not self._can_execute or self._halted() or self._engine.open_authorizations(self._user):

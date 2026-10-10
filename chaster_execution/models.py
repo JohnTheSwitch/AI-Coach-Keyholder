@@ -39,7 +39,7 @@ EXECUTABLE_ACTIONS = frozenset({"add_time", "remove_time"})
 # release engine under one of these rule ids. A freeze/unfreeze from any other rule (for example a
 # custom Rules Engine ruleset) never executes.
 BARRIER_ACTIONS = frozenset({"freeze", "unfreeze"})
-BARRIER_RULE_IDS = frozenset({"barrier.release"})
+BARRIER_RULE_IDS = frozenset({"barrier.release", "barrier.freeze"})
 
 DECISION_MAX_AGE_MINUTES = 15
 

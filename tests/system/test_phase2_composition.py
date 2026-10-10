@@ -139,11 +139,11 @@ class TestCheckInWiring:
 
 def full_world(core, transport, **overrides):
     parts = _chaster_parts(core)
-    wiring = build_rules_and_execution(
-        config(core, enable_chaster_execution=True, enable_release_engine=True, enable_supervision=True,
-               enable_check_ins=True, check_in_trust_domain="d", **overrides),
-        core, transport=transport, check_in_sender=Sender(), **parts,
-    )
+    settings = dict(enable_chaster_execution=True, enable_release_engine=True, enable_supervision=True,
+                    enable_check_ins=True, check_in_trust_domain="d")
+    settings.update(overrides)
+    wiring = build_rules_and_execution(config(core, **settings), core, transport=transport,
+                                       check_in_sender=Sender(), **parts)
     ExecutionControl(core.db_path, core=core).set_halted(False, reason="test", now=local(MON, 9))
     return wiring
 
@@ -230,3 +230,70 @@ class TestWholePeriodicCycle:
             n = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins")["n"]
         assert n == 2                                   # trust 0.6 = level 2: two check-ins today
         assert w.release_engine.has_planned_release("w")   # and the release plan was made in the same cycle
+
+
+class TestPhase3EndToEnd:
+    """Goal -> token -> secret release -> barrier lowered -> re-freeze, and check-ins -> incident, through the real cycle."""
+
+    def _world(self, core, **overrides):
+        from trust_manager.repository import TrustManager
+        TrustManager(core.db_path, core=core).create_domain(
+            domain_id="d", display_name="D", description="d", created_via_consent_id="c1", now=local(MON, 9))
+        transport = BarrierTransport()
+        return full_world(core, transport, **overrides), transport
+
+    def test_a_completed_goal_leads_to_a_release_and_a_refreeze(self, core) -> None:
+        from goal_management.repository import GoalManager
+        w, transport = self._world(core, enable_check_ins=False)
+        gm = GoalManager(core.db_path, core=core)
+        goal = gm.create_goal("t", "d", "d", "user_proposed", now=local(MON, 9))
+        gm.complete_goal(goal.goal_group_id, "done", now=local(MON, 9, 5))
+        assert w.release_engine.get_balance("w") == 0
+
+        now = local(MON, 17)
+        record_obs(core, now)
+        cycle(core, w, now, "p1")                                   # token credited, secret plan made
+        assert w.release_engine.get_balance("w") == 1 and w.release_phase("w") == "requirements_met_pending"
+        t = target(core)
+        assert local(MON, 17) <= t <= local(MON, 20, 0)             # 16:30 + 30..210 minutes, after the cycle began
+        record_obs(core, t - timedelta(minutes=1))
+        cycle(core, w, t, "p2")                                     # released
+        assert transport.calls == [("unfreeze", "lock-5")] and w.release_engine.get_balance("w") == 0
+
+        record_obs(core, t + timedelta(minutes=1), is_frozen=False, frozen_at=None)
+        cycle(core, w, t + timedelta(minutes=2), "p3")              # still in the session: nothing is raised
+        assert transport.calls == [("unfreeze", "lock-5")]
+
+        late = local(MON, 22, 5)                                    # quiet hours begin: the session is over
+        record_obs(core, late - timedelta(minutes=1), is_frozen=False, frozen_at=None)
+        cycle(core, w, late, "p4")
+        assert transport.calls == [("unfreeze", "lock-5"), ("freeze", "lock-5")]
+        with core.transaction() as tx:
+            rows = [(r["action_type"], r["rule_id"], r["status"]) for r in tx.fetch_all(
+                "SELECT action_type, rule_id, status FROM lock_decisions ORDER BY rowid")]
+        assert rows == [("unfreeze", "barrier.release", "executed"), ("freeze", "barrier.freeze", "executed")]
+
+        record_obs(core, late + timedelta(minutes=5))               # frozen again
+        cycle(core, w, late + timedelta(minutes=6), "p5")
+        assert len(transport.calls) == 2
+
+    def test_unanswered_check_ins_file_an_incident_and_block_the_release(self, core) -> None:
+        w, transport = self._world(core)
+        t = local(MON, 16, 30)
+        while t < local(MON, 23, 45):      # slots are random: the latest one is still sent by 22:00 and missed by 23:00
+            record_obs(core, t)
+            cycle(core, w, t, f"p{t.isoformat()}")
+            t += timedelta(minutes=15)
+        with core.transaction() as tx:
+            incidents = [dict(r) for r in tx.fetch_all("SELECT rule_group_id, confirmation FROM incidents")]
+            missed = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE status = 'missed'")["n"]
+            ledger = tx.fetch_all("SELECT state FROM check_in_escalations")
+        assert missed >= 2
+        assert incidents == [{"rule_group_id": "CHECKIN_REPEATED_NONCOMPLIANCE", "confirmation": "confirmed"}]
+        assert [r["state"] for r in ledger] == ["confirmed"]
+        assert w.check_ins.last_check_in_missed()
+        w.release_engine.earn_tokens(user_id="w", amount=1, reason_code="goal", source_event_id="e1", now=t)
+        record_obs(core, t)
+        cycle(core, w, t, "after")
+        assert not w.release_engine.has_planned_release("w")                          # vetoed: no plan, nothing spent
+        assert transport.calls == [] and w.release_engine.get_balance("w") == 1

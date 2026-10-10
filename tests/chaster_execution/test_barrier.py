@@ -145,12 +145,18 @@ def _executing_row(w, did, minutes_ago):
 
 
 class TestSeparateLimitPools:
-    def test_barrier_pool_allows_two_per_24h_with_a_4h_cooldown(self, core) -> None:
+    def test_release_pool_allows_two_unfreezes_per_24h_with_a_4h_cooldown(self, core) -> None:
         recent = (RecentAction(created_at=NOW - timedelta(hours=10), action_type=A.UNFREEZE, hours=0),)
         assert apply_limits(A.FREEZE, 0, recent, NOW) == (0, None)
-        two = recent + (RecentAction(created_at=NOW - timedelta(hours=5), action_type=A.FREEZE, hours=0),)
+        assert apply_limits(A.UNFREEZE, 0, recent, NOW) == (0, None)
+        two = recent + (RecentAction(created_at=NOW - timedelta(hours=5), action_type=A.UNFREEZE, hours=0),)
         assert "action limit" in apply_limits(A.UNFREEZE, 0, two, NOW)[1]
-        assert "cooldown" in apply_limits(A.UNFREEZE, 0, (RecentAction(created_at=NOW - timedelta(hours=3), action_type=A.FREEZE, hours=0),), NOW)[1]
+        assert "cooldown" in apply_limits(A.UNFREEZE, 0, (RecentAction(created_at=NOW - timedelta(hours=3), action_type=A.UNFREEZE, hours=0),), NOW)[1]
+
+    def test_a_refreeze_neither_is_limited_nor_uses_the_release_budget(self, core) -> None:
+        freezes = tuple(RecentAction(created_at=NOW - timedelta(hours=h), action_type=A.FREEZE, hours=0) for h in (1, 2, 3))
+        assert apply_limits(A.FREEZE, 0, freezes, NOW) == (0, None)
+        assert apply_limits(A.UNFREEZE, 0, freezes, NOW) == (0, None)
 
     def test_time_actions_do_not_consume_the_barrier_pool(self, core) -> None:
         time_actions = (
