@@ -54,11 +54,14 @@ after the outbox drains; a failure there is logged and never aborts startup.
 
 ## Not done yet
 
-- **No lock-snapshot provider is wired.** `bot/discord_bot.py` passes none, so
-  with the flag on every decision is `NO_ACTION` ("no lock data"). Supplying a
-  fresh `LockSnapshot` (from persisted Chaster observations) belongs with Phase 3.
-- Evaluation currently runs at startup only (that is when the outbox drains).
-- The `isFrozen` / `canBeUnlocked` / `keyholder` fields remain unconfirmed
-  against a real response; the sample provided in chat is a description, not a
-  verified payload.
-- Execution, the Hidden Token Economy and the Relationship Engine are out of scope.
+- **Lock snapshot (Phase 3):** `system/composition.py` now supplies a `LockSnapshot`
+  hydrated from the persisted observation of `CHASTER_EXECUTION_WEARER_USER_ID`; with
+  no wearer configured (or no observation) every decision is still `NO_ACTION`.
+- **Periodic evaluation (Phase 3):** `system/periodic.py` runs the cycle every 60 s
+  (startup still runs one pass). In live mode the hard-limit history counts only
+  pending / executing / executed / needs_review decisions.
+- `isFrozen`, `keyholder`, `status` and `endDate` are confirmed in Chaster's OpenAPI
+  schema (`canBeUnlocked` is deprecated and unused); a real captured response is
+  still the better proof of value semantics.
+- Execution lives in `chaster_execution/`; the Hidden Token Economy and the
+  Relationship Engine remain out of scope.

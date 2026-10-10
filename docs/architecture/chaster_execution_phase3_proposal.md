@@ -207,3 +207,23 @@ guards stay green.
    names and the unit before coding.
 8. Optional: a sanitised real `GET /locks` sample (no ids, no tokens) to confirm
    value semantics of `isFrozen` / `keyholder` / `status`.
+
+## 10. Implementation status (addendum)
+
+Implemented per this proposal: migration 026, the status machine, audit log,
+at-most-once claim, runtime halt (seeded halted), pre-flight, hydration from
+persisted observations, the periodic cycle and the composition layer; see
+`chaster_execution/README.md`.
+
+**Finding that changes section 1:** the raw OpenAPI document (read directly, not
+via a summariser) shows `UpdateTimeDto` as an object with **no properties**, so the
+Public API's request body for `POST /locks/{lockId}/update-time` is undocumented.
+The earlier "VERIFY" item resolved to: not specified. No request body is guessed;
+the real transport is gated off (`chaster_execution/transport.py`). The documented
+time bodies exist only for the Extensions API (Route C, scope `developer`, seconds).
+Also confirmed in the raw spec: `LockForWearer` / `LockForKeyholder` carry `status`
+(locked / unlocked / deserted), `isFrozen`, `keyholder` (nullable), `endDate`
+(nullable date-time) and `canBeUnlocked` (deprecated); `SetFreezeDto` is
+`{isFrozen: boolean}`; permission names `lock.time.add`, `lock.time.remove`,
+`lock.freeze`, `lock.unfreeze` exist. `tests/` and the schema treat the keyholder
+connection as an ordinary `chaster_connections` row under its own internal user id.

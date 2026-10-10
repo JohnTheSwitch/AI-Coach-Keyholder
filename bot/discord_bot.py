@@ -59,6 +59,8 @@ from database.database import Database
 from database.models import ConversationMessage, MessageRole
 from infrastructure.clock import Clock, SystemClock
 from infrastructure.database import Database as CoreDatabase
+from system.composition import build_rules_and_execution
+from system.periodic import periodic_loop
 from system.startup import StartupLeaseNotAcquired, on_system_startup
 
 logger = logging.getLogger("ai_coach_keyholder.bot")
@@ -90,6 +92,9 @@ class CoachKeyholderBot(discord.Client):
         self.clock = clock
         self.application_service = application_service
         self._chaster_listener: ChasterCallbackListener | None = None
+        # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
+        self.periodic: tuple | None = None
+        self._periodic_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -101,6 +106,12 @@ class CoachKeyholderBot(discord.Client):
         uncaught exception in setup_hook() would prevent Discord
         itself from ever connecting. Chaster callback infrastructure
         being unavailable must never take down the whole bot."""
+        if self.periodic is not None:
+            core, rules_engine, executor, interval = self.periodic
+            self._periodic_task = asyncio.create_task(
+                periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
+                              interval_seconds=interval)
+            )
         if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
             logger.info("Chaster is not configured -- callback listener not started.")
             return
@@ -133,6 +144,9 @@ class CoachKeyholderBot(discord.Client):
             self._chaster_listener = None
 
     async def close(self) -> None:
+        if self._periodic_task is not None:
+            self._periodic_task.cancel()
+            self._periodic_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -271,26 +285,6 @@ def main() -> None:
     # (Phase 0-2.x had no adapter calling it at all). process_id is a
     # fresh uuid per process start, sufficient for the startup lease's
     # purpose (distinguishing THIS run from a concurrently-running one).
-    rules_engine = None
-    if config.enable_rules_engine:
-        # Phase 2: STRICT DRY RUN. No lock-snapshot provider is wired yet (that
-        # arrives with the Chaster execution phase), so every evaluation records
-        # a NO_ACTION decision explaining that no lock data is available.
-        from rules_engine.repository import RulesEngineService
-        from trust_manager.repository import TrustManager as _TrustManager
-        rules_engine = RulesEngineService(
-            config.db_path, core=core, get_trust_state=_TrustManager(config.db_path, core=core).get_domain_state,
-        )
-        logger.info("Rules Engine enabled (dry run only; nothing is sent to Chaster).")
-    else:
-        logger.info("Rules Engine disabled (set ENABLE_RULES_ENGINE=true to record dry-run decisions).")
-
-    try:
-        on_system_startup(core, str(uuid.uuid4()), clock, rules_engine)
-    except StartupLeaseNotAcquired:
-        logger.error("Another instance is already performing startup reconciliation. Exiting.")
-        raise SystemExit(1)
-
     # Composition root: Conversation Engine Slice 2's own dependency
     # graph, built here and only here -- ApplicationService never
     # constructs OllamaConversationModel/the buffer/the queue itself
@@ -361,6 +355,23 @@ def main() -> None:
     elif not config.chaster_llm_tools_enabled:
         logger.info("Chaster LLM tool disabled (set CHASTER_LLM_TOOLS_ENABLED=true to enable).")
 
+    # Phase 2/3 composition (system/composition.py). Built after the Chaster
+    # objects exist because the lock snapshot and the executor need them. All of
+    # it is OFF unless explicitly enabled; startup reconciliation still runs
+    # BEFORE the bot accepts any request (bot.run is below).
+    wiring = build_rules_and_execution(
+        config, core, connections=chaster_connections, oauth_client=chaster_oauth_client,
+        lock_client=chaster_lock_client, token_manager=chaster_token_manager,
+    )
+    for note in wiring.notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+
+    try:
+        on_system_startup(core, str(uuid.uuid4()), clock, wiring.rules_engine)
+    except StartupLeaseNotAcquired:
+        logger.error("Another instance is already performing startup reconciliation. Exiting.")
+        raise SystemExit(1)
+
     conversation_engine = ConversationEngine(
         model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
         queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
@@ -373,6 +384,8 @@ def main() -> None:
         chaster_token_manager=chaster_token_manager,
     )
     bot = build_bot(config, db, clock, application_service)
+    if wiring.rules_engine is not None:
+        bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds)
     bot.run(config.discord_token, log_handler=None)
 
 

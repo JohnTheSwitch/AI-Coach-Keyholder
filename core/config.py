@@ -118,6 +118,14 @@ class Config:
     # auditable Decisions; it never calls Chaster. OFF unless explicitly enabled.
     enable_rules_engine: bool = False
 
+    # Chaster execution plane (Phase 3). Master switch, OFF by default. Even when
+    # on, nothing is sent unless a real transport is available, both identities
+    # below are set, and the runtime halt (execution_control) is cleared.
+    enable_chaster_execution: bool = False
+    chaster_execution_wearer_user_id: str | None = None      # internal user whose lock is observed
+    chaster_execution_keyholder_user_id: str | None = None   # internal user holding the keyholder OAuth connection
+    chaster_execution_interval_seconds: int = 60
+
     # General
     log_level: str = "INFO"
     quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
@@ -166,6 +174,10 @@ class Config:
             chaster_emergency_unlock_secret=get("CHASTER_EMERGENCY_UNLOCK_SECRET"),
             chaster_llm_tools_enabled=(get("CHASTER_LLM_TOOLS_ENABLED", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_rules_engine=(get("ENABLE_RULES_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_chaster_execution=(get("ENABLE_CHASTER_EXECUTION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            chaster_execution_wearer_user_id=get("CHASTER_EXECUTION_WEARER_USER_ID"),
+            chaster_execution_keyholder_user_id=get("CHASTER_EXECUTION_KEYHOLDER_USER_ID"),
+            chaster_execution_interval_seconds=int(get("CHASTER_EXECUTION_INTERVAL_SECONDS", "60") or "60"),
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),
