@@ -21,6 +21,12 @@ from pathlib import Path
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
+from trust_manager.goal_scoring import (
+    GoalAssessmentDirection,
+    goal_evidence_confidence,
+    goal_evidence_type,
+    goal_evidence_weight,
+)
 from trust_manager.models import (
     BreachDirectness,
     ConfirmationRecord,
@@ -598,6 +604,108 @@ class TrustManager:
             apply_transition(self._core, write=write, events=events)
             repaired += 1
         return repaired
+
+    # -------------------------------------------------------------------
+    # 15 -- Goal Accountability Assessment integration (Phase 1)
+    # -------------------------------------------------------------------
+
+    def record_goal_assessment_evidence(
+        self, *, assessment_id: str, trust_domain: str, relevant_to_trust: bool, direction: str,
+        rationale: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """
+        Direct entry point (own transaction) with the same semantics as
+        the event-driven path; see `_record_goal_assessment_evidence_in_transaction`.
+        """
+        def write(tx: Transaction, _state: object) -> TrustEvidence | None:
+            return self._record_goal_assessment_evidence_in_transaction(
+                tx, assessment_id=assessment_id, trust_domain=trust_domain,
+                relevant_to_trust=relevant_to_trust, direction=direction, rationale=rationale, now=now,
+            )
+
+        return apply_transition(self._core, write=write)
+
+    def _record_goal_assessment_evidence_in_transaction(
+        self, tx: Transaction, *, assessment_id: str, trust_domain: str, relevant_to_trust: bool,
+        direction: str, rationale: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """
+        TI21/TI25. Writes GOAL_PROGRESS / GOAL_SETBACK evidence ONLY when
+        the assessment is relevant to Trust and its direction is
+        progress or setback; otherwise (and for an unknown or inactive
+        domain) writes nothing and returns None. Idempotent: evidence
+        for an assessment that already has it is not duplicated (checked
+        before insert, so a redelivery never poisons the transaction).
+        On a new row, recalculates the domain immediately in the same
+        transaction (triggered_by='goal_assessment') and emits
+        `trust_evidence.recorded` and `trust_domain.recalculated`.
+        Takes the plain event-payload fields (no call back into Goal
+        Management is possible inside consume_event()'s transaction).
+        """
+        try:
+            parsed = GoalAssessmentDirection(direction)
+        except ValueError:
+            raise ValueError(f"unknown goal assessment direction: {direction!r}") from None
+        evidence_type = goal_evidence_type(parsed)
+        if not relevant_to_trust or evidence_type is None:
+            return None
+
+        domain = tx.fetch_one("SELECT is_active FROM trust_domains WHERE domain_id = ?", (trust_domain,))
+        if domain is None or not domain["is_active"]:
+            return None
+
+        if tx.fetch_one(
+            "SELECT 1 FROM trust_evidence WHERE source_entity_type = ? AND source_entity_id = ? AND evidence_type = ?",
+            ("goal_accountability_assessment", assessment_id, evidence_type.value),
+        ):
+            return None
+
+        evidence = TrustEvidence(
+            domain_id=trust_domain, created_at=now, evidence_type=evidence_type,
+            source_entity_type="goal_accountability_assessment", source_entity_id=assessment_id,
+            raw_weight=goal_evidence_weight(parsed), evidence_confidence=goal_evidence_confidence(parsed),
+            explanation=rationale,
+        )
+        tx.execute(
+            """
+            INSERT INTO trust_evidence
+                (id, domain_id, created_at, evidence_type, source_entity_type, source_entity_id,
+                 raw_weight, evidence_confidence, explanation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence.id, evidence.domain_id, _iso(now), evidence.evidence_type.value,
+                evidence.source_entity_type, evidence.source_entity_id,
+                evidence.raw_weight, evidence.evidence_confidence, evidence.explanation,
+            ),
+        )
+        write_event(
+            tx,
+            DomainEvent(
+                event_type="trust_evidence.recorded", source_module="trust_manager",
+                payload={"evidence_id": evidence.id, "domain_id": evidence.domain_id},
+                occurred_at=now,
+            ),
+        )
+        recalculation = self._recalculate_domain_trust_in_transaction(
+            tx, trust_domain, triggered_by="goal_assessment", now=now,
+        )
+        write_event(
+            tx,
+            DomainEvent(
+                event_type="trust_domain.recalculated", source_module="trust_manager",
+                payload={
+                    "domain_id": recalculation.domain_id,
+                    "previous_score": recalculation.previous_score,
+                    "new_score": recalculation.new_score,
+                    "previous_confidence": recalculation.previous_confidence,
+                    "new_confidence": recalculation.new_confidence,
+                    "triggered_by": recalculation.triggered_by,
+                },
+                occurred_at=now,
+            ),
+        )
+        return evidence
 
     # -------------------------------------------------------------------
     # Internal helpers

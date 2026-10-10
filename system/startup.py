@@ -96,6 +96,21 @@ def build_consumer_registry(
 
     registry.register("incident.confirmation_changed", "penalty_engine", on_incident_confirmation_changed)
 
+    def on_goal_accountability_assessment_recorded(tx, event) -> None:
+        trust_manager._record_goal_assessment_evidence_in_transaction(
+            tx,
+            assessment_id=event.payload["assessment_id"],
+            trust_domain=event.payload["trust_domain"],
+            relevant_to_trust=event.payload["relevant_to_trust"],
+            direction=event.payload["direction"],
+            rationale=event.payload["rationale"],
+            now=event.occurred_at,
+        )
+
+    registry.register(
+        "goal_accountability_assessment.recorded", "trust_manager", on_goal_accountability_assessment_recorded,
+    )
+
     def on_penalty_window_started(tx, event) -> None:
         plan = recovery_plan._create_plan_in_transaction(
             tx, event.payload["penalty_window_id"], event.payload["base_duration_hours"], event.occurred_at,

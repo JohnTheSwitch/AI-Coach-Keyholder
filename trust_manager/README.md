@@ -50,7 +50,6 @@ below), 13, 14**.
   `ExposureRecord` and `maybe_create_sustained_period_evidence()` (3.7)
   are similarly not yet implemented — no code path produces
   `SUSTAINED_PERIOD` evidence in this slice.
-- **Goal Accountability Assessment integration** (Section 15).
 - **`should_extend()`/`ExtensionContext`** (Section 6).
 - **`TrustDomainState.trend`** — stays at its initial value
   (`'stable'`, set at domain creation); no code in either slice computes
@@ -121,3 +120,26 @@ it was deliberately excluded.
 - **Row ↔ dataclass mapping** is intentionally verbose rather than
   clever — every field maps to one named column, no dynamic field
   iteration.
+
+## Phase 1: Goal Accountability Assessment integration (Section 15)
+
+Goal outcomes reach Trust **only** through this path (tasks reach Trust only
+via Goals; there is no direct Task -> Trust route).
+
+- `system/startup.py` registers `trust_manager` for
+  `goal_accountability_assessment.recorded`. The handler calls
+  `TrustManager._record_goal_assessment_evidence_in_transaction()` using only
+  the event payload; `record_goal_assessment_evidence()` is the same logic in
+  its own transaction.
+- Evidence is written only if the assessment is relevant to Trust **and** its
+  direction is `progress` (`GOAL_PROGRESS`) or `setback` (`GOAL_SETBACK`).
+  Neutral, not-relevant, unknown-domain and inactive-domain cases write nothing.
+- Idempotent: checked before insert, plus the `UNIQUE(source_entity_type,
+  source_entity_id, evidence_type)` constraint (TI25), so a redelivery never
+  creates a second row or a second recalculation.
+- A new row triggers an immediate recalculation in the same transaction
+  (`triggered_by='goal_assessment'`) and emits `trust_evidence.recorded` and
+  `trust_domain.recalculated`. The scheduled trigger remains deferred.
+- `trust_manager/goal_scoring.py` (pure): progress `+0.05`, setback `-0.08`
+  (asymmetric), confidence `1.0`, all `BOOTSTRAP_DEFAULT`. The existing 0.5
+  per-row and 0.15 per-recalculation caps still apply.

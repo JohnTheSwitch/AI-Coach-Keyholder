@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**2110 passing tests** across the whole repository (`pytest`), including
+**2146 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -100,8 +100,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Twenty-three sequential database migrations are applied so far
-(`database/migrations/001` through `023`), covering the initial Phase 0
+Twenty-four sequential database migrations are applied so far
+(`database/migrations/001` through `024`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -121,7 +121,9 @@ own new `title`/`instructions` columns on `task_template_versions`
 `task_catalog/README.md`), and (022) CHASTER-01A's own
 `chaster_oauth_states`/`chaster_connections` tables (both nullable-
 column-free, no fabricated defaults, encrypted-token TEXT columns --
-see `chaster/README.md`). See
+see `chaster/README.md`), (023) the Chaster provider-observation log, and
+(024) Goal Management's append-only `goal_accountability_assessments`
+table (the Goal -> Trust bridge). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
