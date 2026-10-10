@@ -62,11 +62,14 @@ class WindowConfig:
     work_start: time
     work_end: time
     holiday_country: str | None = "CZ"
+    # Base time of the adaptive release on weekends and public holidays (WORKDAY_END has no
+    # meaning there). Owner decision: 10:00 local.
+    weekend_release_start: time = time(10, 0)
 
     @classmethod
     def build(
         cls, *, timezone_name: str, quiet_start: str, quiet_end: str, work_start: str, work_end: str,
-        holiday_country: str | None = "CZ",
+        holiday_country: str | None = "CZ", weekend_release_start: str = "10:00",
     ) -> "WindowConfig":
         """Fail-fast validation of the whole window layout."""
         try:
@@ -79,8 +82,11 @@ class WindowConfig:
             raise ValueError("quiet hours must cross midnight (start later than end)")
         if not (qe <= ws < we < qs):
             raise ValueError("require QUIET_HOURS_END <= WORKDAY_START < WORKDAY_END < QUIET_HOURS_START")
+        wr = parse_hhmm(weekend_release_start, name="WEEKEND_RELEASE_START")
+        if not (qe <= wr < qs):
+            raise ValueError("require QUIET_HOURS_END <= WEEKEND_RELEASE_START < QUIET_HOURS_START")
         return cls(tz=tz, quiet_start=qs, quiet_end=qe, work_start=ws, work_end=we,
-                   holiday_country=(holiday_country or None))
+                   holiday_country=(holiday_country or None), weekend_release_start=wr)
 
     def local(self, instant: datetime) -> datetime:
         if instant.tzinfo is None:

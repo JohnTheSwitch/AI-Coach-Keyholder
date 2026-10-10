@@ -3,7 +3,7 @@ release_engine/scheduler.py
 
 Pure target-time selection for the adaptive discretionary release (v0.39).
 
-target = WORKDAY_END (local) + an offset of between MIN and MAX minutes, drawn
+target = base (local) + an offset of between MIN and MAX minutes, drawn
 pseudorandomly but DETERMINISTICALLY from a stored secret seed and the local
 date (HMAC-SHA256). Same seed + same date -> same offset, so a plan can be
 audited/replayed and a restart never redraws it. A different date gives an
@@ -11,7 +11,7 @@ independent draw, which is what re-targeting uses.
 
 The result is always validated against the window classifier: a target that is
 not inside a DISCRETIONARY window is never returned. The configuration is
-validated up front so that WORKDAY_END + MAX offset still ends before quiet hours.
+validated up front so that each base + MAX offset still ends before quiet hours.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import hashlib
 import hmac
 from datetime import date, datetime, timedelta
 
-from schedule_windows.windows import WindowConfig, WindowKind, classify
+from schedule_windows.windows import WindowConfig, WindowKind, classify, is_non_working_day
 
 __all__ = ["validate_offsets", "draw_offset_minutes", "plan_target", "MIN_LEAD"]
 
@@ -34,10 +34,10 @@ def validate_offsets(cfg: WindowConfig, min_offset: int, max_offset: int) -> Non
         raise ValueError("offsets must be integers (minutes)")
     if not (0 <= min_offset <= max_offset):
         raise ValueError("require 0 <= UNLOCK_WINDOW_MIN_OFFSET_MINUTES <= UNLOCK_WINDOW_MAX_OFFSET_MINUTES")
-    end_minutes = cfg.work_end.hour * 60 + cfg.work_end.minute + max_offset
     quiet_minutes = cfg.quiet_start.hour * 60 + cfg.quiet_start.minute
-    if end_minutes >= quiet_minutes:
-        raise ValueError("WORKDAY_END plus the maximum offset must end before quiet hours start")
+    for name, base in ("WORKDAY_END", cfg.work_end), ("WEEKEND_RELEASE_START", cfg.weekend_release_start):
+        if base.hour * 60 + base.minute + max_offset >= quiet_minutes:
+            raise ValueError(f"{name} plus the maximum offset must end before quiet hours start")
 
 
 def draw_offset_minutes(seed: bytes, local_date: date, min_offset: int, max_offset: int) -> int:
@@ -57,7 +57,8 @@ def plan_target(
     today = cfg.local(now).date()
     for i in range(_MAX_SEARCH_DAYS):
         d = today + timedelta(days=i)
-        target = cfg.to_utc(d, cfg.work_end) + timedelta(minutes=draw_offset_minutes(seed, d, min_offset, max_offset))
+        base = cfg.weekend_release_start if is_non_working_day(cfg, d) else cfg.work_end
+        target = cfg.to_utc(d, base) + timedelta(minutes=draw_offset_minutes(seed, d, min_offset, max_offset))
         if target <= now + MIN_LEAD:
             continue
         if classify(cfg, target) is not WindowKind.DISCRETIONARY:

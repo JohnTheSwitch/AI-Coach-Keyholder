@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from release_engine.scheduler import MIN_LEAD, draw_offset_minutes, plan_target, validate_offsets
-from schedule_windows.windows import WindowConfig, WindowKind, classify
+from schedule_windows.windows import WindowConfig, WindowKind, classify, is_non_working_day
 
 PRAGUE = ZoneInfo("Europe/Prague")
 CFG = WindowConfig.build(timezone_name="Europe/Prague", quiet_start="22:00", quiet_end="07:00",
@@ -66,11 +66,30 @@ class TestPlanTarget:
         t = plan_target(now, SEED, CFG, 30, 210)
         assert t > now
 
-    def test_weekend_and_holiday_use_the_same_base(self) -> None:
-        for d in (date(2026, 10, 17), date(2026, 10, 28)):
+    def test_weekend_and_holiday_use_the_10_00_base(self) -> None:
+        for d in (date(2026, 10, 17), date(2026, 10, 18), date(2026, 10, 28), date(2026, 4, 6)):
             t = plan_target(local(d, 8, 0), SEED, CFG, 30, 210)
             lt = t.astimezone(PRAGUE)
-            assert lt.date() == d and (17, 0) <= (lt.hour, lt.minute) <= (20, 0)
+            assert lt.date() == d and (10, 30) <= (lt.hour, lt.minute) <= (13, 30)
+
+    def test_weekend_morning_after_the_window_moves_to_the_next_day(self) -> None:
+        d = date(2026, 10, 17)                      # Saturday, 14:00 is past every possible 10:30-13:30 target
+        t = plan_target(local(d, 14, 0), SEED, CFG, 30, 210)
+        assert t.astimezone(PRAGUE).date() == date(2026, 10, 18)
+
+    def test_friday_evening_rolls_into_the_weekend_base(self) -> None:
+        t = plan_target(local(date(2026, 10, 16), 21, 0), SEED, CFG, 30, 210)        # Friday night
+        lt = t.astimezone(PRAGUE)
+        assert lt.date() == date(2026, 10, 17) and (10, 30) <= (lt.hour, lt.minute) <= (13, 30)
+
+    def test_weekend_start_is_validated_with_the_offsets(self) -> None:
+        late = WindowConfig.build(timezone_name="Europe/Prague", quiet_start="22:00", quiet_end="07:00",
+                                  work_start="07:00", work_end="16:30", weekend_release_start="20:00")
+        with pytest.raises(ValueError):
+            validate_offsets(late, 30, 210)
+        with pytest.raises(ValueError):
+            WindowConfig.build(timezone_name="Europe/Prague", quiet_start="22:00", quiet_end="07:00",
+                               work_start="07:00", work_end="16:30", weekend_release_start="06:00")
 
     def test_property_target_is_always_valid(self) -> None:
         start = local(date(2026, 3, 20), 0, 0)         # spans the spring DST change
@@ -81,7 +100,8 @@ class TestPlanTarget:
                 assert t is not None and t > now + MIN_LEAD
                 assert classify(CFG, t) is WindowKind.DISCRETIONARY
                 lt = t.astimezone(PRAGUE)
-                assert (17, 0) <= (lt.hour, lt.minute) <= (20, 0)
+                lo, hi = ((10, 30), (13, 30)) if is_non_working_day(CFG, lt.date()) else ((17, 0), (20, 0))
+                assert lo <= (lt.hour, lt.minute) <= hi
 
     def test_same_seed_same_day_is_reproducible_and_different_seed_differs(self) -> None:
         now = local(date(2026, 10, 12), 9, 0)
