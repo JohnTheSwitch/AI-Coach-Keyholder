@@ -23,11 +23,15 @@ from datetime import datetime
 from pathlib import Path
 
 from goal_management.models import (
+    AssessmentAlreadyExistsError,
     Goal,
+    GoalAccountabilityAssessment,
+    GoalAccountabilityDirection,
     GoalChangeProposal,
     GoalChangeProposalContent,
     GoalChangeProposalNotFoundError,
     GoalEvaluation,
+    GoalEvaluationNotFoundError,
     GoalEvidence,
     GoalInterventionType,
     GoalLifecycleStatus,
@@ -37,6 +41,7 @@ from goal_management.models import (
     GoalVersion,
     InvalidGoalTransitionError,
     InvalidProposalStateError,
+    derive_accountability_direction,
     new_id,
 )
 from infrastructure.database import Database as CoreDatabase
@@ -255,6 +260,99 @@ class GoalManager:
             )
 
         return apply_transition(self._core, write=write, events=events)
+
+    # -------------------------------------------------------------------
+    # 6 -- GoalAccountabilityAssessment (Phase 1: the Goal -> Trust bridge)
+    # -------------------------------------------------------------------
+
+    def record_accountability_assessment(
+        self, evaluation_id: str, *, relevant_to_trust: bool, rationale: str, now: datetime,
+        direction: GoalAccountabilityDirection | None = None,
+    ) -> GoalAccountabilityAssessment:
+        """
+        Domain-service entry point only; no model or Discord path calls
+        this. The direction is derived from the outcomes of the
+        evaluation's triggering GoalEvidence (all MET -> PROGRESS, all
+        MISSED -> SETBACK, otherwise NEUTRAL). A caller may pass an
+        explicit direction only to NEUTRALISE (e.g. an excused outcome);
+        it can never assert PROGRESS/SETBACK that the evidence does not
+        support. GOAL-13: one assessment per evaluation. Always emits
+        `goal_accountability_assessment.recorded`, relevant or not --
+        whether Trust acts on it is the Trust Manager's decision.
+        """
+        if not rationale or not rationale.strip():
+            raise ValueError("rationale must be non-empty")
+
+        def write(tx: Transaction, _state: object) -> GoalAccountabilityAssessment:
+            ev_row = tx.fetch_one("SELECT * FROM goal_evaluations WHERE id = ?", (evaluation_id,))
+            if ev_row is None:
+                raise GoalEvaluationNotFoundError(evaluation_id)
+            if tx.fetch_one("SELECT 1 FROM goal_accountability_assessments WHERE evaluation_id = ?", (evaluation_id,)):
+                raise AssessmentAlreadyExistsError(evaluation_id)
+            evidence_ids = json.loads(ev_row["triggering_evidence_ids_json"])
+            outcomes = tuple(
+                GoalOutcome(tx.fetch_one("SELECT outcome FROM goal_evidence WHERE id = ?", (eid,))["outcome"])
+                for eid in evidence_ids
+            )
+            derived = derive_accountability_direction(outcomes)
+            resolved = derived if direction is None else direction
+            if resolved != derived and resolved != GoalAccountabilityDirection.NEUTRAL:
+                raise ValueError(
+                    f"direction {resolved.value!r} is not supported by the evaluation's evidence "
+                    f"(derived: {derived.value!r}); a caller may only neutralise"
+                )
+            goal_group_id = ev_row["goal_group_id"]
+            domain_row = tx.fetch_one(
+                "SELECT gv.trust_domain FROM goals g JOIN goal_versions gv ON gv.id = g.current_version_id "
+                "WHERE g.goal_group_id = ?", (goal_group_id,),
+            )
+            if domain_row is None:
+                raise GoalNotFoundError(goal_group_id)
+            assessment = GoalAccountabilityAssessment(
+                evaluation_id=evaluation_id, goal_group_id=goal_group_id, trust_domain=domain_row["trust_domain"],
+                created_at=now, relevant_to_trust=relevant_to_trust, direction=resolved, rationale=rationale,
+            )
+            tx.execute(
+                """
+                INSERT INTO goal_accountability_assessments
+                    (id, evaluation_id, goal_group_id, trust_domain, created_at, relevant_to_trust, direction, rationale)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (assessment.id, evaluation_id, goal_group_id, assessment.trust_domain, _iso(now),
+                 1 if relevant_to_trust else 0, resolved.value, rationale),
+            )
+            return assessment
+
+        def events(tx: Transaction, _state: object, result: GoalAccountabilityAssessment) -> None:
+            # Self-contained payload: the Trust Manager consumer runs inside
+            # consume_event()'s transaction and cannot call back into this module.
+            write_event(
+                tx,
+                DomainEvent(
+                    event_type="goal_accountability_assessment.recorded", source_module="goal_management",
+                    payload={
+                        "assessment_id": result.id, "evaluation_id": result.evaluation_id,
+                        "goal_group_id": result.goal_group_id, "trust_domain": result.trust_domain,
+                        "relevant_to_trust": result.relevant_to_trust, "direction": result.direction.value,
+                        "rationale": result.rationale,
+                    },
+                    occurred_at=now,
+                ),
+            )
+
+        return apply_transition(self._core, write=write, events=events)
+
+    def get_accountability_assessment(self, assessment_id: str) -> GoalAccountabilityAssessment | None:
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM goal_accountability_assessments WHERE id = ?", (assessment_id,))
+        if row is None:
+            return None
+        return GoalAccountabilityAssessment(
+            id=row["id"], evaluation_id=row["evaluation_id"], goal_group_id=row["goal_group_id"],
+            trust_domain=row["trust_domain"], created_at=_parse_iso(row["created_at"]),
+            relevant_to_trust=bool(row["relevant_to_trust"]),
+            direction=GoalAccountabilityDirection(row["direction"]), rationale=row["rationale"],
+        )
 
     # -------------------------------------------------------------------
     # 5.3 — GoalChangeProposal / GoalChangeProposalContent (GOAL-6)

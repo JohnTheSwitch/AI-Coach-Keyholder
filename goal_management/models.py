@@ -208,3 +208,52 @@ class InvalidProposalStateError(ValueError):
         super().__init__(f"GoalChangeProposal {proposal_id!r} is {current_status!r}, not 'pending' -- cannot resolve it again.")
         self.proposal_id = proposal_id
         self.current_status = current_status
+
+
+# =============================================================================
+# 6 -- GoalAccountabilityAssessment (Phase 1: the Goal -> Trust bridge)
+# =============================================================================
+
+class GoalAccountabilityDirection(StrEnum):
+    PROGRESS = "progress"
+    SETBACK = "setback"
+    NEUTRAL = "neutral"
+
+
+def derive_accountability_direction(outcomes: tuple[GoalOutcome, ...]) -> GoalAccountabilityDirection:
+    """
+    Deterministic default direction for an evaluation, from the
+    outcomes of the GoalEvidence it was triggered by. All MET ->
+    PROGRESS; all MISSED -> SETBACK; anything else (PARTIALLY_MET, or a
+    mix) -> NEUTRAL. Pure; no model involvement.
+    """
+    if outcomes and all(o == GoalOutcome.MET for o in outcomes):
+        return GoalAccountabilityDirection.PROGRESS
+    if outcomes and all(o == GoalOutcome.MISSED for o in outcomes):
+        return GoalAccountabilityDirection.SETBACK
+    return GoalAccountabilityDirection.NEUTRAL
+
+
+@dataclass(frozen=True, kw_only=True)
+class GoalAccountabilityAssessment:
+    """Append-only. At most one per GoalEvaluation (GOAL-13). See
+    migration 024. GoalNegotiation fields are deferred."""
+    id: str = field(default_factory=new_id)
+    evaluation_id: str
+    goal_group_id: str
+    trust_domain: str
+    created_at: datetime
+    relevant_to_trust: bool
+    direction: GoalAccountabilityDirection
+    rationale: str
+
+
+class GoalEvaluationNotFoundError(LookupError):
+    def __init__(self, evaluation_id: str) -> None:
+        super().__init__(f"No GoalEvaluation with id={evaluation_id!r}")
+
+
+class AssessmentAlreadyExistsError(ValueError):
+    """GOAL-13: a GoalEvaluation already has its one assessment."""
+    def __init__(self, evaluation_id: str) -> None:
+        super().__init__(f"GoalEvaluation {evaluation_id!r} already has a GoalAccountabilityAssessment (GOAL-13)")

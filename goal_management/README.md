@@ -53,13 +53,9 @@ discipline as every prior module.
 
 ## What is deferred
 
-- **`GoalAccountabilityAssessment`** (Section 6) — the Keyholder's
-  independent judgment, and the actual Trust Manager integration
-  (Section 11: Goal Management would publish
-  `goal_accountability_assessment.recorded`; the Trust Manager would
-  read it via `get_accountability_assessment()` and decide whether to
-  write `TrustEvidence`). Nothing in this slice writes or reads either
-  side of that relationship.
+- **`GoalAccountabilityAssessment`'s negotiation fields** (Section 6:
+  `review_outcome`/`negotiation_reason`) — deferred with
+  `GoalNegotiation`. The assessment itself is implemented, see below.
 - **`GoalNegotiation`/`GoalNegotiationRound`** (Section 7) — multi-round
   negotiation between Coach and Keyholder perspectives, including
   `ESCALATED_TO_USER` and the `MOOT` transition (GOAL-14) triggered by a
@@ -127,3 +123,22 @@ resolved by assumption.
   minimal resolution, not a documented requirement.
 - **Row ↔ dataclass mapping is intentionally verbose**, same convention
   as every other module in this system.
+
+## Phase 1: GoalAccountabilityAssessment (migration 024)
+
+`GoalManager.record_accountability_assessment(evaluation_id, *,
+relevant_to_trust, rationale, now, direction=None)` is the only writer
+(domain-service API; no model, Discord or admin entry point).
+
+- **Direction is derived, not asserted.** `derive_accountability_direction()`
+  maps the triggering evidence: all `MET` -> `PROGRESS`, all `MISSED` ->
+  `SETBACK`, anything else (`PARTIALLY_MET`, a mix) -> `NEUTRAL`. A caller
+  may pass `direction` only to **neutralise** (e.g. an excused outcome);
+  asserting a direction the evidence does not support raises `ValueError`.
+- **GOAL-13:** one assessment per evaluation (`UNIQUE evaluation_id`;
+  `AssessmentAlreadyExistsError`). Append-only; `trust_domain` is copied from
+  the Goal's current version so the event is self-contained.
+- **Event:** `goal_accountability_assessment.recorded` is always emitted
+  (relevant or not); the Trust Manager decides whether to act on it.
+  `get_accountability_assessment()` is the read API.
+- Goal Management still imports nothing from `trust_manager` (GOAL-1).
