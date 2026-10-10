@@ -161,3 +161,9 @@ class ChasterProviderObservation:
     status: ChasterProviderStatus
     fetched_at: datetime
     created_at: datetime
+    # Migration 026: provider-reported, None = absent / not the expected type
+    # (always "unknown", never guessed). `canBeUnlocked` is deprecated by
+    # Chaster and deliberately not stored.
+    is_frozen: bool | None = None
+    has_keyholder: bool | None = None
+    end_date: datetime | None = None

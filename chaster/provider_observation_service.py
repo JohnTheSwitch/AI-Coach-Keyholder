@@ -53,6 +53,7 @@ from chaster.token_manager import (
     ChasterRefreshUnavailableError,
     ChasterTokenManager,
 )
+from infrastructure.time_format import parse_iso as _parse_iso
 
 __all__ = ["FetchObservationOutcome", "FetchObservationResult", "ChasterProviderObservationService"]
 
@@ -189,9 +190,22 @@ class ChasterProviderObservationService:
                 observation=self._observations.get_latest(connection_id),
             )
 
+        # Provider-reported extras (migration 026): taken only when present
+        # with the expected type, otherwise None = unknown (fail closed later).
+        raw_frozen = raw_lock.get("isFrozen")
+        is_frozen = raw_frozen if isinstance(raw_frozen, bool) else None
+        has_keyholder = (raw_lock.get("keyholder") is not None) if "keyholder" in raw_lock else None
+        end_date = None
+        raw_end = raw_lock.get("endDate")
+        if isinstance(raw_end, str):
+            try:
+                end_date = _parse_iso(raw_end)
+            except ValueError:
+                end_date = None
         recorded = self._recorder.record(
             connection_id=connection_id, provider=PROVIDER_NAME,
             chaster_lock_id=lock_id if isinstance(lock_id, str) else None,
             status=status, fetched_at=now, now=now,
+            is_frozen=is_frozen, has_keyholder=has_keyholder, end_date=end_date,
         )
         return FetchObservationResult(outcome=FetchObservationOutcome.RECORDED, observation=recorded)
