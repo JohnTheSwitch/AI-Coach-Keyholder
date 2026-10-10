@@ -3,8 +3,7 @@ trust_manager/checkin_scoring.py
 
 Pure scoring for check-in evidence (v0.39). A missed check-in is a clear drop; an
 insufficient answer that stayed insufficient after the follow-up window is a minor one.
-Values are bootstrap-default placeholders (the owner specified "score drop" / "minor"
-but no numbers); the per-row and per-recalculation caps still bound their effect.
+Values are the owner's matrix; the per-row and per-recalculation caps still bound their effect.
 """
 
 from __future__ import annotations
@@ -12,26 +11,28 @@ from __future__ import annotations
 from trust_manager.models import EvidenceType
 
 __all__ = [
-    "CHECKIN_MISSED_WEIGHT", "CHECKIN_INSUFFICIENT_WEIGHT", "CHECKIN_EVIDENCE_CONFIDENCE", "checkin_evidence_spec",
+    "CHECKIN_MISSED_WEIGHT", "CHECKIN_MISSED_WEIGHTS", "CHECKIN_INSUFFICIENT_WEIGHT", "CHECKIN_EVIDENCE_CONFIDENCE", "checkin_evidence_spec",
 ]
 
-# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
-# Placeholder: a missed check-in lowers Trust noticeably.
-CHECKIN_MISSED_WEIGHT = -0.06
+# Owner-specified matrix (v0.39 section 11.9): the drop grows with the number of CONSECUTIVE missed check-ins.
+CHECKIN_MISSED_WEIGHTS = {1: -0.02, 2: -0.04, 3: -0.06}      # the 3rd and every later consecutive miss use -0.06
+CHECKIN_MISSED_WEIGHT = CHECKIN_MISSED_WEIGHTS[1]
 
-# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
-# Placeholder: an answer that stayed insufficient after the follow-up is a minor drop.
-CHECKIN_INSUFFICIENT_WEIGHT = -0.02
+# An answer that stayed insufficient after the follow-up window.
+CHECKIN_INSUFFICIENT_WEIGHT = -0.01
 
 # BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
 # System-observed facts (a deadline passed) carry full confidence.
 CHECKIN_EVIDENCE_CONFIDENCE = 1.0
 
 
-def checkin_evidence_spec(kind: str) -> tuple[EvidenceType, float, float]:
-    """(evidence type, raw weight, confidence) for 'missed' or 'insufficient'."""
+def checkin_evidence_spec(kind: str, streak: int = 1) -> tuple[EvidenceType, float, float]:
+    """(evidence type, raw weight, confidence) for 'missed' (with its position `streak` in a run of consecutive
+    misses) or 'insufficient'."""
     if kind == "missed":
-        return EvidenceType.CHECKIN_MISSED, CHECKIN_MISSED_WEIGHT, CHECKIN_EVIDENCE_CONFIDENCE
+        if isinstance(streak, bool) or not isinstance(streak, int) or streak < 1:
+            raise ValueError("streak must be a positive int")
+        return EvidenceType.CHECKIN_MISSED, CHECKIN_MISSED_WEIGHTS[min(streak, 3)], CHECKIN_EVIDENCE_CONFIDENCE
     if kind == "insufficient":
         return EvidenceType.CHECKIN_INSUFFICIENT, CHECKIN_INSUFFICIENT_WEIGHT, CHECKIN_EVIDENCE_CONFIDENCE
     raise ValueError(f"unknown check-in evidence kind: {kind!r}")

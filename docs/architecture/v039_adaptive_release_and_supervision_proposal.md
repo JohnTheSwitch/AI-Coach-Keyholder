@@ -521,10 +521,10 @@ Findings made while implementing Phase 2 (need your confirmation):
 
 | Topic | Resolution | Implementation |
 |---|---|---|
-| Token earning | A COMPLETED goal earns one token; missed / partially met earns 0. | Consumer `release_engine` on `goal.completed` (`system/startup.py`), idempotent per event id. |
+| Token earning | A COMPLETED goal earns one token; missed / partially met earns 0. | SUPERSEDED in 11.9: the `goal.completed` consumer was removed; tokens come from the daily Token Progress Pool. |
 | Re-freeze | `FREEZE` (`barrier.freeze`) when the discretionary window ends, the balance drops below 1 outside a session, or the daily session expires. | `ReleaseEnginePeriodicTask._maybe_refreeze()`; one decision per release; see below. |
 | Strict Supervision Mode | Check-in deadline 60 -> 30 min, follow-up 30 -> 15 min when Trust < 0.40. | `CheckInService` (`is_strict`), `CHECKIN_*` env values. |
-| Escalation | 2 consecutive misses, or 3 within 48 h -> low-severity Incident `CHECKIN_REPEATED_NONCOMPLIANCE`. | `supervision/escalation.py`, migration 030. |
+| Escalation | 2 consecutive misses, or 3 within 48 h -> low-severity Incident `CHECKIN_REPEATED_NONCOMPLIANCE`. | `supervision/escalation.py`, migration 030. SUPERSEDED in 11.9: 3 consecutive (or 3 within 48 h). |
 | Check-in Trust domain | `CHECK_IN_TRUST_DOMAIN` defaults to `routine`. | `core/config.py`, `.env.example`. |
 | Test-lock verification | Manual, before `ENABLE_CHASTER_EXECUTION=true`. | Still pending (owner). |
 
@@ -596,3 +596,47 @@ Interpretations made (please confirm):
   balance.
 - Hygiene penalties/lockout and the "complete abandonment of supervision" status need the deferred hygiene module (migration 031).
 - Trust drops for moderate/severe catalog entries are unspecified (stored as 0.00).
+
+### 11.9 Final conflict resolutions (binding) and runtime wiring
+
+All conflicts listed in 11.8 are resolved by the owner and applied; the pure modules of 11.8 are now wired.
+
+| Topic | Resolution | Implementation |
+|---|---|---|
+| Token earning | Only the daily Token Progress Pool; the per-goal `+1` is removed. | `goal.completed` consumer deleted from `system/startup.py`; `system/daily_evaluation.py` credits `token_pool.earned`. |
+| Goalless day | `N_total = 0` -> goal ratio 1.0. | `release_engine/token_pool.daily_progress`. |
+| Clean day | 0 goals, 0 check-ins due and 0 violations is a valid Clean Day. | `trust_manager/clean_streak.is_clean_day`. |
+| Midnight tick | Evaluate at 00:00 `APP_TIMEZONE`; record `CLEAN_STREAK_BONUS` Trust evidence (domain `routine`). | `DailyEvaluationTask`, `EvidenceType.CLEAN_STREAK_BONUS`, `DAILY_EVALUATION_TRUST_DOMAIN=routine`. |
+| Barrier mechanism | Keep freeze / unfreeze (`POST /locks/{id}/freeze`). | Unchanged. |
+| Check-in penalties | 1st miss -0.02, 2nd -0.04, 3rd -0.06 (+ Incident), insufficient -0.01; strict mode stays tied to Trust < 0.40. | `trust_manager/checkin_scoring.py`; `streak` in `check_in.missed`; escalation threshold 3 consecutive. |
+| Incident severity | Repeated check-in non-compliance is a MINOR Incident. | Unchanged (`_LOW_SEVERITY_EVIDENCE`); catalog entry changed to MINOR. |
+| Mode hard caps | 336 h Standard, 720 h Advanced. | `penalty_windows.max_target_hours`, `penalty_engine/window.py`. |
+| Catalog default drops | -0.02 minor, -0.05 moderate, -0.10 severe. | `violations_catalog.DEFAULT_TRUST_DROP`. |
+
+**Runtime behaviour.** The daily evaluation runs inside the periodic cycle (under the cycle lease) before the release tick, only when
+`ENABLE_RELEASE_ENGINE` is on (the pool pays into the token ledger). For each finished local date it evaluates exactly once
+(`daily_evaluations` is keyed by user and date; one transaction covers the pool, the ledger entry, the streak, the Trust evidence and
+the audit row), catches up at most 7 missed days oldest first, and on the first run evaluates only yesterday. Trust is read before
+the transaction (the value used is stored with the row). A Trust domain that does not exist yet means nothing is evaluated.
+New penalty windows are sized by `penalty_engine.policy` (see `penalty_engine/README.md`).
+
+Interpretations made (please confirm):
+1. **What a "goal of the day" is.** A goal counts for local date d when its progress period ended on d (its latest evidence decides:
+   `met` is met, `partially_met` and `missed` are not) or it was marked COMPLETED on d (met). Goals without a period ending that day
+   are not counted. `last_unlock_timestamp` is not used: the pool is evaluated per day and persists across releases.
+2. **Check-ins of the day:** concluded check-ins with that local date; `answered` and `answered_uncertain` are OK (an uncertain verdict
+   never carries a consequence), `insufficient` and `missed` are not; skipped / undeliverable prompts are not due.
+3. **Violations of the day:** confirmed Incidents created that day in any domain. A missed check-in makes the day dirty by itself.
+4. **"Immediate" streak reset.** The streak is only read at midnight, so a violation, failed goal or missed check-in resets it at the
+   next evaluation; the result is identical.
+5. **Streak bonus as evidence.** The bonus is recorded as positive Trust evidence (raw weight = the recovery step, capped so Trust never
+   passes 1.00); the Trust recalculation decides the exact resulting score.
+6. **Penalty duration uses the Trust at consumption.** The incident's own Trust drop is already applied by then, so the window is a
+   little longer than the pre-incident score alone would give.
+7. **First minor offense** is a warning stored in `incident_warnings` (no window). The 2nd minor offense of the same rule group is
+   the first one that opens a window. Extensions inside an active window follow the existing extension rules, now bounded by the
+   window's own cap.
+8. **Check-in penalty vs. incident.** The 3rd consecutive miss carries -0.06 and files the MINOR incident (which adds its own Trust
+   drop through the incident evidence).
+9. **Not wired:** violation detection for hygiene, status reports, settings tampering, lock renewal and misrepresentation (their
+   detecting modules do not exist), `last_unlock_timestamp`, Partnered Intimacy and negative token balances, hygiene lockouts.

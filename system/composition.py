@@ -29,6 +29,7 @@ from supervision.checkins import CheckInSender, CheckInService
 from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
 from supervision.repository import SupervisionService
+from system.daily_evaluation import DailyEvaluationTask
 from system.release_tick import ReleaseEnginePeriodicTask
 from trust_manager.models import (
     BreachDirectness,
@@ -66,6 +67,7 @@ class RulesExecutionWiring:
     supervision: SupervisionService | None = None
     release_engine: ReleaseEngine | None = None
     release_task: ReleaseEnginePeriodicTask | None = None
+    daily: DailyEvaluationTask | None = None
     check_ins: CheckInService | None = None
     release_user_id: str | None = None
     notes: list[str] = field(default_factory=list)
@@ -232,7 +234,7 @@ def build_rules_and_execution(
             except ValueError as exc:
                 out.notes.append(f"ENABLE_RELEASE_ENGINE is true but the release engine is NOT active: {exc}.")
             else:
-                penalties = PenaltyEngine(config.db_path, core=core)
+                penalties = PenaltyEngine(config.db_path, core=core)      # read-only use (window state)
                 supervision = out.supervision
                 check_ins = out.check_ins
                 out.release_engine = engine
@@ -247,6 +249,12 @@ def build_rules_and_execution(
                     is_halted=control.is_halted, can_execute=out.executor is not None,
                     max_hold=timedelta(hours=config.max_barrier_hold_hours),
                 )
+                daily_domain = getattr(config, "daily_evaluation_trust_domain", None) or "routine"
+                out.daily = DailyEvaluationTask(
+                    config.db_path, core=core, window_config=window_cfg, user_id=wearer_id, trust_domain=daily_domain,
+                    engine=engine, trust=trust,
+                )
+                out.notes.append(f"Daily evaluation enabled at local midnight (token pool and clean-day streak; Trust domain {daily_domain!r}).")
                 out.notes.append("Release engine enabled ("
                                  + ("live barrier release" if out.executor is not None else "planning only, nothing is spent")
                                  + ").")

@@ -39,13 +39,14 @@ prompts, answers, evaluation and penalties are later phases.
   `UNCERTAIN`, `NOT_EVALUATED`, malformed output or a model failure never carry a consequence.
 - **Consequences:** silence past the deadline -> `missed` -> event `check_in.missed`; `INSUFFICIENT` -> a 30-minute
   follow-up window (a sufficient follow-up clears it); still not sufficient -> `check_in.insufficient`. The Trust Manager
-  records `CHECKIN_MISSED` (-0.06) / `CHECKIN_INSUFFICIENT` (-0.02) evidence (placeholders, `BOOTSTRAP_DEFAULT`),
+  records `CHECKIN_MISSED` / `CHECKIN_INSUFFICIENT` evidence (owner matrix: 1st miss -0.02, 2nd consecutive -0.04, 3rd and later
+  -0.06, insufficient -0.01; the position is carried as `streak` in the `check_in.missed` event),
   idempotent, with an immediate recalculation. The last check-in being `missed` vetoes a release.
 - **Strict Supervision Mode (Trust < 0.40, owner rule):** the response deadline drops from 60 to 30 minutes and the
   follow-up window after an `INSUFFICIENT` answer from 30 to 15 minutes (`SupervisionService.is_active(domain)` is read when the
   prompt is sent / the verdict arrives; stored per check-in). Env: `CHECKIN_RESPONSE_TIMEOUT_MINUTES` (60),
   `CHECKIN_FOLLOW_UP_MINUTES` (30), `CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES` (30), `CHECKIN_STRICT_FOLLOW_UP_MINUTES` (15).
-- **Escalation (`escalation.py`, migration 030):** two CONSECUTIVE missed check-ins, or three missed within any rolling 48 hours,
+- **Escalation (`escalation.py`, migration 030):** three CONSECUTIVE missed check-ins, or three missed within any rolling 48 hours,
   register one low-severity Incident (rule group `CHECKIN_REPEATED_NONCOMPLIANCE`: low impact, partial breach, severity `minor`)
   through the Trust Manager and confirm it as `system_verified`; the Penalty Engine then consumes it like any confirmed Incident.
   Only concluded check-ins count; skipped, undeliverable and needs_review prompts are ignored (neither a miss nor a streak

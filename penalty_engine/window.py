@@ -34,7 +34,7 @@ __all__ = [
 
 # I5 — given explicitly by the architecture document. NOT a bootstrap
 # default.
-MAX_TARGET_ACTIVE_HOURS = 336.0
+MAX_TARGET_ACTIVE_HOURS = 336.0       # the Standard Mode cap; a window carries its own cap (Advanced Mode: 720 h)
 
 # BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
 # Temporary executable value pending an explicit ownership decision.
@@ -48,7 +48,7 @@ DEFAULT_BASE_DURATION_HOURS = 24.0
 def target_active_hours(window: PenaltyWindow) -> float:
     """I5: target_active_hours = min(base_duration_hours + extensions_hours, 336) —
     a calculation, never a stored value; the cap is enforced at read time."""
-    return min(window.base_duration_hours + window.extensions_hours, MAX_TARGET_ACTIVE_HOURS)
+    return min(window.base_duration_hours + window.extensions_hours, window.max_target_hours)
 
 
 def active_hours_elapsed(window: PenaltyWindow, now: datetime) -> float:

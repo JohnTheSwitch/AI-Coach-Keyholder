@@ -33,6 +33,7 @@ from penalty_engine.models import (
     new_id,
 )
 from penalty_engine.window import DEFAULT_BASE_DURATION_HOURS, MAX_TARGET_ACTIVE_HOURS, is_complete, target_active_hours
+from penalty_engine.policy import WindowPlan, WindowPolicy
 from trust_manager.models import CooperationAssessment, SeverityTier
 from trust_manager.repository import TrustManager
 
@@ -61,9 +62,13 @@ def active_hours_elapsed_from_row(row, now: datetime) -> float:
 
 
 class PenaltyEngine:
-    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None) -> None:
+    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None,
+                 window_policy: WindowPolicy | None = None) -> None:
+        """`window_policy` (v0.39) decides the initial duration / hard cap of a NEW window from the severity, the Trust
+        score and the operating mode; without one the legacy fixed base duration and the 336 h cap apply."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
+        self._policy = window_policy
 
     # -------------------------------------------------------------------
     # 2.2 — (none) -> ACTIVE
@@ -203,7 +208,7 @@ class PenaltyEngine:
         (assigned_hours) is conditional on should_extend()'s outcome.
         """
         already_consumed = tx.fetch_one("SELECT 1 FROM incident_consumption WHERE incident_id = ?", (incident_id,))
-        if already_consumed is not None:
+        if already_consumed is not None or tx.fetch_one("SELECT 1 FROM incident_warnings WHERE incident_id = ?", (incident_id,)):
             return None
 
         window_row = tx.fetch_one(
@@ -212,18 +217,40 @@ class PenaltyEngine:
         )
         started = window_row is None
         if started:
+            max_target = MAX_TARGET_ACTIVE_HOURS
+            if self._policy is not None:
+                prior = tx.fetch_one(
+                    "SELECT (SELECT COUNT(*) FROM incident_consumption WHERE rule_group_id = ? AND trust_domain = ?) + "
+                    "(SELECT COUNT(*) FROM incident_warnings WHERE rule_group_id = ? AND trust_domain = ?) AS n",
+                    (rule_group_id, trust_domain, rule_group_id, trust_domain),
+                )["n"]
+                plan = self._policy.plan(tx, trust_domain=trust_domain, rule_group_id=rule_group_id,
+                                         severity=intrinsic_severity, prior_offenses=prior)
+                if plan.base_hours <= 0:
+                    # First minor offense: a warning only (the Trust drop already came with the incident evidence).
+                    tx.execute(
+                        "INSERT INTO incident_warnings (incident_id, trust_domain, rule_group_id, consumed_at) VALUES (?, ?, ?, ?)",
+                        (incident_id, trust_domain, rule_group_id, _iso(now)),
+                    )
+                    write_event(tx, DomainEvent(
+                        event_type="penalty_warning.recorded", source_module="penalty_engine",
+                        payload={"incident_id": incident_id, "trust_domain": trust_domain, "rule_group_id": rule_group_id},
+                        occurred_at=now,
+                    ))
+                    return None
+                base_duration_hours, max_target = plan.base_hours, plan.max_target_hours
             window = PenaltyWindow(
                 created_at=now, status=PenaltyWindowStatus.ACTIVE,
-                base_duration_hours=base_duration_hours, active_period_started_at=now,
+                base_duration_hours=base_duration_hours, active_period_started_at=now, max_target_hours=max_target,
             )
             tx.execute(
                 """
                 INSERT INTO penalty_windows
                     (id, created_at, status, base_duration_hours, extensions_hours,
-                     accumulated_active_hours, active_period_started_at)
-                VALUES (?, ?, ?, ?, 0, 0, ?)
+                     accumulated_active_hours, active_period_started_at, max_target_hours)
+                VALUES (?, ?, ?, ?, 0, 0, ?, ?)
                 """,
-                (window.id, _iso(now), window.status.value, base_duration_hours, _iso(now)),
+                (window.id, _iso(now), window.status.value, base_duration_hours, _iso(now), max_target),
             )
         else:
             window = self._row_to_window(window_row)
@@ -244,7 +271,7 @@ class PenaltyEngine:
         # 3.4/EXT-1: an already-interpreted number, computed from this
         # module's OWN state (I5's formula), never a raw window handed
         # to should_extend() to reach into itself.
-        remaining_capacity = max(0.0, MAX_TARGET_ACTIVE_HOURS - (window.base_duration_hours + window.extensions_hours))
+        remaining_capacity = max(0.0, window.max_target_hours - (window.base_duration_hours + window.extensions_hours))
 
         context = ExtensionContext(
             intrinsic_severity=intrinsic_severity,
@@ -887,4 +914,5 @@ class PenaltyEngine:
             accumulated_active_hours=row["accumulated_active_hours"],
             active_period_started_at=_parse_iso(row["active_period_started_at"]) if row["active_period_started_at"] else None,
             recovery_credits_earned_hours=row["recovery_credits_earned_hours"],
+            max_target_hours=row["max_target_hours"],
         )

@@ -366,7 +366,7 @@ class TestTrustConsequences:
         e.svc.tick(e.due + RESPONSE_TIMEOUT + timedelta(minutes=1))
         before = self._score(e)
         on_system_startup(e.core, "p", FrozenClock(e.due + timedelta(hours=2)))
-        assert self._score(e) == pytest.approx(before - 0.06)
+        assert self._score(e) == pytest.approx(before - 0.02)
 
     def test_insufficient_lowers_trust_by_a_minor_amount(self, tmp_path) -> None:
         e = sent_env(tmp_path, verdict=Verdict.INSUFFICIENT)
@@ -376,7 +376,7 @@ class TestTrustConsequences:
         e.svc.tick(t + FOLLOW_UP_WINDOW + timedelta(minutes=1))
         before = self._score(e)
         on_system_startup(e.core, "p", FrozenClock(e.due + timedelta(hours=2)))
-        assert self._score(e) == pytest.approx(before - 0.02)
+        assert self._score(e) == pytest.approx(before - 0.01)
 
     def test_uncertain_and_answered_never_touch_trust(self, tmp_path) -> None:
         e = sent_env(tmp_path, verdict=Verdict.UNCERTAIN)
@@ -406,3 +406,64 @@ class TestTrustConsequences:
         on_system_startup(e.core, "p", FrozenClock(e.due + timedelta(hours=2)))
         with e.core.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM trust_evidence")["n"] == 0
+
+
+class TestMissedCheckInMatrix:
+    """Owner matrix: 1st miss -0.02, 2nd consecutive -0.04, 3rd and later -0.06; an answer restarts the count."""
+
+    def _miss(self, e, due_at, n):
+        with e.core.transaction() as tx:
+            tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, created_at, updated_at, "
+                       "sent_at, deadline_at) VALUES (?, ?, ?, ?, 2, ?, 'sent', ?, ?, ?, ?)",
+                       (f"m{n}", U, due_at.date().isoformat(), 20 + n, due_at.isoformat(), due_at.isoformat(), due_at.isoformat(),
+                        due_at.isoformat(), (due_at + timedelta(hours=1)).isoformat()))
+
+    def _streaks(self, e):
+        return [json.loads(r["payload_json"]).get("streak") for r in e.events("check_in.missed")]
+
+    def test_consecutive_misses_carry_their_position_and_weights(self, tmp_path) -> None:
+        e = Env(tmp_path, score=0.6)
+        base = local(MON, 18)
+        for n in range(1, 5):
+            self._miss(e, base + timedelta(days=n), n)
+            e.svc.tick(base + timedelta(days=n, hours=2))
+        assert self._streaks(e) == [1, 2, 3, 4]
+        scores = [e.tm.get_domain_state("d").score]
+        for n in range(1, 5):
+            on_system_startup(e.core, f"p{n}", FrozenClock(base + timedelta(days=n, hours=3)))
+            scores.append(e.tm.get_domain_state("d").score)
+        # event delivery is per startup; compare the final drop with the matrix (0.02 + 0.04 + 0.06 + 0.06)
+        assert scores[0] - scores[-1] == pytest.approx(0.18)
+
+    def test_an_answer_restarts_the_count(self, tmp_path) -> None:
+        e = Env(tmp_path, score=0.6)
+        base = local(MON, 18)
+        self._miss(e, base + timedelta(days=1), 1)
+        e.svc.tick(base + timedelta(days=1, hours=2))
+        with e.core.transaction() as tx:
+            tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, created_at, updated_at) "
+                       "VALUES ('a', ?, '2026-10-14', 30, 2, ?, 'answered', ?, ?)",
+                       (U, (base + timedelta(days=2)).isoformat(), base.isoformat(), base.isoformat()))
+        self._miss(e, base + timedelta(days=3), 2)
+        e.svc.tick(base + timedelta(days=3, hours=2))
+        assert self._streaks(e) == [1, 1]
+
+    def test_skipped_prompts_do_not_extend_or_break_the_run(self, tmp_path) -> None:
+        e = Env(tmp_path, score=0.6)
+        base = local(MON, 18)
+        self._miss(e, base + timedelta(days=1), 1)
+        e.svc.tick(base + timedelta(days=1, hours=2))
+        with e.core.transaction() as tx:
+            tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, created_at, updated_at) "
+                       "VALUES ('s', ?, '2026-10-14', 31, 2, ?, 'skipped', ?, ?)",
+                       (U, (base + timedelta(days=2)).isoformat(), base.isoformat(), base.isoformat()))
+        self._miss(e, base + timedelta(days=3), 2)
+        e.svc.tick(base + timedelta(days=3, hours=2))
+        assert self._streaks(e) == [1, 2]
+
+    def test_weights_by_position(self) -> None:
+        from trust_manager.checkin_scoring import checkin_evidence_spec
+        assert [checkin_evidence_spec("missed", n)[1] for n in (1, 2, 3, 4, 9)] == [-0.02, -0.04, -0.06, -0.06, -0.06]
+        assert checkin_evidence_spec("insufficient")[1] == -0.01
+        with pytest.raises(ValueError):
+            checkin_evidence_spec("missed", 0)

@@ -63,14 +63,15 @@ def at(hours):
 
 
 class TestRule:
-    def test_two_consecutive_misses_file_one_incident(self, world) -> None:
+    def test_three_consecutive_misses_file_one_incident(self, world) -> None:
         core, inc, esc = world
         add(core, 1, "missed", at(0))
-        esc.run(at(1))
-        assert inc.registered == []
         add(core, 2, "missed", at(24))
         esc.run(at(25))
-        assert len(inc.registered) == 1 and inc.confirmed == ["inc-1"]
+        assert inc.registered == []                           # two misses are not enough any more
+        add(core, 3, "missed", at(60))                        # not within 48 h of the first: the streak rule fires
+        esc.run(at(61))
+        assert len(inc.registered) == 1 and inc.confirmed == ["inc-1"] and "three consecutive" in inc.registered[0]
         esc.run(at(26))
         assert len(inc.registered) == 1                       # idempotent
 
@@ -99,7 +100,8 @@ class TestRule:
         esc.run(at(20))
         assert inc.registered == []                           # still only one miss
         add(core, 5, "missed", at(24))
-        esc.run(at(25))
+        add(core, 6, "missed", at(30))
+        esc.run(at(31))
         assert len(inc.registered) == 1
 
     def test_three_misses_within_48_hours_even_with_answers_between(self, world) -> None:
@@ -124,15 +126,17 @@ class TestRule:
 
     def test_misses_are_used_up_by_an_escalation(self, world) -> None:
         core, inc, esc = world
-        add(core, 1, "missed", at(0))
-        add(core, 2, "missed", at(24))
-        esc.run(at(25))
-        add(core, 3, "missed", at(48))
-        esc.run(at(49))
-        assert len(inc.registered) == 1                       # miss 3 is a new streak of one
-        add(core, 4, "missed", at(72))
+        for n in (1, 2, 3):
+            add(core, n, "missed", at(24 * n))
         esc.run(at(73))
-        assert len(inc.registered) == 2                       # misses 3 + 4
+        assert len(inc.registered) == 1
+        add(core, 4, "missed", at(100))
+        add(core, 5, "missed", at(124))
+        esc.run(at(125))
+        assert len(inc.registered) == 1                       # misses 4 + 5 are a new streak of two
+        add(core, 6, "missed", at(150))
+        esc.run(at(151))
+        assert len(inc.registered) == 2                       # misses 4 + 5 + 6
 
     def test_a_crash_between_registering_and_confirming_is_recovered_without_a_duplicate(self, tmp_path) -> None:
         core = CoreDatabase(tmp_path / "t.db")
@@ -141,12 +145,12 @@ class TestRule:
                 conn.executescript(path.read_text(encoding="utf-8"))
         inc = Incidents(fail_confirm=True)
         esc = CheckInEscalation(core.db_path, core=core, user_id=U, register_incident=inc.register, confirm_incident=inc.confirm)
-        add(core, 1, "missed", at(0))
-        add(core, 2, "missed", at(24))
-        esc.run(at(25))
+        for n in (1, 2, 3):
+            add(core, n, "missed", at(24 * n))
+        esc.run(at(73))
         assert len(inc.registered) == 1 and inc.confirmed == []
         inc.fail_confirm = False
-        esc.run(at(26))
+        esc.run(at(74))
         assert len(inc.registered) == 1 and inc.confirmed == ["inc-1"]
         with core.transaction() as tx:
             assert [r["state"] for r in tx.fetch_all("SELECT state FROM check_in_escalations")] == ["confirmed"]
@@ -177,10 +181,10 @@ class TestThroughTheRealTrustManager:
 
     def test_the_incident_is_confirmed_minor_and_reaches_the_penalty_engine_path(self, tmp_path) -> None:
         env, esc, tm = self._real(tmp_path)
-        add(env.core, 1, "missed", at(0))
-        add(env.core, 2, "missed", at(24))
+        for n in (1, 2, 3):
+            add(env.core, n, "missed", at(24 * n))
         before = tm.get_domain_state("d").score
-        esc.run(at(25))
+        esc.run(at(73))
         with env.core.transaction() as tx:
             inc = tx.fetch_one("SELECT * FROM incidents")
             events = [r["event_type"] for r in tx.fetch_all("SELECT event_type FROM domain_events ORDER BY rowid")]

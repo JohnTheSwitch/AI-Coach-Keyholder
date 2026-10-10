@@ -41,6 +41,11 @@ class TestTokenPool:
             pool = apply_day(pool, 1, 1, 1.0).pool_after
         assert pool == D("0.000") + (D("0.286") * 1000 % 1)
 
+    def test_a_goalless_day_counts_as_a_full_goal_ratio(self) -> None:
+        assert daily_progress(0, 0, 1.0) == D("0.286")
+        assert daily_progress(0, 0, 0.0) == D("0.2145")
+        assert daily_progress(0, 0, 0.5) == daily_progress(4, 4, 0.5)
+
     @pytest.mark.parametrize("args", [(1, 0, 0.5), (5, 4, 0.5), (-1, 4, 0.5), (1, 4, 1.5), (1, 4, -0.1)])
     def test_invalid_inputs_are_refused(self, args) -> None:
         with pytest.raises(ValueError):
@@ -122,10 +127,18 @@ class TestCatalog:
 
     def test_owner_specified_drops_and_severities(self) -> None:
         assert (cat.get("CHECKIN_MISSED_FIRST").trust_drop, cat.get("CHECKIN_INSUFFICIENT").trust_drop) == (D("0.02"), D("0.01"))
-        assert cat.get("CHECKIN_REPEATED_NONCOMPLIANCE").severity is S.MODERATE
+        assert cat.get("CHECKIN_REPEATED_NONCOMPLIANCE").severity is S.MINOR
+        assert cat.get("CHECKIN_REPEATED_NONCOMPLIANCE").trust_drop == D("0.06")
         assert cat.get("HYGIENE_OVERRUN_MINOR").trust_drop == D("0.03") and cat.get("HYGIENE_OVERRUN_REPEATED").trust_drop == D("0.05")
         assert cat.get("EPISTEMIC_MISREPRESENTATION").severity is S.SEVERE
         assert "hygiene_lockout_48h" in cat.get("HYGIENE_RELOCK_FAILED").side_effects
+
+    def test_unspecified_drops_use_the_severity_defaults(self) -> None:
+        assert cat.DEFAULT_TRUST_DROP == {S.MINOR: D("0.02"), S.MODERATE: D("0.05"), S.SEVERE: D("0.10")}
+        assert cat.get("HYGIENE_OVERRUN_MODERATE").trust_drop == D("0.05")
+        assert cat.get("CHASTER_SETTINGS_TAMPERED").trust_drop == D("0.05")
+        assert cat.get("EPISTEMIC_MISREPRESENTATION").trust_drop == D("0.10")
+        assert cat.get("HYGIENE_RELOCK_FAILED").trust_drop == D("0.10")
 
     def test_goal_failures_are_not_violations(self) -> None:
         assert not any("GOAL" in v.code for v in cat.CATALOG)

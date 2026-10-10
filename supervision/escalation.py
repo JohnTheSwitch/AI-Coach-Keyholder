@@ -3,7 +3,7 @@ supervision/escalation.py
 
 Escalation of repeated check-in non-compliance (v0.39 Phase 3).
 
-Owner rule: two CONSECUTIVE missed check-ins, or three missed within any rolling 48 hours, register one
+Owner rule: three CONSECUTIVE missed check-ins, or three missed within any rolling 48 hours, register one
 low-severity Incident (rule group `CHECKIN_REPEATED_NONCOMPLIANCE`). It goes through the normal Trust
 Manager incident path (registered, then confirmed from objective system records), from which the Penalty
 Engine consumes it exactly like any other confirmed Incident; this module never starts a penalty itself.
@@ -32,7 +32,7 @@ logger = logging.getLogger("ai_coach_keyholder.supervision.escalation")
 __all__ = ["CheckInEscalation", "RULE_GROUP_ID", "ROLLING_WINDOW", "CONSECUTIVE_MISSES", "WINDOW_MISSES"]
 
 RULE_GROUP_ID = "CHECKIN_REPEATED_NONCOMPLIANCE"
-CONSECUTIVE_MISSES = 2
+CONSECUTIVE_MISSES = 3
 WINDOW_MISSES = 3
 ROLLING_WINDOW = timedelta(hours=48)
 _CONCLUDED = ("answered", "answered_uncertain", "insufficient", "missed")
@@ -63,7 +63,7 @@ class CheckInEscalation:
             return
         trigger_id, trigger_due, reason = found
         description = ("Repeated check-in non-compliance: "
-                       + ("two consecutive check-ins were missed." if reason == "consecutive"
+                       + ("three consecutive check-ins were missed." if reason == "consecutive"
                           else "three check-ins were missed within 48 hours."))
         incident_id = self._register(description, now)
 

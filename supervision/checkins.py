@@ -280,14 +280,30 @@ class CheckInService:
 
     def _apply_deadlines(self, now: datetime) -> None:
         with self._core.transaction() as tx:
-            missed = tx.fetch_all("SELECT id FROM check_ins WHERE user_id = ? AND status = 'sent' AND deadline_at < ?",
+            missed = tx.fetch_all("SELECT id, due_at FROM check_ins WHERE user_id = ? AND status = 'sent' AND deadline_at < ?",
                                   (self._user, _iso(now)))
             insufficient = tx.fetch_all("SELECT id FROM check_ins WHERE user_id = ? AND status = 'insufficient_pending' "
                                         "AND follow_up_until < ?", (self._user, _iso(now)))
-        for r in missed:
-            self._cas(r["id"], ("sent",), "missed", now, event="check_in.missed")
+        for r in sorted(missed, key=lambda row: row["due_at"]):
+            streak = self._miss_streak(r["id"], r["due_at"])
+            self._cas(r["id"], ("sent",), "missed", now, event="check_in.missed", payload={"streak": streak})
         for r in insufficient:
             self._cas(r["id"], ("insufficient_pending",), "insufficient", now, event="check_in.insufficient")
+
+    def _miss_streak(self, check_in_id: str, due_at: str) -> int:
+        """Position of this miss in a run of consecutive misses: 1 for the first, 2 for the second, ... Only
+        concluded check-ins count (skipped / undeliverable prompts neither extend nor break a run)."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all(
+                "SELECT status FROM check_ins WHERE user_id = ? AND due_at < ? AND status IN "
+                "('answered', 'answered_uncertain', 'insufficient', 'missed') ORDER BY due_at DESC LIMIT 50",
+                (self._user, due_at))
+        run = 0
+        for r in rows:
+            if r["status"] != "missed":
+                break
+            run += 1
+        return run + 1
 
     def _recover_orphans(self, now: datetime) -> None:
         with self._core.transaction() as tx:
@@ -299,7 +315,7 @@ class CheckInService:
     # ------------------------------------------------------------------ CAS
 
     def _cas(self, check_in_id: str, from_statuses: tuple[str, ...], to_status: str, now: datetime,
-             event: str | None = None, **columns: str | None) -> bool:
+             event: str | None = None, payload: dict | None = None, **columns: str | None) -> bool:
         allowed = {"prompt_text", "sent_at", "deadline_at", "verdict", "rubric_version", "follow_up_until"}
         assert set(columns) <= allowed, set(columns) - allowed
         assignments = ", ".join(f"{c} = ?" for c in columns)
@@ -316,7 +332,7 @@ class CheckInService:
             if event is not None:
                 write_event(tx, DomainEvent(
                     event_type=event, source_module="supervision",
-                    payload={"check_in_id": check_in_id, "trust_domain": self._domain}, occurred_at=now,
+                    payload={"check_in_id": check_in_id, "trust_domain": self._domain, **(payload or {})}, occurred_at=now,
                 ))
             return True
 

@@ -181,6 +181,8 @@ Handoff Pattern (`implementation_conventions.md` Section 3).
 | `goal_accountability_assessment.recorded` | goal_management | trust_manager | GoalAccountabilityAssessment | Goal | **Yes** | ✔ | ✖ | same |
 | `release_plan.created`/`.retargeted`/`.cancelled`, `release.authorized`/`.provider_requested`/`.provider_confirmed`/`.provider_failed`/`.physical_state_unknown` | release_engine | — | ReleasePlan / ReleaseAuthorization | Release | No | ✔ | ✖ | `v039_adaptive_release_and_supervision_proposal.md` (ids only; never a time) |
 | `check_in.prompt_due`/`.missed`/`.insufficient` | supervision | trust_manager (missed, insufficient) | CheckIn | Trust domain | No | ✔ | ✖ | `v039_adaptive_release_and_supervision_proposal.md` (ids and domain only; never the reply text) |
+| `penalty_warning.recorded` | penalty_engine | - | Incident | Penalty Engine | No | ✔ | ✖ | `v039_adaptive_release_and_supervision_proposal.md` 11.9 (ids only) |
+| `daily_evaluation.completed` | system | - | Daily evaluation | Release Engine / Trust | No | ✔ | ✖ | same, 11.9 (date, tokens, clean, streak) |
 | `supervision.entered`/`.exited` | supervision | — | SupervisionState | Trust domain | No | ✔ | ✖ | same |
 | `lock_decision.status_changed` | chaster_execution | — | Decision (execution status) | Lock Decision | No | ✔ | ✖ | `chaster_execution_phase3_proposal.md` |
 | `lock_decision.recorded` | rules_engine | — | Decision (dry run) | Lock Decision | No | ✔ | ✖ | `rules_engine_phase2_proposal.md` |

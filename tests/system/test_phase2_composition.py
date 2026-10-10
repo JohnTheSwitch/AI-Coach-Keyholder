@@ -155,9 +155,10 @@ def record_obs(core, at, **kw):
     return ChasterProviderObservationRecorder(core.db_path, core=core).record(**args)
 
 
-def cycle(core, w, at, name):
+def cycle(core, w, at, name, daily=False):
     return run_periodic_cycle(core, name, FrozenClock(at), rules_engine=w.rules_engine, executor=w.executor,
-                              supervision=w.supervision, release_task=w.release_task, check_ins=w.check_ins)
+                              supervision=w.supervision, release_task=w.release_task, check_ins=w.check_ins,
+                              daily=w.daily if daily else None)
 
 
 def target(core):
@@ -242,17 +243,15 @@ class TestPhase3EndToEnd:
         transport = BarrierTransport()
         return full_world(core, transport, **overrides), transport
 
-    def test_a_completed_goal_leads_to_a_release_and_a_refreeze(self, core) -> None:
-        from goal_management.repository import GoalManager
-        w, transport = self._world(core, enable_check_ins=False)
-        gm = GoalManager(core.db_path, core=core)
-        goal = gm.create_goal("t", "d", "d", "user_proposed", now=local(MON, 9))
-        gm.complete_goal(goal.goal_group_id, "done", now=local(MON, 9, 5))
+    def test_the_token_pool_leads_to_a_release_and_a_refreeze(self, core) -> None:
+        w, transport = self._world(core, enable_check_ins=False, daily_evaluation_trust_domain="d")
+        with core.transaction() as tx:                              # a pool that is about to pay out
+            tx.execute("INSERT INTO token_pool_state (user_id, pool, updated_at) VALUES ('w', '0.95', ?)", (local(MON, 9).isoformat(),))
         assert w.release_engine.get_balance("w") == 0
 
         now = local(MON, 17)
         record_obs(core, now)
-        cycle(core, w, now, "p1")                                   # token credited, secret plan made
+        cycle(core, w, now, "p1", daily=True)                       # yesterday is evaluated: token credited, secret plan made
         assert w.release_engine.get_balance("w") == 1 and w.release_phase("w") == "requirements_met_pending"
         t = target(core)
         assert local(MON, 17) <= t <= local(MON, 20, 0)             # 16:30 + 30..210 minutes, after the cycle began
@@ -280,10 +279,10 @@ class TestPhase3EndToEnd:
     def test_unanswered_check_ins_file_an_incident_and_block_the_release(self, core) -> None:
         w, transport = self._world(core)
         t = local(MON, 16, 30)
-        while t < local(MON, 23, 45):      # slots are random: the latest one is still sent by 22:00 and missed by 23:00
+        while t < local(MON + timedelta(days=1), 23, 45):      # slots are random: two a day, each missed an hour after it is sent
             record_obs(core, t)
             cycle(core, w, t, f"p{t.isoformat()}")
-            t += timedelta(minutes=15)
+            t += timedelta(minutes=20)
         with core.transaction() as tx:
             incidents = [dict(r) for r in tx.fetch_all("SELECT rule_group_id, confirmation FROM incidents")]
             missed = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE status = 'missed'")["n"]

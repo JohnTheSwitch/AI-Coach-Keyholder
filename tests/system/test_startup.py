@@ -60,8 +60,8 @@ def _confirm_incident(core: CoreDatabase, now: datetime = FIXED_TIME):
     incident = tm.register_incident_report(
         rule_group_id="rg1", trust_domain="chastity", description="late",
         evidence=IncidentEvidence(
-            actual_or_potential_impact=ImpactLevel.LOW, intentionality=IntentAssessment.UNCLEAR,
-            rule_breach_directness=BreachDirectness.INDIRECT, evidence_confidence=EvidenceConfidenceLevel.HIGH,
+            actual_or_potential_impact=ImpactLevel.MEDIUM, intentionality=IntentAssessment.UNCLEAR,
+            rule_breach_directness=BreachDirectness.PARTIAL, evidence_confidence=EvidenceConfidenceLevel.HIGH,
             repetition=RepetitionEvidence(same_rule_confirmed_count=0, evaluation_window_days=30),
         ),
         now=now,
@@ -213,7 +213,6 @@ class TestRecoveryPlanEndToEnd:
         assert plan.status == RecoveryPlanStatus.FROZEN
 
     def test_recovery_plan_completes_via_real_wiring(self, core: CoreDatabase) -> None:
-        from penalty_engine.window import DEFAULT_BASE_DURATION_HOURS
 
         _confirm_incident(core)
         clock = FrozenClock(FIXED_TIME + timedelta(minutes=1))
@@ -227,7 +226,7 @@ class TestRecoveryPlanEndToEnd:
         # run startup again -- this both completes the window (Penalty
         # Engine's own ensure_current_state(), step 2) and, through the
         # resulting penalty_window.completed event, completes the plan.
-        clock2 = FrozenClock(FIXED_TIME + timedelta(hours=DEFAULT_BASE_DURATION_HOURS + 50))
+        clock2 = FrozenClock(FIXED_TIME + timedelta(hours=24 * 6))
         on_system_startup(core, "test-process-2", clock2)
 
         rp = RecoveryPlanManager(core.db_path, core=core)

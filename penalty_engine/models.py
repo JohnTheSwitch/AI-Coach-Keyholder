@@ -75,6 +75,7 @@ class PenaltyWindow:
     accumulated_active_hours: float = 0.0
     active_period_started_at: datetime | None = None
     recovery_credits_earned_hours: float = 0.0
+    max_target_hours: float = 336.0     # hard cap of THIS window, fixed at start (Standard 336 h, Advanced 720 h)
 
 
 @dataclass(frozen=True, kw_only=True)

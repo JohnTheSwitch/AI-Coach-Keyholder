@@ -147,3 +147,19 @@ to -- noted in its own comment in prose instead.
   did-something-change flag. See
   `tests/penalty_engine/test_recovery_credit.py::TestI26Dedup`.
 
+
+
+## v0.39: dynamic window duration and mode caps (migration 031)
+- `policy.py` / `duration.py`: a NEW window starts with `PW_Days = MaxDays - Trust * (MaxDays - MinDays)` hours, from the incident
+  severity (minor / moderate / major+critical = severe), the Trust score of the incident's domain at consumption time (it already
+  includes the incident's own drop) and the operating mode. Ranges (days) Standard / Advanced: minor 1-3 / 2-5, moderate 3-5 /
+  5-10, severe 5-7 / 8-15. A new window never starts above 168 h (Standard) / 360 h (Advanced).
+- **Hard cap per window:** `penalty_windows.max_target_hours` (Standard 336 h, Advanced 720 h) is fixed when the window starts;
+  `target_active_hours()` and the extension capacity use it. The reserved half is only reachable through extensions of
+  later violations inside the active window.
+- **First minor offense = warning:** consumed into `incident_warnings` (event `penalty_warning.recorded`), no window; the Trust
+  drop already came with the incident evidence. A rule group counts earlier consumptions and warnings as prior offenses.
+- Without a policy (`PenaltyEngine(...)` built directly, as in older tests) the legacy 24 h base and the 336 h cap apply. The
+  runtime builds the engine through `system/penalty_policy.make_penalty_engine`.
+- `violations_catalog.py`: the catalog with default Trust drops (minor 0.02, moderate 0.05, severe 0.10) for entries without a
+  specific number. It is declarative; goal failures are not violations.

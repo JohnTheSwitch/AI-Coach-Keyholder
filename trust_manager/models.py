@@ -78,6 +78,7 @@ class EvidenceType(StrEnum):
     GOAL_SETBACK = "goal_setback"
     CHECKIN_MISSED = "checkin_missed"                 # v0.39
     CHECKIN_INSUFFICIENT = "checkin_insufficient"     # v0.39
+    CLEAN_STREAK_BONUS = "clean_streak_bonus"         # v0.39: daily recovery of a Clean Day streak
 
 
 @dataclass(frozen=True, kw_only=True)

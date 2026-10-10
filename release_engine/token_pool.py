@@ -38,18 +38,17 @@ def _dec(value: float | int | str | Decimal) -> Decimal:
 
 
 def daily_progress(completed: int, total: int, trust: float | Decimal) -> Decimal:
-    """`total` must be >= 1: a day without assigned goals has no defined goal ratio (open owner question), so the
-    caller decides what to do; this function refuses to guess."""
+    """A day without assigned goals (`total == 0`, then `completed` must be 0) counts as a goal ratio of 1.0 (owner rule)."""
     if isinstance(completed, bool) or isinstance(total, bool) or not isinstance(completed, int) or not isinstance(total, int):
         raise TypeError("completed and total must be ints")
-    if total < 1:
-        raise ValueError("total must be at least 1")
+    if total < 0:
+        raise ValueError("total must not be negative")
     if not 0 <= completed <= total:
         raise ValueError("completed must be within 0..total")
     t = _dec(trust)
     if not Decimal(0) <= t <= _ONE:
         raise ValueError("trust must be within [0, 1]")
-    ratio = Decimal(completed) / Decimal(total)
+    ratio = Decimal(1) if total == 0 else Decimal(completed) / Decimal(total)
     return ((GOAL_WEIGHT * ratio + TRUST_WEIGHT * t) * DAILY_SCALE).quantize(_QUANT, rounding=ROUND_HALF_EVEN)
 
 

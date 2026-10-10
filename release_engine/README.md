@@ -55,10 +55,10 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
 - Weekends and public holidays use a 10:00 base (`WEEKEND_RELEASE_START`) + the same 30-210 minute offset.
 
 ## Phase 3: token earning and the re-freeze
-- **Earning (owner rule):** a COMPLETED goal (`goal.completed`) earns exactly one token. `system/startup.py` registers the
-  consumer `release_engine` only when the engine is wired; it calls `ReleaseEngine._earn_in_transaction()` (idempotent per
-  event id, reason code `goal.completed`). Goals that are missed, partially met, paused, abandoned or archived earn nothing.
-  Events consumed while the engine is off are not paid back when it is enabled later.
+- **Earning (owner rule, superseding the per-goal token):** tokens come EXCLUSIVELY from the daily Token Progress Pool
+  (`token_pool.py`, evaluated at local midnight by `system/daily_evaluation.py`): `P_daily = (0.75 * goals_met/goals_assigned
+  + 0.25 * Trust) * 0.286` (a day without goals counts as a goal ratio of 1.0); each full 1.0 earns one token
+  (`token_pool.earned`, idempotent per date) and is subtracted. A completed goal earns nothing by itself.
 - **Release session:** the discretionary window in which the provider confirmed a release (`last_confirmed_release()`,
   `release_session_over()`). It ends when quiet or workday hours begin or the local date changes (this is also the daily
   session expiry). While it lasts the token balance is naturally 0 (the token paid for this release), so the balance rule below

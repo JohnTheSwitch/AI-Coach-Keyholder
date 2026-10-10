@@ -713,22 +713,22 @@ class TrustManager:
     # -------------------------------------------------------------------
 
     def record_check_in_evidence(
-        self, *, check_in_id: str, trust_domain: str, kind: str, now: datetime,
+        self, *, check_in_id: str, trust_domain: str, kind: str, now: datetime, streak: int = 1,
     ) -> TrustEvidence | None:
         def write(tx: Transaction, _state: object) -> TrustEvidence | None:
             return self._record_check_in_evidence_in_transaction(
-                tx, check_in_id=check_in_id, trust_domain=trust_domain, kind=kind, now=now,
+                tx, check_in_id=check_in_id, trust_domain=trust_domain, kind=kind, now=now, streak=streak,
             )
 
         return apply_transition(self._core, write=write)
 
     def _record_check_in_evidence_in_transaction(
-        self, tx: Transaction, *, check_in_id: str, trust_domain: str, kind: str, now: datetime,
+        self, tx: Transaction, *, check_in_id: str, trust_domain: str, kind: str, now: datetime, streak: int = 1,
     ) -> TrustEvidence | None:
         """One piece of evidence per check-in and kind (TI25), then an immediate recalculation in the
         same transaction. Unknown or inactive domains write nothing. UNCERTAIN / NOT_EVALUATED verdicts
         never reach this method: only `check_in.missed` and `check_in.insufficient` events do."""
-        evidence_type, weight, confidence = checkin_evidence_spec(kind)
+        evidence_type, weight, confidence = checkin_evidence_spec(kind, streak)
         domain = tx.fetch_one("SELECT is_active FROM trust_domains WHERE domain_id = ?", (trust_domain,))
         if domain is None or not domain["is_active"]:
             return None
@@ -760,6 +760,57 @@ class TrustManager:
         recalculation = self._recalculate_domain_trust_in_transaction(
             tx, trust_domain, triggered_by="check_in", now=now,
         )
+        write_event(tx, DomainEvent(
+            event_type="trust_domain.recalculated", source_module="trust_manager",
+            payload={
+                "domain_id": recalculation.domain_id, "previous_score": recalculation.previous_score,
+                "new_score": recalculation.new_score, "previous_confidence": recalculation.previous_confidence,
+                "new_confidence": recalculation.new_confidence, "triggered_by": recalculation.triggered_by,
+            },
+            occurred_at=now,
+        ))
+        return evidence
+
+    # -------------------------------------------------------------------
+    # v0.39 -- Clean Day streak recovery (written by the daily evaluation)
+    # -------------------------------------------------------------------
+
+    def _record_clean_streak_bonus_in_transaction(
+        self, tx: Transaction, *, user_id: str, local_date: str, trust_domain: str, bonus: float, streak: int, now: datetime,
+    ) -> TrustEvidence | None:
+        """One positive piece of evidence per user and local date (TI25), then an immediate recalculation in the
+        same transaction. Unknown or inactive domains and a zero bonus (Trust already at the cap) write nothing."""
+        if bonus <= 0:
+            return None
+        domain = tx.fetch_one("SELECT is_active FROM trust_domains WHERE domain_id = ?", (trust_domain,))
+        if domain is None or not domain["is_active"]:
+            return None
+        source_id = f"{user_id}:{local_date}"
+        if tx.fetch_one(
+            "SELECT 1 FROM trust_evidence WHERE source_entity_type = ? AND source_entity_id = ? AND evidence_type = ?",
+            ("daily_evaluation", source_id, EvidenceType.CLEAN_STREAK_BONUS.value),
+        ):
+            return None
+        evidence = TrustEvidence(
+            domain_id=trust_domain, created_at=now, evidence_type=EvidenceType.CLEAN_STREAK_BONUS,
+            source_entity_type="daily_evaluation", source_entity_id=source_id, raw_weight=bonus, evidence_confidence=1.0,
+            explanation=f"Clean day number {streak} in a row.",
+        )
+        tx.execute(
+            """
+            INSERT INTO trust_evidence
+                (id, domain_id, created_at, evidence_type, source_entity_type, source_entity_id,
+                 raw_weight, evidence_confidence, explanation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (evidence.id, evidence.domain_id, _iso(now), evidence.evidence_type.value, evidence.source_entity_type,
+             evidence.source_entity_id, evidence.raw_weight, evidence.evidence_confidence, evidence.explanation),
+        )
+        write_event(tx, DomainEvent(
+            event_type="trust_evidence.recorded", source_module="trust_manager",
+            payload={"evidence_id": evidence.id, "domain_id": evidence.domain_id}, occurred_at=now,
+        ))
+        recalculation = self._recalculate_domain_trust_in_transaction(tx, trust_domain, triggered_by="clean_streak", now=now)
         write_event(tx, DomainEvent(
             event_type="trust_domain.recalculated", source_module="trust_manager",
             payload={

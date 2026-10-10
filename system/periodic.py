@@ -22,6 +22,7 @@ from infrastructure.startup_lease import acquire_system_startup_lease, release_s
 from penalty_engine.repository import PenaltyEngine
 from recovery_plan.repository import RecoveryPlanManager
 from system.startup import build_consumer_registry
+from system.penalty_policy import make_penalty_engine
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.system.periodic")
@@ -32,7 +33,7 @@ CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
 def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
-                       release_task=None, check_ins=None) -> bool:
+                       release_task=None, check_ins=None, daily=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -40,7 +41,7 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
         return False
     try:
         registry = build_consumer_registry(
-            TrustManager(core.db_path, core=core), PenaltyEngine(core.db_path, core=core),
+            TrustManager(core.db_path, core=core), make_penalty_engine(core),
             RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
             release_engine=None if release_task is None else release_task.engine,
             release_user_id=None if release_task is None else release_task.user_id,
@@ -50,6 +51,8 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
             rules_engine.evaluate_pending(now=now)
         if check_ins is not None:
             check_ins.tick(now)                      # first: the release gates read the latest check-in outcome
+        if daily is not None:
+            daily.run(now)                           # before the release tick, so a new token is seen at once
         if release_task is not None:
             release_task.run(now)
         if executor is not None:
@@ -65,12 +68,12 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
                         interval_seconds: int = 60, supervision=None,
-                        release_task=None, check_ins=None) -> None:
+                        release_task=None, check_ins=None, daily=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
-                supervision=supervision, release_task=release_task, check_ins=check_ins,
+                supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily,
             )
         except asyncio.CancelledError:
             raise

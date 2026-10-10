@@ -41,6 +41,7 @@ from rules_engine.repository import TRIGGER_EVENT_TYPE, RulesEngineService
 from trust_manager.models import CooperationAssessment, SeverityTier
 from supervision.repository import TRIGGER_EVENT_TYPE as SUPERVISION_TRIGGER
 from supervision.repository import SupervisionService
+from system.penalty_policy import make_penalty_engine
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.system.startup")
@@ -62,7 +63,7 @@ def _emit_recovery_plan_event(tx, event_type: str, plan, source_event) -> None:
 def build_consumer_registry(
     trust_manager: TrustManager, penalty_engine: PenaltyEngine, recovery_plan: RecoveryPlanManager,
     rules_engine: RulesEngineService | None = None, supervision: SupervisionService | None = None,
-    release_engine=None, release_user_id: str | None = None,
+    release_engine=None, release_user_id: str | None = None,   # kept for call compatibility; tokens come from the daily pool
 ) -> ConsumerRegistry:
     """
     The real, working cross-module wiring this project's architecture
@@ -122,7 +123,7 @@ def build_consumer_registry(
     def on_check_in_missed(tx, event) -> None:
         trust_manager._record_check_in_evidence_in_transaction(
             tx, check_in_id=event.payload["check_in_id"], trust_domain=event.payload["trust_domain"],
-            kind="missed", now=event.occurred_at,
+            kind="missed", now=event.occurred_at, streak=int(event.payload.get("streak", 1)),
         )
 
     def on_check_in_insufficient(tx, event) -> None:
@@ -133,17 +134,6 @@ def build_consumer_registry(
 
     registry.register("check_in.missed", "trust_manager", on_check_in_missed)
     registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
-
-    if release_engine is not None and release_user_id:
-        def on_goal_completed(tx, event) -> None:
-            # Owner rule: a COMPLETED goal earns exactly one token (idempotent per event). Missed,
-            # partially met, abandoned or otherwise ended goals earn nothing.
-            release_engine._earn_in_transaction(
-                tx, user_id=release_user_id, amount=1, reason_code="goal.completed",
-                source_event_id=event.id, now=event.occurred_at,
-            )
-
-        registry.register("goal.completed", "release_engine", on_goal_completed)
 
     if supervision is not None:
         # v0.39: a Trust recalculation may start/stop proactive supervision (derived state).
@@ -238,7 +228,7 @@ def on_system_startup(
 
     try:
         trust_manager = TrustManager(core.db_path, core=core)
-        penalty_engine = PenaltyEngine(core.db_path, core=core)
+        penalty_engine = make_penalty_engine(core)
         recovery_plan = RecoveryPlanManager(core.db_path, core=core)
         goal_management = GoalManager(core.db_path, core=core)
 

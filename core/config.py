@@ -154,6 +154,7 @@ class Config:
     checkin_follow_up_minutes: int = 30
     checkin_strict_response_timeout_minutes: int = 30
     checkin_strict_follow_up_minutes: int = 15
+    daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
     check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
 
     @classmethod
@@ -223,4 +224,5 @@ class Config:
             checkin_strict_response_timeout_minutes=int(get("CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES", "30") or "30"),
             checkin_strict_follow_up_minutes=int(get("CHECKIN_STRICT_FOLLOW_UP_MINUTES", "15") or "15"),
             check_in_user_id=get("CHECK_IN_USER_ID"),
+            daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",
         )

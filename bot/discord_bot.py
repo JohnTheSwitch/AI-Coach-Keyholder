@@ -110,11 +110,11 @@ class CoachKeyholderBot(discord.Client):
         itself from ever connecting. Chaster callback infrastructure
         being unavailable must never take down the whole bot."""
         if self.periodic is not None:
-            core, rules_engine, executor, interval, supervision, release_task, check_ins = self.periodic
+            core, rules_engine, executor, interval, supervision, release_task, check_ins, daily = self.periodic
             self._periodic_task = asyncio.create_task(
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
                               interval_seconds=interval, supervision=supervision,
-                              release_task=release_task, check_ins=check_ins)
+                              release_task=release_task, check_ins=check_ins, daily=daily)
             )
         if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
             logger.info("Chaster is not configured -- callback listener not started.")
@@ -405,9 +405,9 @@ def main() -> None:
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
-    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins)):
+    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
-                        wiring.supervision, wiring.release_task, wiring.check_ins)
+                        wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)
     bot.run(config.discord_token, log_handler=None)
 
 
