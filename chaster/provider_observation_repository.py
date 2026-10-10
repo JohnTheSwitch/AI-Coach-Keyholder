@@ -52,6 +52,7 @@ def _row_to_observation(row) -> ChasterProviderObservation:
         is_frozen=None if row["is_frozen"] is None else bool(row["is_frozen"]),
         has_keyholder=None if row["has_keyholder"] is None else bool(row["has_keyholder"]),
         end_date=_parse_iso(row["end_date"]) if row["end_date"] else None,
+        frozen_at=_parse_iso(row["frozen_at"]) if row["frozen_at"] else None,
     )
 
 
@@ -99,6 +100,7 @@ class ChasterProviderObservationRecorder:
         self, *, connection_id: str, provider: str, chaster_lock_id: str | None,
         status: ChasterProviderStatus, fetched_at: datetime, now: datetime,
         is_frozen: bool | None = None, has_keyholder: bool | None = None, end_date: datetime | None = None,
+        frozen_at: datetime | None = None,
     ) -> ChasterProviderObservation:
         """Inserts one new observation row. `fetched_at` is when the
         real Chaster API call actually completed; `now` (the injected
@@ -116,15 +118,15 @@ class ChasterProviderObservationRecorder:
         observation = ChasterProviderObservation(
             id=_new_id(), connection_id=connection_id, provider=provider,
             chaster_lock_id=chaster_lock_id, status=status, fetched_at=fetched_at, created_at=now,
-            is_frozen=is_frozen, has_keyholder=has_keyholder, end_date=end_date,
+            is_frozen=is_frozen, has_keyholder=has_keyholder, end_date=end_date, frozen_at=frozen_at,
         )
         with self._core.transaction() as tx:
             tx.execute(
                 """
                 INSERT INTO chaster_provider_observations
                     (id, connection_id, provider, chaster_lock_id, status, fetched_at, created_at,
-                     is_frozen, has_keyholder, end_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     is_frozen, has_keyholder, end_date, frozen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     observation.id, observation.connection_id, observation.provider,
@@ -133,6 +135,7 @@ class ChasterProviderObservationRecorder:
                     None if is_frozen is None else int(is_frozen),
                     None if has_keyholder is None else int(has_keyholder),
                     None if end_date is None else _iso(end_date),
+                    None if frozen_at is None else _iso(frozen_at),
                 ),
             )
         return observation

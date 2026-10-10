@@ -90,10 +90,14 @@ class ApplicationService:
         chaster_connections: ChasterConnectionRepository | None = None,
         chaster_oauth_client: ChasterOAuthClient | None = None,
         chaster_token_manager: ChasterTokenManager | None = None,
+        check_in_listener=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._conversation_engine = conversation_engine  # DI only -- never constructed here
+        # Optional callable(user_id, text, now): lets the supervision check-in service see a free-text
+        # reply. Called only for messages that are neither commands nor Chaster status questions.
+        self._check_in_listener = check_in_listener
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -199,6 +203,8 @@ class ApplicationService:
             if is_chaster_status_query(incoming.text):
                 return self._answer_chaster_status_question(incoming, context, preferences)
 
+            self._notify_check_in(user.id, incoming.text, incoming.received_at)
+
             if self._conversation_engine is None:
                 return OutgoingMessage(text=self.router.unrecognized_text())
 
@@ -226,6 +232,15 @@ class ApplicationService:
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
+
+    def _notify_check_in(self, user_id: str, text: str, now) -> None:
+        """Best effort and never raises: a check-in problem must not break a conversation."""
+        if self._check_in_listener is None:
+            return
+        try:
+            self._check_in_listener(user_id, text, now)
+        except Exception:
+            logger.exception("Check-in listener failed; the message is handled normally.")
 
     # -------------------------------------------------------------------
     # Explicit, limited command set (per this phase's own scope --

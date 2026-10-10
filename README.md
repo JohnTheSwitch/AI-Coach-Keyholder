@@ -71,7 +71,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**2489 passing tests** across the whole repository (`pytest`), including
+**2800 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -109,8 +109,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Twenty-eight sequential database migrations are applied so far
-(`database/migrations/001` through `028`), covering the initial Phase 0
+Twenty-nine sequential database migrations are applied so far
+(`database/migrations/001` through `029`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -139,7 +139,8 @@ plane's foundations (observation frozen/keyholder/end-date columns, an append-on
 execution audit log and the runtime halt switch; see
 [`chaster_execution/README.md`](chaster_execution/README.md)), (027) the v0.39 release
 engine's token ledger, release plans and authorizations ([`release_engine/README.md`](release_engine/README.md)),
-and (028) proactive-supervision state ([`supervision/README.md`](supervision/README.md)). See
+(028) proactive-supervision state ([`supervision/README.md`](supervision/README.md)), and (029) check-ins plus
+the provider `frozenAt` observation column. See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 

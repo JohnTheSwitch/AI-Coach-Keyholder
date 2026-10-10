@@ -194,14 +194,23 @@ def _render_active_task(data: object) -> str:
     )
 
 
+def _render_release(data: object) -> str:
+    # v0.39: a coarse enum only. Never a time, a count or a reason; the guardrails forbid any hint of timing.
+    if data["release_phase"] == "requirements_met_pending":
+        return ("Release: the user's requirements are met, and the timing of any release is entirely your "
+                "decision within safety limits. Never say or hint when.")
+    return "Release: the user's requirements are not met yet."
+
+
 # Deterministic order + only the namespaces this module explicitly
 # knows how to render -- an unrecognized namespace is silently
 # skipped, never guessed at or dumped raw.
 _FRAGMENT_RENDERERS = {
     "lock_state": _render_lock_state,
     "active_task": _render_active_task,
+    "release": _render_release,
 }
-_FRAGMENT_ORDER = ("lock_state", "active_task")
+_FRAGMENT_ORDER = ("lock_state", "active_task", "release")
 
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:

@@ -76,6 +76,8 @@ class EvidenceType(StrEnum):
     MANUAL_REVIEW = "manual_review"
     GOAL_PROGRESS = "goal_progress"
     GOAL_SETBACK = "goal_setback"
+    CHECKIN_MISSED = "checkin_missed"                 # v0.39
+    CHECKIN_INSUFFICIENT = "checkin_insufficient"     # v0.39
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -9,6 +9,10 @@ parameters. Only add_time / remove_time can execute (Phase 3).
 Guarantees (see docs/architecture/chaster_execution_phase3_proposal.md):
 - master switch + runtime halt are checked before every run and again before
   every call; a missing/unreadable halt row means halted;
+- barrier management (v0.39): freeze/unfreeze execute ONLY when `allow_barrier_actions` is on AND the
+  decision comes from a barrier rule id (BARRIER_RULE_IDS); they draw on their own limit pool
+  (rules_engine.limits) and an UNFREEZE additionally needs the barrier to be up and, if a
+  `window_check` is supplied, a discretionary window at the moment of the call;
 - at-most-once: the 'executing' claim is committed BEFORE the network call and
   is unique per decision (migration 026). An ambiguous outcome (crash between
   the claim and the result, timeout, 5xx) ends as needs_review and is never
@@ -30,6 +34,8 @@ from typing import Callable
 from chaster.models import ChasterProviderObservation, ChasterProviderStatus
 from chaster_execution.control import ExecutionControl
 from chaster_execution.models import (
+    BARRIER_ACTIONS,
+    BARRIER_RULE_IDS,
     DECISION_MAX_AGE_MINUTES,
     EXECUTABLE_ACTIONS,
     ExecStatus,
@@ -73,6 +79,8 @@ class ChasterExecutor:
         refresh_observation: Callable[[datetime], None],
         get_granted_scopes: Callable[[], tuple[str, ...] | None],
         max_per_run: int = 5,
+        allow_barrier_actions: bool = False,
+        window_check: Callable[[datetime], bool] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -83,6 +91,8 @@ class ChasterExecutor:
         self._refresh = refresh_observation
         self._get_scopes = get_granted_scopes
         self._max_per_run = max_per_run
+        self._allow_barrier = allow_barrier_actions
+        self._window_check = window_check
 
     # -------------------------------------------------------------------
 
@@ -96,12 +106,18 @@ class ChasterExecutor:
 
         cutoff = _iso(now - timedelta(minutes=DECISION_MAX_AGE_MINUTES))
         marks = ",".join("?" for _ in EXECUTABLE_ACTIONS)
+        eligible = f"action_type IN ({marks})"
+        args: list = sorted(EXECUTABLE_ACTIONS)
+        if self._allow_barrier:
+            bmarks = ",".join("?" for _ in BARRIER_RULE_IDS)
+            eligible = f"({eligible} OR (action_type IN ('freeze', 'unfreeze') AND rule_id IN ({bmarks})))"
+            args += sorted(BARRIER_RULE_IDS)
         with self._core.transaction() as tx:
             rows = tx.fetch_all(
-                f"SELECT * FROM lock_decisions WHERE action_type IN ({marks}) AND "
+                f"SELECT * FROM lock_decisions WHERE {eligible} AND "
                 "(status = 'pending' OR (status = 'dry_run' AND created_at >= ?)) "
                 "ORDER BY created_at, rowid LIMIT ?",
-                (*sorted(EXECUTABLE_ACTIONS), cutoff, self._max_per_run),
+                (*args, cutoff, self._max_per_run),
             )
 
         for row in rows:
@@ -142,7 +158,7 @@ class ChasterExecutor:
         if self._control.is_halted():   # also checked before every call, not only at run start
             return None
 
-        refusal, lock_id, end_before = self._preflight(decision_id, action, hours, now)
+        refusal, lock_id, end_before = self._preflight(decision_id, action, hours, now, row["rule_id"])
         if refusal is not None:
             self._transition(decision_id, ExecStatus.PENDING, ExecStatus.BLOCKED, now, refusal)
             return ExecStatus.BLOCKED
@@ -156,7 +172,9 @@ class ChasterExecutor:
 
         seconds = hours * 3600
         try:
-            if action == ActionType.ADD_TIME:
+            if action in (ActionType.FREEZE, ActionType.UNFREEZE):
+                result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
+            elif action == ActionType.ADD_TIME:
                 result = self._transport.add_time(lock_id=lock_id, seconds=seconds)
             else:
                 result = self._transport.remove_time(lock_id=lock_id, seconds=seconds)
@@ -177,11 +195,15 @@ class ChasterExecutor:
                          _FAILURE_DETAIL.get(result.outcome, "failed"), http_status=http)
         return ExecStatus.FAILED
 
-    def _preflight(self, decision_id: str, action: ActionType, hours: int, now: datetime):
+    def _preflight(self, decision_id: str, action: ActionType, hours: int, now: datetime, rule_id: str | None = None):
         def refuse(reason: str):
             return reason, None, None
 
-        if action.value not in EXECUTABLE_ACTIONS or hours < 1:
+        is_barrier = action.value in BARRIER_ACTIONS
+        if is_barrier:
+            if not self._allow_barrier or rule_id not in BARRIER_RULE_IDS:
+                return refuse("barrier actions execute only for barrier management")
+        elif action.value not in EXECUTABLE_ACTIONS or hours < 1:
             return refuse("action is not executable in Phase 3")
         scopes = self._get_scopes()
         if not scopes or REQUIRED_SCOPE not in scopes:
@@ -203,14 +225,20 @@ class ChasterExecutor:
             return refuse("lock is not in a locked state")
         if obs.has_keyholder is not True:
             return refuse("lock is not confirmed to be a keyholder lock")
-        if obs.is_frozen is not False:
+        if is_barrier:
+            want_frozen = action == ActionType.UNFREEZE       # an unfreeze needs the barrier to be up
+            if obs.is_frozen is not want_frozen:
+                return refuse("lock is not in the state this barrier action expects")
+            if action == ActionType.UNFREEZE and self._window_check is not None and not self._window_check(now):
+                return refuse("barrier release outside a discretionary window")
+        elif obs.is_frozen is not False:
             return refuse("lock is frozen or its frozen state is unknown")
         if not obs.chaster_lock_id or not obs.chaster_lock_id.strip():
             return refuse("no lock id")
 
         recent = self._recent_executed(decision_id, now)
         allowed, why = apply_limits(action, hours, recent, now)
-        if why is not None or allowed < hours:
+        if why is not None or allowed < hours:       # barrier actions carry 0 hours: allowed == hours == 0
             return refuse(f"limits re-check refused: {why or 'amount exceeds remaining cap'}")
         return None, obs.chaster_lock_id, None if obs.end_date is None else _iso(obs.end_date)
 

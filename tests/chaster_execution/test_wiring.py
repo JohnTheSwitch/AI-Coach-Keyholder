@@ -289,10 +289,10 @@ class TestIsolationGuards:
             for name in self._imports(path):
                 assert name.split(".")[0] != "chaster_execution", f"{rel} imports chaster_execution"
 
-    def test_transport_interface_has_only_time_methods(self) -> None:
+    def test_transport_interface_has_only_time_and_barrier_methods(self) -> None:
         from chaster_execution.models import LockActionTransport
         methods = {m for m in vars(LockActionTransport) if not m.startswith("_")}
-        assert methods == {"add_time", "remove_time"}
+        assert methods == {"add_time", "remove_time", "set_frozen"}
 
     def test_no_tls_weakening_anywhere_in_the_new_code(self) -> None:
         for pkg in ("chaster_execution", "rules_engine", "system"):

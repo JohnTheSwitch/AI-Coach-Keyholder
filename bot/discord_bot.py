@@ -59,6 +59,9 @@ from database.database import Database
 from database.models import ConversationMessage, MessageRole
 from infrastructure.clock import Clock, SystemClock
 from infrastructure.database import Database as CoreDatabase
+from bot.checkin_sender import DiscordCheckInSender
+from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
+from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from system.composition import build_rules_and_execution
 from system.periodic import periodic_loop
 from system.startup import StartupLeaseNotAcquired, on_system_startup
@@ -107,10 +110,11 @@ class CoachKeyholderBot(discord.Client):
         itself from ever connecting. Chaster callback infrastructure
         being unavailable must never take down the whole bot."""
         if self.periodic is not None:
-            core, rules_engine, executor, interval, supervision = self.periodic
+            core, rules_engine, executor, interval, supervision, release_task, check_ins = self.periodic
             self._periodic_task = asyncio.create_task(
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
-                              interval_seconds=interval, supervision=supervision)
+                              interval_seconds=interval, supervision=supervision,
+                              release_task=release_task, check_ins=check_ins)
             )
         if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
             logger.info("Chaster is not configured -- callback listener not started.")
@@ -359,10 +363,24 @@ def main() -> None:
     # objects exist because the lock snapshot and the executor need them. All of
     # it is OFF unless explicitly enabled; startup reconciliation still runs
     # BEFORE the bot accepts any request (bot.run is below).
+    check_in_sender = DiscordCheckInSender(config.db_path, core=core)
+
+    def check_in_complete(system_prompt: str, user_message: str) -> str:
+        # The language model is used ONLY as a rubric classifier here (supervision/checkin_evaluator.py).
+        return ollama_model.generate(request=ModelGenerationRequest(
+            messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt),
+                      ModelMessage(role=ModelMessageRole.USER, content=user_message)),
+            max_output_characters=200,
+        ))
+
     wiring = build_rules_and_execution(
         config, core, connections=chaster_connections, oauth_client=chaster_oauth_client,
         lock_client=chaster_lock_client, token_manager=chaster_token_manager,
+        check_in_sender=check_in_sender, check_in_complete=check_in_complete,
     )
+    if wiring.release_engine is not None:
+        # The only release datum the model ever sees: a coarse enum (never a time).
+        context_providers = context_providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
     for note in wiring.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
 
@@ -382,11 +400,13 @@ def main() -> None:
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
         chaster_connections=chaster_connections, chaster_oauth_client=chaster_oauth_client,
         chaster_token_manager=chaster_token_manager,
+        check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
     )
     bot = build_bot(config, db, clock, application_service)
-    if wiring.rules_engine is not None or wiring.supervision is not None:
+    check_in_sender.attach(bot)
+    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
-                        wiring.supervision)
+                        wiring.supervision, wiring.release_task, wiring.check_ins)
     bot.run(config.discord_token, log_handler=None)
 
 

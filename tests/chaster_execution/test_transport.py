@@ -227,10 +227,68 @@ class TestFactoryAndInterface:
         with pytest.raises(ValueError):
             ChasterHttpTransport(token_manager=parts[2], keyholder_user_id=" ", clock=FrozenClock(NOW))
 
-    def test_public_surface_is_only_add_and_remove_time(self, parts) -> None:
+    def test_public_surface_is_only_time_and_barrier_methods(self, parts) -> None:
         public = {n for n in dir(ChasterHttpTransport) if not n.startswith("_")}
-        assert public == {"add_time", "remove_time"}
+        assert public == {"add_time", "remove_time", "set_frozen"}
 
     def test_module_never_disables_tls_verification(self) -> None:
         text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")
         assert "verify=False" not in text and "verify =" not in text
+
+
+class TestSetFrozen:
+    def test_unfreeze_posts_the_documented_body(self, parts) -> None:
+        send = FakeSend(204)
+        r = transport(parts, send).set_frozen(lock_id="64a1b2c3d4e5f60718293a4b", frozen=False)
+        (c,) = send.calls
+        assert r.outcome == O.OK and r.http_status == 204
+        assert c["method"] == "POST" and c["url"] == "https://api.chaster.app/locks/64a1b2c3d4e5f60718293a4b/freeze"
+        assert c["json"] == {"isFrozen": False} and c["headers"]["Authorization"] == f"Bearer {FAKE_TOKEN}"
+
+    def test_freeze_posts_true(self, parts) -> None:
+        send = FakeSend(204)
+        transport(parts, send).set_frozen(lock_id="abc", frozen=True)
+        assert send.calls[0]["json"] == {"isFrozen": True}
+
+    @pytest.mark.parametrize("status,outcome", [
+        (204, O.OK), (400, O.NOT_ELIGIBLE), (403, O.FORBIDDEN), (404, O.NOT_FOUND), (200, O.UNKNOWN), (500, O.UNKNOWN),
+    ])
+    def test_status_mapping(self, parts, status, outcome) -> None:
+        assert transport(parts, FakeSend(status)).set_frozen(lock_id="abc", frozen=False).outcome == outcome
+
+    @pytest.mark.parametrize("lock_id,frozen", [("", True), ("a/b", True), (None, True), ("abc", 1), ("abc", "true"), ("abc", None)])
+    def test_bad_inputs_never_send(self, parts, lock_id, frozen) -> None:
+        send = FakeSend(204)
+        assert transport(parts, send).set_frozen(lock_id=lock_id, frozen=frozen).outcome == O.NOT_SENT
+        assert not send.calls
+
+    def test_ambiguous_network_error(self, parts) -> None:
+        assert transport(parts, FakeSend(requests.ReadTimeout())).set_frozen(lock_id="abc", frozen=False).outcome == O.UNKNOWN
+
+    def test_401_refreshes_once(self, parts) -> None:
+        parts[1].refresh_tokens.return_value = ChasterTokenResponse(
+            access_token="fake-new-access-token", refresh_token="fake-new-refresh", expires_in=3600,
+            refresh_expires_in=86400, granted_scopes=("locks",),
+        )
+        send = FakeSend(401, 204)
+        assert transport(parts, send).set_frozen(lock_id="abc", frozen=False).outcome == O.OK and len(send.calls) == 2
+
+    def test_real_wire_format(self, parts, monkeypatch) -> None:
+        captured = {}
+
+        def fake_session_send(self, prepared, **kw):
+            captured["p"] = prepared
+            return Resp(204)
+
+        monkeypatch.setattr(requests.Session, "send", fake_session_send)
+        t = ChasterHttpTransport(token_manager=parts[2], keyholder_user_id="k", clock=FrozenClock(NOW))
+        assert t.set_frozen(lock_id="abc123", frozen=False).outcome == O.OK
+        p = captured["p"]
+        assert p.url == "https://api.chaster.app/locks/abc123/freeze" and json.loads(p.body) == {"isFrozen": False}
+        assert p.headers["Content-Type"] == "application/json" and list(p.headers.keys())[:2] == ["Authorization", "User-Agent"]
+
+    def test_no_combination_or_unlock_endpoint_is_ever_referenced(self) -> None:
+        text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")
+        code = text.split('"""', 2)[2]               # strip the module docstring
+        for forbidden in ("/combination", "/unlock", "/emergency", "recover-combination"):
+            assert forbidden not in code

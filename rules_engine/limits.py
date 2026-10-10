@@ -21,6 +21,9 @@ __all__ = [
     "MAX_ACTIONS_PER_WINDOW",
     "ROLLING_WINDOW",
     "ACTION_COOLDOWN",
+    "BARRIER_MAX_ACTIONS_PER_WINDOW",
+    "BARRIER_COOLDOWN",
+    "BARRIER_ACTIONS",
     "LOCK_DATA_MAX_AGE",
     "apply_limits",
 ]
@@ -34,6 +37,11 @@ ROLLING_WINDOW = timedelta(hours=24)
 ACTION_COOLDOWN = timedelta(hours=4)
 LOCK_DATA_MAX_AGE = timedelta(minutes=15)
 
+# v0.39 barrier pool (freeze / unfreeze): independent of the time-adjustment pool above.
+BARRIER_ACTIONS = (ActionType.FREEZE, ActionType.UNFREEZE)
+BARRIER_MAX_ACTIONS_PER_WINDOW = 2
+BARRIER_COOLDOWN = timedelta(hours=4)
+
 
 def apply_limits(
     action: ActionType, hours: int, recent: tuple[RecentAction, ...], now: datetime,
@@ -45,15 +53,22 @@ def apply_limits(
     remains, it is a refusal. FREEZE / UNFREEZE carry no hours but still
     count against the frequency and cooldown limits.
     """
+    is_barrier = action in BARRIER_ACTIONS
+    # Two independent pools: barrier actions are counted only against barrier actions, and
+    # time adjustments only against time adjustments.
+    recent = tuple(a for a in recent if (a.action_type in BARRIER_ACTIONS) == is_barrier)
+    max_actions = BARRIER_MAX_ACTIONS_PER_WINDOW if is_barrier else MAX_ACTIONS_PER_WINDOW
+    cooldown = BARRIER_COOLDOWN if is_barrier else ACTION_COOLDOWN
+
     window_start = now - ROLLING_WINDOW
     in_window = [a for a in recent if window_start <= a.created_at <= now]
 
-    if len(in_window) >= MAX_ACTIONS_PER_WINDOW:
-        return 0, f"action limit reached ({MAX_ACTIONS_PER_WINDOW} per 24 hours)"
+    if len(in_window) >= max_actions:
+        return 0, f"action limit reached ({max_actions} per 24 hours)"
 
     if recent:
         last = max(a.created_at for a in recent)
-        if now - last < ACTION_COOLDOWN:
+        if now - last < cooldown:
             return 0, "cooldown active (minimum 4 hours between actions)"
 
     if action in (ActionType.FREEZE, ActionType.UNFREEZE):

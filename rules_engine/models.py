@@ -39,7 +39,15 @@ class EntitlementClass(StrEnum):
 
 
 class DecisionStatus(StrEnum):
-    DRY_RUN = "dry_run"            # the only status in Phase 2: nothing is executed
+    DRY_RUN = "dry_run"            # recorded, not executed
+    # Advanced only by chaster_execution (the single writer of lock_decisions.status):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    EXPIRED = "expired"
+    NEEDS_REVIEW = "needs_review"
 
 
 class GoalDirection(StrEnum):

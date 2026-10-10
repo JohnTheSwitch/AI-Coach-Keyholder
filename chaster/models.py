@@ -167,3 +167,4 @@ class ChasterProviderObservation:
     is_frozen: bool | None = None
     has_keyholder: bool | None = None
     end_date: datetime | None = None
+    frozen_at: datetime | None = None      # migration 029: Chaster `frozenAt`, None = unknown

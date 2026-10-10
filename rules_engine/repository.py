@@ -206,6 +206,55 @@ class RulesEngineService:
         written = apply_transition(self._core, write=write, events=events)
         return written if written is not None else self.get_decision_for_trigger(decision.trigger_id)
 
+    def record_barrier_decision(
+        self, *, trigger_id: str, action: ActionType, rule_id: str, reason: str, now: datetime,
+        trust_domain: str = "release",
+    ) -> Decision:
+        """Records a freeze/unfreeze decision for barrier management (v0.39). Called by the
+        release tick for an already-authorised release; it is the ONLY way a freeze/unfreeze
+        decision comes into being (the Rules Engine's own rules never execute them).
+        Idempotent on `trigger_id`."""
+        if action not in (ActionType.FREEZE, ActionType.UNFREEZE):
+            raise ValueError("a barrier decision must be a freeze or an unfreeze")
+        if not rule_id.startswith("barrier.") or not reason.strip() or not trigger_id.strip():
+            raise ValueError("barrier decisions need a barrier.* rule id, a reason and a trigger id")
+        decision = Decision(
+            trigger_id=trigger_id, trust_domain=trust_domain, created_at=now, action_type=action, hours=0,
+            entitlement_class=EntitlementClass.GUARANTEED, rule_id=rule_id, ruleset_version="barrier",
+            reason=reason, inputs={"barrier": True}, status=DecisionStatus.DRY_RUN,
+        )
+
+        def write(tx: Transaction, _state: object) -> Decision | None:
+            if tx.fetch_one("SELECT 1 FROM lock_decisions WHERE trigger_id = ?", (trigger_id,)):
+                return None
+            tx.execute(
+                "INSERT OR IGNORE INTO lock_decision_triggers (id, trust_domain, assessment_id, direction, created_at, processed_at) "
+                "VALUES (?, ?, ?, 'neutral', ?, ?)", (trigger_id, trust_domain, trigger_id, _iso(now), _iso(now)),
+            )
+            tx.execute(
+                """
+                INSERT INTO lock_decisions
+                    (id, trigger_id, trust_domain, created_at, action_type, hours, entitlement_class,
+                     rule_id, ruleset_version, reason, inputs_json, status)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                """,
+                (decision.id, trigger_id, trust_domain, _iso(now), action.value, decision.entitlement_class.value,
+                 rule_id, decision.ruleset_version, reason, json.dumps(decision.inputs), decision.status.value),
+            )
+            return decision
+
+        def events(tx: Transaction, _state: object, result: Decision | None) -> None:
+            if result is not None:
+                write_event(tx, DomainEvent(
+                    event_type="lock_decision.recorded", source_module="rules_engine",
+                    payload={"decision_id": result.id, "trust_domain": trust_domain, "action_type": action.value,
+                             "hours": 0, "status": result.status.value},
+                    occurred_at=now,
+                ))
+
+        written = apply_transition(self._core, write=write, events=events)
+        return written if written is not None else self.get_decision_for_trigger(trigger_id)
+
     # -------------------------------------------------------------------
     # Reads
     # -------------------------------------------------------------------

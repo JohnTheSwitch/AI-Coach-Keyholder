@@ -118,6 +118,21 @@ def build_consumer_registry(
         "goal_accountability_assessment.recorded", "trust_manager", on_goal_accountability_assessment_recorded,
     )
 
+    def on_check_in_missed(tx, event) -> None:
+        trust_manager._record_check_in_evidence_in_transaction(
+            tx, check_in_id=event.payload["check_in_id"], trust_domain=event.payload["trust_domain"],
+            kind="missed", now=event.occurred_at,
+        )
+
+    def on_check_in_insufficient(tx, event) -> None:
+        trust_manager._record_check_in_evidence_in_transaction(
+            tx, check_in_id=event.payload["check_in_id"], trust_domain=event.payload["trust_domain"],
+            kind="insufficient", now=event.occurred_at,
+        )
+
+    registry.register("check_in.missed", "trust_manager", on_check_in_missed)
+    registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
+
     if supervision is not None:
         # v0.39: a Trust recalculation may start/stop proactive supervision (derived state).
         registry.register(SUPERVISION_TRIGGER, "supervision", supervision.on_trust_recalculated)

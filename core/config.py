@@ -136,6 +136,7 @@ class Config:
     workday_start: str = "07:00"
     workday_end: str = "16:30"
     holiday_country: str = "CZ"
+    weekend_release_start: str = "10:00"   # release base time on weekends / public holidays
     # Adaptive release: target = WORKDAY_END + a pseudorandom offset in this range (minutes).
     unlock_window_min_offset_minutes: int = 30
     unlock_window_max_offset_minutes: int = 210
@@ -144,6 +145,11 @@ class Config:
     max_barrier_hold_hours: int = 72
     # Proactive supervision (trust-driven state; consumes trust_domain.recalculated). OFF by default.
     enable_supervision: bool = False
+    # v0.39 Phase 2 (all OFF by default).
+    enable_release_engine: bool = False       # periodic Single Barrier release tick
+    enable_check_ins: bool = False            # proactive Discord check-ins (needs a trust domain + user)
+    check_in_trust_domain: str | None = None  # the Trust domain whose score sets the level and takes the evidence
+    check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
 
     @classmethod
     def load(cls, env_path: Path | None = None) -> Config:
@@ -199,8 +205,13 @@ class Config:
             workday_start=get("WORKDAY_START", "07:00") or "07:00",
             workday_end=get("WORKDAY_END", "16:30") or "16:30",
             holiday_country=get("HOLIDAY_COUNTRY", "CZ") or "CZ",
+            weekend_release_start=get("WEEKEND_RELEASE_START", "10:00") or "10:00",
             unlock_window_min_offset_minutes=int(get("UNLOCK_WINDOW_MIN_OFFSET_MINUTES", "30") or "30"),
             unlock_window_max_offset_minutes=int(get("UNLOCK_WINDOW_MAX_OFFSET_MINUTES", "210") or "210"),
             max_barrier_hold_hours=int(get("MAX_BARRIER_HOLD_HOURS", "72") or "72"),
             enable_supervision=(get("ENABLE_SUPERVISION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_release_engine=(get("ENABLE_RELEASE_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_check_ins=(get("ENABLE_CHECK_INS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            check_in_trust_domain=get("CHECK_IN_TRUST_DOMAIN"),
+            check_in_user_id=get("CHECK_IN_USER_ID"),
         )

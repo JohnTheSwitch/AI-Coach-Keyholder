@@ -3,6 +3,10 @@ chaster_execution/transport.py
 
 The real Chaster write transport (Route A: the KEYHOLDER connection's OAuth token).
 
+Barrier management (v0.39) uses the DOCUMENTED freeze endpoint:
+    POST https://api.chaster.app/locks/{lockId}/freeze    {"isFrozen": true | false}
+(see `set_frozen`). The time contract below is different: it is owner-supplied.
+
 Request contract -- OWNER-SUPPLIED, not in Chaster's OpenAPI:
     POST https://api.chaster.app/locks/{lockId}/update-time
     Authorization: Bearer <keyholder access token>
@@ -98,8 +102,18 @@ class ChasterHttpTransport:
         ):
             return TransportResult(outcome=TransportOutcome.NOT_SENT)   # rejected input; nothing left the process
 
-        url = f"{LOCKS_URL}/{lock_id}/update-time"
-        body = {"duration": sign * seconds}
+        return self._post(lock_id, "update-time", {"duration": sign * seconds})
+
+    def set_frozen(self, *, lock_id: str, frozen: bool) -> TransportResult:
+        """Barrier management: POST /locks/{lockId}/freeze with the documented body
+        {"isFrozen": <bool>} (SetFreezeDto). Needs the lock.freeze / lock.unfreeze permission.
+        Same outcome mapping as the time endpoint (204 OK, 400, 403, 404; 401 refresh once)."""
+        if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id) or not isinstance(frozen, bool):
+            return TransportResult(outcome=TransportOutcome.NOT_SENT)
+        return self._post(lock_id, "freeze", {"isFrozen": frozen})
+
+    def _post(self, lock_id: str, endpoint: str, body: dict) -> TransportResult:
+        url = f"{LOCKS_URL}/{lock_id}/{endpoint}"
 
         def operation(token: str) -> TransportResult:
             try:

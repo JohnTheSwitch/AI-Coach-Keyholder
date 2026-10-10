@@ -164,6 +164,34 @@ class ReleaseEngine:
         with self._core.transaction() as tx:
             return tx.fetch_one("SELECT 1 FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,)) is not None
 
+    def plan_is_due(self, user_id: str, now: datetime) -> bool:
+        """True when a planned release's secret target has been reached. Reveals only a boolean,
+        never the target."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT target_at FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,))
+        return row is not None and now >= _parse_iso(row["target_at"])
+
+    def open_authorizations(self, user_id: str) -> list[tuple[str, ProviderState]]:
+        """Releases still in flight (authorized / provider_requested / physical_state_unknown)."""
+        marks = ",".join("?" for _ in _OPEN_STATES)
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all(
+                f"SELECT id, state FROM release_authorizations WHERE user_id = ? AND state IN ({marks}) ORDER BY created_at",
+                (user_id, *_OPEN_STATES),
+            )
+        return [(r["id"], ProviderState(r["state"])) for r in rows]
+
+    def coarse_phase(self, user_id: str) -> str:
+        """The ONLY release datum that may reach a model: requirements_met_pending when a token is
+        available or a release is planned / in flight, else requirements_not_met. Never a time."""
+        with self._core.transaction() as tx:
+            met = (
+                balance(tx, user_id) >= TOKEN_COST
+                or tx.fetch_one("SELECT 1 FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,))
+                or self._open_authorization(tx, user_id)
+            )
+        return "requirements_met_pending" if met else "requirements_not_met"
+
     # ------------------------------------------------------------------ authorisation
 
     def commit_authorization(self, *, user_id: str, gates: ReleaseGates, now: datetime) -> CommitOutcome:

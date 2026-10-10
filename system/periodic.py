@@ -31,7 +31,8 @@ __all__ = ["run_periodic_cycle", "periodic_loop", "CYCLE_LEASE_DURATION"]
 CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
-def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None) -> bool:
+def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
+                       release_task=None, check_ins=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -45,8 +46,14 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
         process_pending_events(core, registry, claimant=process_id, now=now)
         if rules_engine is not None:
             rules_engine.evaluate_pending(now=now)
+        if check_ins is not None:
+            check_ins.tick(now)                      # first: the release gates read the latest check-in outcome
+        if release_task is not None:
+            release_task.run(now)
         if executor is not None:
             executor.run_once(now=now)
+        if release_task is not None:
+            release_task.sync(now)                   # reflect the execution result in the same cycle
     except Exception:
         logger.exception("Periodic cycle failed; will retry next interval.")
     finally:
@@ -55,12 +62,13 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
-                        interval_seconds: int = 60, supervision=None) -> None:
+                        interval_seconds: int = 60, supervision=None,
+                        release_task=None, check_ins=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
-                supervision=supervision,
+                supervision=supervision, release_task=release_task, check_ins=check_ins,
             )
         except asyncio.CancelledError:
             raise

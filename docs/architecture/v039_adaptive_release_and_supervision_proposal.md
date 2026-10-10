@@ -484,3 +484,35 @@ section 10; resolutions are recorded here by subject.)
 -- hygiene_sessions: id, opened_at, due_back_at, relocked_at, grace_minutes, local_date (APP_TIMEZONE)
 -- Both append-mostly; transitions by compare-and-set; events carry ids only.
 ```
+
+### 11.6 Phase 2 resolutions (binding) and status
+
+| Topic | Resolution | Status |
+|---|---|---|
+| Levels vs supervision (11.3 #1) | Check-ins apply whenever Trust is below Level 4 (< 0.85); the < 0.40 threshold only activates strict Supervision Mode (Level 1 penalties, strict report demands). | Cadence implemented; "strict report demands" and "Level 1 penalties" are **not defined** and not built. |
+| Weekend/holiday base (#2) | Base = 10:00 local (`WEEKEND_RELEASE_START`) + the 30-210 min offset. | Implemented and validated against quiet hours. |
+| Insufficient check-in (#3) | `INSUFFICIENT` -> 30-minute follow-up; if still not sufficient -> `check_in.insufficient` Trust evidence (minor drop); `UNCERTAIN` zero consequence. | Implemented (-0.02 placeholder). |
+| Hygiene migration (#4) | Deferred until the Chaster extension schema is verified on a test lock; hygiene logic stays dormant. | Deferred. Migration number 029 was used for check-ins (+ `frozenAt`), so hygiene becomes **030**. |
+| Maximum hold (#5) | `MAX_BARRIER_HOLD_HOURS=72` code backstop. | Implemented. |
+| Activity Authorization (#6) | Keep the `commit_authorization()` pattern inside the release engine. | Unchanged. |
+| Test-lock verification (#7) | Done live before `ENABLE_CHASTER_EXECUTION=true`. | **Pending (owner).** |
+| Barrier freeze/unfreeze | Enabled strictly for barrier management; separate pool of 2 / 24 h with a 4 h cooldown. | Implemented (rule id `barrier.release`, own limit pool). |
+| Release tick | Periodic task behind `ENABLE_RELEASE_ENGINE`. | Implemented (`system/release_tick.py`). |
+| Guardrails + context enums | `guardrails.py` rule 6; coarse enums to the prompt. | Implemented; `_SYSTEM_BOUNDARIES` md5 unchanged. |
+| Check-in delivery + rubric flow | `supervision/checkins.py`, `supervision/checkin_evaluator.py`. | Implemented behind `ENABLE_CHECK_INS`. |
+
+Findings made while implementing Phase 2 (need your confirmation):
+1. **Tokens cannot be earned yet.** No amount per goal outcome was specified, so nothing awards tokens; the release engine
+   works only for tokens added through the domain service. This is the missing link between goals and release.
+2. **Barrier raising is not automated.** Nothing issues a `FREEZE`; the barrier is raised manually or on Chaster. An automatic
+   re-assertion would need a rule that cannot re-freeze a lock right after a legitimate release.
+3. **A token is never spent unless the release can happen:** planning-only mode when execution is off, nothing committed when
+   the runtime halt is set, and a decision that can no longer execute is refunded.
+4. **A reply counts only if it is free text:** commands and Chaster status questions are not forwarded to the check-in service,
+   so using the bot normally cannot be misjudged as an insufficient answer.
+5. **Check-in level and Trust consequences use one configured Trust domain** (`CHECK_IN_TRUST_DOMAIN`). Multi-domain
+   policy is undefined.
+6. **"Flagged as a confirmed violation or repeated non-compliance -> low-severity Incident" (D9) is not implemented:** the
+   flagging rule is not specified. Only the Trust evidence path exists.
+7. **The rubric is a classifier, not an authority:** a prompt-injection attempt can at worst obtain `SUFFICIENT`; nothing else
+   the model says is used.

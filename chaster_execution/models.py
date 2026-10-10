@@ -4,9 +4,9 @@ chaster_execution/models.py
 Types for the Chaster execution plane (Phase 3). Canonical:
 docs/architecture/chaster_execution_phase3_proposal.md.
 
-The transport interface deliberately has exactly TWO methods. There is no
-freeze/unfreeze method (disabled in Phase 3 by owner decision) and there will
-never be a method for the combination, recovery or unlock endpoints.
+The transport interface has exactly THREE methods: add_time, remove_time and (v0.39)
+set_frozen for barrier management. There is, and will never be, a method for the
+combination, recovery or unlock endpoints.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Protocol
 
 __all__ = [
     "ExecStatus", "TransportOutcome", "TransportResult", "LockActionTransport",
-    "EXECUTABLE_ACTIONS", "DECISION_MAX_AGE_MINUTES",
+    "EXECUTABLE_ACTIONS", "BARRIER_ACTIONS", "BARRIER_RULE_IDS", "DECISION_MAX_AGE_MINUTES",
 ]
 
 
@@ -34,6 +34,12 @@ class ExecStatus(StrEnum):
 
 # Only time adjustments may execute in Phase 3 (freeze/unfreeze stay disabled).
 EXECUTABLE_ACTIONS = frozenset({"add_time", "remove_time"})
+
+# v0.39: freeze/unfreeze may execute ONLY for barrier management, i.e. for decisions created by the
+# release engine under one of these rule ids. A freeze/unfreeze from any other rule (for example a
+# custom Rules Engine ruleset) never executes.
+BARRIER_ACTIONS = frozenset({"freeze", "unfreeze"})
+BARRIER_RULE_IDS = frozenset({"barrier.release"})
 
 DECISION_MAX_AGE_MINUTES = 15
 
@@ -61,3 +67,5 @@ class LockActionTransport(Protocol):
     def add_time(self, *, lock_id: str, seconds: int) -> TransportResult: ...
 
     def remove_time(self, *, lock_id: str, seconds: int) -> TransportResult: ...
+
+    def set_frozen(self, *, lock_id: str, frozen: bool) -> TransportResult: ...

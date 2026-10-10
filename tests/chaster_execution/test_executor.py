@@ -48,6 +48,9 @@ class FakeTransport:
     def remove_time(self, *, lock_id, seconds):
         return self._do("remove", lock_id, seconds)
 
+    def set_frozen(self, *, lock_id, frozen):
+        return self._do("freeze" if frozen else "unfreeze", lock_id, 0)
+
 
 @pytest.fixture
 def core(tmp_path: Path) -> CoreDatabase:
@@ -68,7 +71,7 @@ def obs(**kw) -> ChasterProviderObservation:
 
 class World:
     def __init__(self, core, transport, *, enabled=True, halted=False, observation="default", scopes=("locks",),
-                 refresh=None, max_per_run=5):
+                 refresh=None, max_per_run=5, allow_barrier=False, window_check=None):
         self.core = core
         self.transport = transport
         self.control = ExecutionControl(core.db_path, core=core)
@@ -87,9 +90,10 @@ class World:
             core.db_path, core=core, enabled=enabled, control=self.control, transport=transport,
             get_latest_observation=lambda: self.observation, refresh_observation=_refresh,
             get_granted_scopes=lambda: self.scopes, max_per_run=max_per_run,
+            allow_barrier_actions=allow_barrier, window_check=window_check,
         )
 
-    def decision(self, *, action="add_time", hours=1, status="dry_run", age_minutes=1, now=NOW) -> str:
+    def decision(self, *, action="add_time", hours=1, status="dry_run", age_minutes=1, now=NOW, rule_id="r") -> str:
         did, tid = str(uuid.uuid4()), str(uuid.uuid4())
         created = iso(now - timedelta(minutes=age_minutes))
         with self.core.transaction() as tx:
@@ -98,8 +102,8 @@ class World:
             tx.execute(
                 "INSERT INTO lock_decisions (id, trigger_id, trust_domain, created_at, action_type, hours, "
                 "entitlement_class, rule_id, ruleset_version, reason, inputs_json, status) "
-                "VALUES (?, ?, 'd', ?, ?, ?, 'guaranteed', 'r', '1', 'because', '{}', ?)",
-                (did, tid, created, action, hours, status),
+                "VALUES (?, ?, 'd', ?, ?, ?, 'guaranteed', ?, '1', 'because', '{}', ?)",
+                (did, tid, created, action, hours, rule_id, status),
             )
         return did
 

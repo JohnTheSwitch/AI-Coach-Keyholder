@@ -21,6 +21,7 @@ from pathlib import Path
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
+from trust_manager.checkin_scoring import checkin_evidence_spec
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
     goal_evidence_confidence,
@@ -705,6 +706,69 @@ class TrustManager:
                 occurred_at=now,
             ),
         )
+        return evidence
+
+    # -------------------------------------------------------------------
+    # v0.39 -- check-in evidence (check_in.missed / check_in.insufficient)
+    # -------------------------------------------------------------------
+
+    def record_check_in_evidence(
+        self, *, check_in_id: str, trust_domain: str, kind: str, now: datetime,
+    ) -> TrustEvidence | None:
+        def write(tx: Transaction, _state: object) -> TrustEvidence | None:
+            return self._record_check_in_evidence_in_transaction(
+                tx, check_in_id=check_in_id, trust_domain=trust_domain, kind=kind, now=now,
+            )
+
+        return apply_transition(self._core, write=write)
+
+    def _record_check_in_evidence_in_transaction(
+        self, tx: Transaction, *, check_in_id: str, trust_domain: str, kind: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """One piece of evidence per check-in and kind (TI25), then an immediate recalculation in the
+        same transaction. Unknown or inactive domains write nothing. UNCERTAIN / NOT_EVALUATED verdicts
+        never reach this method: only `check_in.missed` and `check_in.insufficient` events do."""
+        evidence_type, weight, confidence = checkin_evidence_spec(kind)
+        domain = tx.fetch_one("SELECT is_active FROM trust_domains WHERE domain_id = ?", (trust_domain,))
+        if domain is None or not domain["is_active"]:
+            return None
+        if tx.fetch_one(
+            "SELECT 1 FROM trust_evidence WHERE source_entity_type = ? AND source_entity_id = ? AND evidence_type = ?",
+            ("check_in", check_in_id, evidence_type.value),
+        ):
+            return None
+        evidence = TrustEvidence(
+            domain_id=trust_domain, created_at=now, evidence_type=evidence_type, source_entity_type="check_in",
+            source_entity_id=check_in_id, raw_weight=weight, evidence_confidence=confidence,
+            explanation="Missed a proactive check-in." if kind == "missed"
+            else "A check-in answer stayed insufficient after the follow-up window.",
+        )
+        tx.execute(
+            """
+            INSERT INTO trust_evidence
+                (id, domain_id, created_at, evidence_type, source_entity_type, source_entity_id,
+                 raw_weight, evidence_confidence, explanation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (evidence.id, evidence.domain_id, _iso(now), evidence.evidence_type.value, evidence.source_entity_type,
+             evidence.source_entity_id, evidence.raw_weight, evidence.evidence_confidence, evidence.explanation),
+        )
+        write_event(tx, DomainEvent(
+            event_type="trust_evidence.recorded", source_module="trust_manager",
+            payload={"evidence_id": evidence.id, "domain_id": evidence.domain_id}, occurred_at=now,
+        ))
+        recalculation = self._recalculate_domain_trust_in_transaction(
+            tx, trust_domain, triggered_by="check_in", now=now,
+        )
+        write_event(tx, DomainEvent(
+            event_type="trust_domain.recalculated", source_module="trust_manager",
+            payload={
+                "domain_id": recalculation.domain_id, "previous_score": recalculation.previous_score,
+                "new_score": recalculation.new_score, "previous_confidence": recalculation.previous_confidence,
+                "new_confidence": recalculation.new_confidence, "triggered_by": recalculation.triggered_by,
+            },
+            occurred_at=now,
+        ))
         return evidence
 
     # -------------------------------------------------------------------

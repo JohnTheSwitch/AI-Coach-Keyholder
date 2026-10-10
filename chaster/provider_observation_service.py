@@ -202,10 +202,17 @@ class ChasterProviderObservationService:
                 end_date = _parse_iso(raw_end)
             except ValueError:
                 end_date = None
+        frozen_at = None
+        raw_frozen_at = raw_lock.get("frozenAt")
+        if isinstance(raw_frozen_at, str):
+            try:
+                frozen_at = _parse_iso(raw_frozen_at)
+            except ValueError:
+                frozen_at = None
         recorded = self._recorder.record(
             connection_id=connection_id, provider=PROVIDER_NAME,
             chaster_lock_id=lock_id if isinstance(lock_id, str) else None,
             status=status, fetched_at=now, now=now,
-            is_frozen=is_frozen, has_keyholder=has_keyholder, end_date=end_date,
+            is_frozen=is_frozen, has_keyholder=has_keyholder, end_date=end_date, frozen_at=frozen_at,
         )
         return FetchObservationResult(outcome=FetchObservationOutcome.RECORDED, observation=recorded)

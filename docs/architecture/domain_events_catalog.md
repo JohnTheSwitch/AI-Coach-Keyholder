@@ -180,6 +180,7 @@ Handoff Pattern (`implementation_conventions.md` Section 3).
 | `goal_change_proposal.created`/`.resolved` | goal_management | — | GoalChangeProposal | Goal | No | ✔ | ✖ | same |
 | `goal_accountability_assessment.recorded` | goal_management | trust_manager | GoalAccountabilityAssessment | Goal | **Yes** | ✔ | ✖ | same |
 | `release_plan.created`/`.retargeted`/`.cancelled`, `release.authorized`/`.provider_requested`/`.provider_confirmed`/`.provider_failed`/`.physical_state_unknown` | release_engine | — | ReleasePlan / ReleaseAuthorization | Release | No | ✔ | ✖ | `v039_adaptive_release_and_supervision_proposal.md` (ids only; never a time) |
+| `check_in.prompt_due`/`.missed`/`.insufficient` | supervision | trust_manager (missed, insufficient) | CheckIn | Trust domain | No | ✔ | ✖ | `v039_adaptive_release_and_supervision_proposal.md` (ids and domain only; never the reply text) |
 | `supervision.entered`/`.exited` | supervision | — | SupervisionState | Trust domain | No | ✔ | ✖ | same |
 | `lock_decision.status_changed` | chaster_execution | — | Decision (execution status) | Lock Decision | No | ✔ | ✖ | `chaster_execution_phase3_proposal.md` |
 | `lock_decision.recorded` | rules_engine | — | Decision (dry run) | Lock Decision | No | ✔ | ✖ | `rules_engine_phase2_proposal.md` |
