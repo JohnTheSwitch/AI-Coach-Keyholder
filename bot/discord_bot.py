@@ -63,6 +63,9 @@ from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from system.composition import build_rules_and_execution
+from messaging.discord_adapter import DiscordMessagingAdapter
+from messaging.router import MessageRouter
+from messaging.routes import MessageRouteRepository
 from system.periodic import periodic_loop
 from system.startup import StartupLeaseNotAcquired, on_system_startup
 
@@ -97,6 +100,7 @@ class CoachKeyholderBot(discord.Client):
         self._chaster_listener: ChasterCallbackListener | None = None
         # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
         self.periodic: tuple | None = None
+        self.messaging_router = None            # set by main(): MessageRouter (Phase B)
         self._periodic_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
@@ -405,6 +409,11 @@ def main() -> None:
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
+    # Messaging layer (Phase B): the Discord adapter shares the bot's client; the router picks the channel from the stored
+    # preference (Discord unless a user has a route). Chaster delivery arrives with phase C.
+    discord_adapter = DiscordMessagingAdapter()
+    discord_adapter.attach(bot)
+    bot.messaging_router = MessageRouter(routes=MessageRouteRepository(config.db_path, core=core), adapters=[discord_adapter])
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)

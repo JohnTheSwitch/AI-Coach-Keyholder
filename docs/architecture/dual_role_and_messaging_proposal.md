@@ -108,3 +108,14 @@ only, so listing managed locks needs the keyholder account to be re-connected wi
 
 Next (phase B): the messaging port with `UnifiedMessage`, the Discord adapter and migration 032 (roles, mapping, channel preference). Phase C must be built
 on `POST /conversations/{id}` plus polling, not on the endpoints named in the original request.
+
+## 7. Phase B result (messaging layer)
+
+Implemented in the new `messaging/` package (see its README): `UnifiedMessage`, `BaseMessagingAdapter`, `DiscordMessagingAdapter`, `MessageRouteRepository`
+(migration 032, `message_routes`: default channel per user, optional per-lock override, conversation id required for `chaster`), and `MessageRouter` (stored
+preference decides the adapter; no silent redirect unless `fallback_to_discord`). `main()` builds the Discord adapter and the router (`bot.messaging_router`).
+
+Decisions taken: only `message_routes` was added in 032 (the `managed_locks` mapping table of 4.2 waits for the wearer-linking step); the existing
+`on_message` flow and the check-in sender are NOT rerouted yet. The check-in port distinguishes delivered / undeliverable / unknown (a miss must never be
+charged for a prompt that was not delivered), which a boolean `send_message` cannot express, and `on_message` builds embeds and audit logs. Moving them behind
+the adapter is a mechanical follow-up once the Chaster adapter exists; it needs your go-ahead because it touches the working reply path.
