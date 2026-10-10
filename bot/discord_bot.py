@@ -333,7 +333,7 @@ def main() -> None:
     if config.chaster_client_id and config.chaster_client_secret and config.chaster_redirect_uri:
         chaster_oauth_client = ChasterOAuthClient(
             client_id=config.chaster_client_id, client_secret=config.chaster_client_secret,
-            redirect_uri=config.chaster_redirect_uri,
+            redirect_uri=config.chaster_redirect_uri, scopes=tuple(config.chaster_oauth_scopes.split()) or ("locks",),
         )
 
     # ONE ChasterTokenManager (and one ChasterLockClient) shared by

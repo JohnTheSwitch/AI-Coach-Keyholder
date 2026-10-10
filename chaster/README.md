@@ -547,3 +547,10 @@ v0.34: the Czech status prompt carries the same direct-wording rule for explaini
 
 
 v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 2923 tests repository-wide.
+
+## v0.39 dual-role discovery (Phase A, read-only)
+
+`managed_locks.py` (role-aware values; secrets such as the lock combination are never copied), `ChasterLockClient.search_keyholder_locks()`
+(`POST /keyholder/locks/search`, scope `keyholder`), `lock_directory.py` (merges self-locks and managed locks, per-side problem codes) and the CLI
+`python -m cli list-locks`. `CHASTER_OAUTH_SCOPES` sets what `chaster connect` requests (default `locks`; the keyholder account needs `locks keyholder`).
+See `docs/architecture/dual_role_and_messaging_proposal.md` section 6 for the verified endpoints.

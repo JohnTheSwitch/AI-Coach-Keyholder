@@ -88,6 +88,7 @@ class Config:
     # Secrets -- never in source control, logs, Discord, Working
     # Memory, or model prompts:
     chaster_client_secret: str | None = None
+    chaster_oauth_scopes: str = "locks"      # space-separated; the keyholder account needs "locks keyholder" to list managed locks
     chaster_token_encryption_key: str | None = None
 
     # PC-local emergency-unlock safety plane (design/architecture doc
@@ -189,6 +190,7 @@ class Config:
             backup_retention_count=int(retention_str) if retention_str else 14,
             chaster_api_token=get("CHASTER_API_TOKEN"),
             apple_health_api_key=get("APPLE_HEALTH_API_KEY"),
+            chaster_oauth_scopes=get("CHASTER_OAUTH_SCOPES", "locks") or "locks",
             chaster_client_id=get("CHASTER_CLIENT_ID"),
             chaster_redirect_uri=get("CHASTER_REDIRECT_URI"),
             chaster_callback_bind_host=get("CHASTER_CALLBACK_BIND_HOST", "127.0.0.1") or "127.0.0.1",

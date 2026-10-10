@@ -56,6 +56,9 @@ __all__ = [
 ]
 
 LOCKS_URL = "https://api.chaster.app/locks"
+KEYHOLDER_SEARCH_URL = "https://api.chaster.app/keyholder/locks/search"      # POST, scope `keyholder`
+KEYHOLDER_PAGE_SIZE = 50                                                       # the documented maximum
+KEYHOLDER_MAX_PAGES = 20                                                       # safety bound (1000 locks)
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 DEFAULT_READ_TIMEOUT_SECONDS = 15.0
@@ -124,6 +127,43 @@ class ChasterLockClient:
         if not isinstance(body, list):
             raise ChasterLockApiError("Chaster's locks endpoint returned an unexpected response shape (expected a list).")
         return body
+
+    def search_keyholder_locks(self, *, access_token: str, status: str = "locked") -> list[dict]:
+        """Locks the connected account holds the keys of (`POST /keyholder/locks/search`, scope `keyholder`;
+        schema LockForKeyholder; pages start at 0, at most 50 per page). READ-ONLY despite the POST verb: it only
+        searches. Returns raw dicts across all pages (bounded); raises ChasterLockApiError on any failure and never
+        a partial list."""
+        if not access_token or not access_token.strip():
+            raise ValueError("access_token must be a non-empty string.")
+        if status not in ("locked", "unlocked", "deserted", "archived"):
+            raise ValueError("status must be one of locked, unlocked, deserted, archived.")
+        locks: list[dict] = []
+        for page in range(KEYHOLDER_MAX_PAGES):
+            try:
+                response = send_with_ordered_headers(
+                    "POST", KEYHOLDER_SEARCH_URL,
+                    json={"status": status, "page": page, "limit": KEYHOLDER_PAGE_SIZE},
+                    headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT},
+                    timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+                )
+            except requests.RequestException as exc:
+                raise ChasterLockApiError("Network error contacting Chaster's keyholder search endpoint.") from exc
+            if response.status_code not in (200, 201):
+                raise ChasterLockApiError(
+                    f"Chaster's keyholder search endpoint returned HTTP {response.status_code}.",
+                    status_code=response.status_code)
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise ChasterLockApiError("Chaster's keyholder search returned a response this application could not parse.") from exc
+            page_locks = body.get("locks") if isinstance(body, dict) else None
+            pages = body.get("pages") if isinstance(body, dict) else None
+            if not isinstance(page_locks, list) or isinstance(pages, bool) or not isinstance(pages, (int, float)):
+                raise ChasterLockApiError("Chaster's keyholder search returned an unexpected response shape.")
+            locks.extend(item for item in page_locks if isinstance(item, dict))
+            if page + 1 >= pages or not page_locks:
+                return locks
+        raise ChasterLockApiError("Chaster's keyholder search returned more pages than this application will read.")
 
     def emergency_unlock(self, *, access_token: str, lock_id: str) -> EmergencyUnlockHttpResult:
         """Calls POST /locks/{lockId}/emergency-unlock. `lock_id` is

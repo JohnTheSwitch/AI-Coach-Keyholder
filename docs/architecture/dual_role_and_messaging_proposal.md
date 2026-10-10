@@ -78,3 +78,33 @@ decision): multi-wearer support in the composition root and periodic tasks.
 3. Should the CLI `freeze-lock` be allowed on a wearer's own lock (needs a freeze scope on the wearer connection), or only on locks the bot keyholds?
 4. Outbound Chaster messages: allowed by default per user, or only after the user opts in to the `chaster` channel?
 5. Is multi-wearer support in scope now (phase E), or after phases A-D?
+
+## 6. Phase A result: the OpenAPI document verified (fetched 2026-10-10 from api.chaster.app/api-json) and what changed
+
+**Corrections to the request (the three named endpoints were wrong or do not exist).**
+
+| Request | Verified fact |
+|---|---|
+| `GET /keyholder/locks?status=active` | Does not exist. Managed locks come from `POST /keyholder/locks/search` (operation `KeyholderController_searchLocks`, OAuth scope `keyholder`). Body: `status` (`locked`, `unlocked`, `deserted`, `archived`), `page` (from 0), `limit` (1-50), optional `search`, `criteria`. Response `{pages, total, locks[]}` of `LockForKeyholder` (201). It only searches, so it is read-only. |
+| `POST /locks/{id}/messages` ("lock messages") | Does not exist. The public API has no lock-level message endpoint (the nearest things are `/locks/{id}/history` and extension logs, neither a chat). |
+| `POST /conversations/{id}/messages` | The send endpoint is `POST /conversations/{conversationId}` with body `{message, attachments?, nonce?}` (201, `MessageForPublic`), scope `messaging`. `GET /conversations/{id}/messages` (params `limit`, `lastId`) reads messages. A conversation is found with `GET /conversations/by-user/{userId}` or created with `POST /conversations` (`users`, `type` private/group, `message`; a `turnstileToken` field exists). |
+| Webhooks for incoming chat | None in the public spec. Inbound Chaster messages would have to be polled (`GET /conversations`, `GET /conversations/{id}/messages`). |
+| Freeze for managed locks | `POST /locks/{lockId}/freeze` is documented as usable by keyholders on the wearer's locks (scope `locks`): the existing barrier code already works for a managed lock. |
+
+Available OAuth scopes: `profile`, `email`, `locks`, `shared_locks`, `keyholder`, `messaging`, `developer`. The existing connections were made with `locks`
+only, so listing managed locks needs the keyholder account to be re-connected with `locks keyholder` (and `messaging` for phase C).
+
+**Implemented in Phase A (read-only).**
+- `chaster/managed_locks.py`: `LockRole`, `ManagedLock`, `parse_lock`. Secrets in the payload (`combination`, `offerToken`, `sharedLinkToken`) are never copied.
+- `ChasterLockClient.search_keyholder_locks()` (all pages, bounded, no partial lists).
+- `chaster/lock_directory.py`: `LockDirectory.list_locks()` merges both roles; each side has its own connection, scope check and short problem code; one side
+  failing never hides the other. The existing self-lock path (`list_active_locks`, status context, observation) is untouched.
+- `CHASTER_OAUTH_SCOPES` (default `locks`) feeds `ChasterOAuthClient(scopes=...)`; `chaster connect` requests exactly those.
+- `python -m cli list-locks`: two categorised tables (ID, title, wearer, wearer id, status, `isFrozen`, test lock) and a PROBLEMS section; exit code 2 when a side
+  has a problem. There is deliberately no write command yet.
+
+**How to try it.** Set `CHASTER_OAUTH_SCOPES=locks keyholder` in `.env`, run `chaster connect` from the keyholder account's Discord identity, then
+`python -m cli list-locks`. The first real call is made only by that command.
+
+Next (phase B): the messaging port with `UnifiedMessage`, the Discord adapter and migration 032 (roles, mapping, channel preference). Phase C must be built
+on `POST /conversations/{id}` plus polling, not on the endpoints named in the original request.

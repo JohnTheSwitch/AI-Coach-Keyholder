@@ -92,7 +92,8 @@ class ChasterOAuthClient:
     exchange), never a specific user's tokens. One instance can be
     shared across every user's connection attempt."""
 
-    def __init__(self, *, client_id: str, client_secret: str, redirect_uri: str) -> None:
+    def __init__(self, *, client_id: str, client_secret: str, redirect_uri: str,
+                 scopes: tuple[str, ...] = ("locks",)) -> None:
         if not client_id or not client_id.strip():
             raise ValueError("client_id must be a non-empty string.")
         if not client_secret or not client_secret.strip():
@@ -102,20 +103,23 @@ class ChasterOAuthClient:
         self._client_id = client_id
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
+        if not scopes or any(not s or not s.strip() for s in scopes):
+            raise ValueError("scopes must be a non-empty tuple of non-empty strings.")
+        self._scopes = tuple(scopes)
 
-    def build_authorization_url(self, *, state: str, scopes: tuple[str, ...] = ("locks",)) -> str:
+    def build_authorization_url(self, *, state: str, scopes: tuple[str, ...] | None = None) -> str:
         """Builds the URL the user's browser is sent to. Only the
-        `locks` scope is requested by default
-        (chaster_integration_technical_design.md Section 2's own
-        scope decision) -- callers may pass a different tuple, but
-        CHASTER-01A itself never requests more than `locks`."""
+        client's configured scopes are requested (default: `locks`
+        only, chaster_integration_technical_design.md Section 2; the
+        bot's keyholder account may be connected with more through
+        CHASTER_OAUTH_SCOPES) -- callers may pass an explicit tuple."""
         if not state or not state.strip():
             raise ValueError("state must be a non-empty string.")
         params = {
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
             "response_type": "code",
-            "scope": " ".join(scopes),
+            "scope": " ".join(scopes if scopes is not None else self._scopes),
             "state": state,
         }
         return f"{AUTHORIZATION_URL}?{urlencode(params)}"
