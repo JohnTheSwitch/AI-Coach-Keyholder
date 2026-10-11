@@ -119,3 +119,13 @@ Decisions taken: only `message_routes` was added in 032 (the `managed_locks` map
 `on_message` flow and the check-in sender are NOT rerouted yet. The check-in port distinguishes delivered / undeliverable / unknown (a miss must never be
 charged for a prompt that was not delivered), which a boolean `send_message` cannot express, and `on_message` builds embeds and audit logs. Moving them behind
 the adapter is a mechanical follow-up once the Chaster adapter exists; it needs your go-ahead because it touches the working reply path.
+
+## 8. Phase C result (Chaster chat channel)
+
+Built as described in `messaging/README.md` (Phase C): conversation client (send / poll / find), `ChasterMessagingAdapter`, a polling loop with arming and at-most-once
+hand-over (migration 033), the opt-in service and the `channel status|discord|chaster` commands, and `ApplicationService.handle_conversation_only` for untrusted
+inbound text. Off by default (`ENABLE_CHASTER_MESSAGING=false`); the bot account must be connected with `CHASTER_OAUTH_SCOPES="locks keyholder messaging"`.
+
+Unverified against the live service (to check on the first real run): the ORDER of `results` in `GET /conversations/{id}/messages` and how many it returns by default
+(the poller sorts by `createdAt` itself and asks for 50), the maximum message length (chunks are 1500 characters), whether a `pending` conversation accepts messages from the
+bot, and the rate limits (hence the 15-second floor on polling). Check-in prompts and replies stay on Discord.

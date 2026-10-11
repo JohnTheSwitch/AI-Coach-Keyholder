@@ -91,6 +91,7 @@ class ApplicationService:
         chaster_oauth_client: ChasterOAuthClient | None = None,
         chaster_token_manager: ChasterTokenManager | None = None,
         check_in_listener=None,
+        channel_service=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -98,6 +99,8 @@ class ApplicationService:
         # Optional callable(user_id, text, now): lets the supervision check-in service see a free-text
         # reply. Called only for messages that are neither commands nor Chaster status questions.
         self._check_in_listener = check_in_listener
+        # Optional messaging.channel_service.ChannelPreferenceService: the user's choice between Discord and Chaster chat.
+        self._channel_service = channel_service
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -233,6 +236,27 @@ class ApplicationService:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
 
+    def handle_conversation_only(self, user_id: str, text: str, now) -> OutgoingMessage | None:
+        """Entry for text that arrives over an UNTRUSTED channel (Chaster chat). It is conversation input and nothing else:
+        never matched against commands, never an onboarding answer, never a check-in reply, never a status shortcut. Returns None
+        (no reply) for a user who has not finished onboarding or has no identity, and also on any failure. Replies are plain text."""
+        try:
+            if self._conversation_engine is None or not isinstance(text, str) or not text.strip():
+                return None
+            preferences, was_created = self.onboarding_service.get_or_create_preferences(user_id, now=now)
+            if was_created or not self.onboarding_service.is_complete(preferences) or preferences.identity_id is None:
+                return None
+            response = self._conversation_engine.generate_response(
+                subject_key=user_id, current_user_message=text, language="en",
+                identity_id=preferences.identity_id, now=now,
+            )
+            return OutgoingMessage(text=response.text)
+        except UnknownIdentityError:
+            return None
+        except Exception:
+            logger.exception("ApplicationService.handle_conversation_only failed.")
+            return None
+
     def _notify_check_in(self, user_id: str, text: str, now) -> None:
         """Best effort and never raises: a check-in problem must not break a conversation."""
         if self._check_in_listener is None:
@@ -286,6 +310,11 @@ class ApplicationService:
         self.router.register("chaster status", "Check your Chaster lock status", self._handle_chaster_status)
         self.router.register("chaster disconnect", "Remove your Chaster connection from this bot", self._handle_chaster_disconnect)
         self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
+
+        self.router.register("channel status", "Show where the bot sends its messages (Discord or Chaster chat)", self._handle_channel_status)
+        self.router.register("channel discord", "Send the bot's messages to Discord (the default)", self._handle_channel_discord)
+        self.router.register("channel chaster", "Send the bot's messages to your Chaster chat instead (opt-in)", self._handle_channel_chaster)
+        self.router.register_family("channel", invalid_handler=self._handle_channel_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())
@@ -836,6 +865,34 @@ class ApplicationService:
                 color="green",
             ),
         )
+
+    def _handle_channel_status(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._channel_service is None:
+            return OutgoingMessage(text="Messages go to Discord. (Chaster chat is not available on this bot.)")
+        return OutgoingMessage(text=f"Messages currently go to: {self._channel_service.current_channel(ctx.user.id).value}.")
+
+    def _handle_channel_discord(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._channel_service is not None:
+            self._channel_service.opt_out(ctx.user.id)
+        return OutgoingMessage(text="Messages go to Discord.")
+
+    def _handle_channel_chaster(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._channel_service is None:
+            return OutgoingMessage(text="Chaster chat is not available on this bot.")
+        from messaging.channel_service import OptInStatus
+        status = self._channel_service.opt_in_chaster(ctx.user.id, ctx.now).status
+        replies = {
+            OptInStatus.ENABLED: "Done. I will now message you in your Chaster chat. Send `channel discord` here at any time to switch back.",
+            OptInStatus.DISABLED_BY_OWNER: "Chaster chat is switched off on this bot.",
+            OptInStatus.NOT_CONNECTED: "Connect your Chaster account first with `chaster connect`.",
+            OptInStatus.BOT_NOT_READY: "Chaster chat is not set up on this bot yet.",
+            OptInStatus.NO_CONVERSATION: "I could not find a Chaster chat with you. Send my Chaster account a message there first, then try again.",
+            OptInStatus.UNAVAILABLE: "Chaster did not answer. Nothing was changed; try again later.",
+        }
+        return OutgoingMessage(text=replies[status])
+
+    def _handle_channel_invalid(self, ctx: RequestContext) -> OutgoingMessage:
+        return OutgoingMessage(text="Try `channel status`, `channel discord` or `channel chaster`.")
 
     def _handle_chaster_invalid(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(

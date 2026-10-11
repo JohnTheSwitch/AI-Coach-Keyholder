@@ -12,6 +12,25 @@ Channel-neutral messaging layer (v0.39 dual-role, Phase B). See `docs/architectu
 - `router.py`: `MessageRouter.send_to_user(user_id, text, chaster_lock_id=None)` picks the adapter from the stored route; a preference whose adapter is not
   registered is NOT silently redirected (opt in with `fallback_to_discord`); `send_blocking(...)` bridges worker threads (the periodic cycle).
 
-Not built yet (phase C): `ChasterMessagingAdapter` (outbound `POST /conversations/{id}`, inbound by polling), and moving the bot's `on_message` and the
+Phase C (below) added the Chaster channel. Still not done: moving the bot's `on_message` and the
 check-in sender onto the adapter (the check-in port needs the delivered / undeliverable / unknown distinction, which a boolean cannot carry).
 `bot.messaging_router` is built in `main()` with the Discord adapter only.
+
+## Phase C: the Chaster chat channel (migration 033, `ENABLE_CHASTER_MESSAGING`, default off)
+
+- `chaster/conversation_client.py`: `POST /conversations/{id}` (send), `GET /conversations/{id}/messages` (poll), `GET /conversations/by-user/{userId}`
+  (find); scope `messaging`.
+- `chaster_adapter.py`: `ChasterMessagingAdapter` (outbound via the bot account's token, chunks of 1500 characters, best effort; inbound through an injected
+  handler, answered on the same conversation).
+- `chaster_poller.py` + `chaster_loop.py`: Chaster has no webhooks, so conversations of OPTED-IN users are polled every `CHASTER_CHAT_POLL_SECONDS` (min 15).
+  The first poll only arms (no history replay); only plain `message` entries sent by the user's own Chaster account after arming and not older than a day are
+  handed on (the bot's own messages, other participants and system logs are ignored); at most 3 per poll; ids are recorded as seen BEFORE hand-over
+  (at-most-once). The provider's page order is not assumed.
+- `channel_service.py` + the `channel status|discord|chaster` commands: the per-user opt-in. `channel chaster` needs the flag, the user's Chaster
+  connection, a bot connection with the `messaging` scope and an EXISTING Chaster conversation with the bot account (the user messages it first).
+  Switching back is `channel discord`, only from Discord.
+- **Untrusted text:** inbound Chaster messages enter `ApplicationService.handle_conversation_only` - conversation input only. Never a command, an onboarding
+  answer, a check-in reply or an approval; plain text replies; no reply for a user who has not finished onboarding.
+- **Secrecy:** the reply is produced by the same conversation engine (same guardrails, same coarse release enum, no timestamps). The `messaging` package imports
+  no release/rules/penalty/trust module (AST-guarded).
+- With the flag off, or when Chaster delivery fails, the production router falls back to Discord. Check-in prompts still go to Discord only.

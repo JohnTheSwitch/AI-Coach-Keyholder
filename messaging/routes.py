@@ -79,6 +79,20 @@ class MessageRouteRepository:
                                         chaster_conversation_id=row["chaster_conversation_id"])
         return MessageRoute(user_id=user_id, channel=ChannelType.DISCORD)
 
+    def list_chaster_conversations(self) -> list[tuple[str, str]]:
+        """(user id, conversation id) of every opted-in Chaster route, one entry per conversation."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all(
+                "SELECT user_id, chaster_conversation_id FROM message_routes WHERE channel = 'chaster' "
+                "AND chaster_conversation_id IS NOT NULL ORDER BY updated_at")
+        seen: set[str] = set()
+        out: list[tuple[str, str]] = []
+        for r in rows:
+            if r["chaster_conversation_id"] not in seen:
+                seen.add(r["chaster_conversation_id"])
+                out.append((r["user_id"], r["chaster_conversation_id"]))
+        return out
+
     def discord_id_for(self, user_id: str) -> str | None:
         with self._core.transaction() as tx:
             row = tx.fetch_one(

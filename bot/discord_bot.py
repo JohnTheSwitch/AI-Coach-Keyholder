@@ -63,6 +63,11 @@ from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from system.composition import build_rules_and_execution
+from chaster.conversation_client import ChasterConversationClient
+from messaging.channel_service import ChannelPreferenceService
+from messaging.chaster_adapter import ChasterMessagingAdapter
+from messaging.chaster_loop import run_chaster_chat_loop
+from messaging.chaster_poller import ChasterConversationPoller
 from messaging.discord_adapter import DiscordMessagingAdapter
 from messaging.router import MessageRouter
 from messaging.routes import MessageRouteRepository
@@ -101,7 +106,9 @@ class CoachKeyholderBot(discord.Client):
         # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
         self.periodic: tuple | None = None
         self.messaging_router = None            # set by main(): MessageRouter (Phase B)
+        self.chaster_chat: tuple | None = None   # (poller, adapter, interval_seconds) when Chaster chat is active
         self._periodic_task: asyncio.Task | None = None
+        self._chat_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -120,6 +127,9 @@ class CoachKeyholderBot(discord.Client):
                               interval_seconds=interval, supervision=supervision,
                               release_task=release_task, check_ins=check_ins, daily=daily)
             )
+        if self.chaster_chat is not None:
+            poller, adapter, interval = self.chaster_chat
+            self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
         if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
             logger.info("Chaster is not configured -- callback listener not started.")
             return
@@ -155,6 +165,9 @@ class CoachKeyholderBot(discord.Client):
         if self._periodic_task is not None:
             self._periodic_task.cancel()
             self._periodic_task = None
+        if self._chat_task is not None:
+            self._chat_task.cancel()
+            self._chat_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -400,12 +413,25 @@ def main() -> None:
         queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
     )
 
+    # Chaster chat (Phase C): off unless ENABLE_CHASTER_MESSAGING; every user must also opt in with `channel chaster`.
+    message_routes = MessageRouteRepository(config.db_path, core=core)
+    chat_client = ChasterConversationClient()
+    chat_ready = bool(config.enable_chaster_messaging and chaster_connections is not None and chaster_token_manager is not None
+                      and config.chaster_execution_keyholder_user_id)
+    if config.enable_chaster_messaging and not chat_ready:
+        logger.warning("ENABLE_CHASTER_MESSAGING is true but Chaster chat is NOT active: it needs Chaster fully configured and "
+                       "CHASTER_EXECUTION_KEYHOLDER_USER_ID (the bot account).")
+    channel_service = ChannelPreferenceService(
+        routes=message_routes, connections=chaster_connections, token_manager=chaster_token_manager, client=chat_client,
+        bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready)
+
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
         chaster_connections=chaster_connections, chaster_oauth_client=chaster_oauth_client,
         chaster_token_manager=chaster_token_manager,
         check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
+        channel_service=channel_service,
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
@@ -413,7 +439,25 @@ def main() -> None:
     # preference (Discord unless a user has a route). Chaster delivery arrives with phase C.
     discord_adapter = DiscordMessagingAdapter()
     discord_adapter.attach(bot)
-    bot.messaging_router = MessageRouter(routes=MessageRouteRepository(config.db_path, core=core), adapters=[discord_adapter])
+    adapters = [discord_adapter]
+    if chat_ready:
+        async def chaster_handler(unified):
+            # Untrusted channel: conversation-only entry, never commands (ApplicationService.handle_conversation_only).
+            out = await asyncio.to_thread(application_service.handle_conversation_only, unified.user_id, unified.content, clock.now())
+            return None if out is None else out.text
+
+        chaster_adapter = ChasterMessagingAdapter(
+            token_manager=chaster_token_manager, client=chat_client, connections=chaster_connections,
+            bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock, handler=chaster_handler)
+        adapters.append(chaster_adapter)
+        bot.chaster_chat = (ChasterConversationPoller(
+            config.db_path, core=core, routes=message_routes, connections=chaster_connections,
+            token_manager=chaster_token_manager, client=chat_client, adapter=chaster_adapter,
+            bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock), chaster_adapter,
+            config.chaster_chat_poll_seconds)
+        logger.info("Chaster chat channel enabled (opt-in per user; inbound by polling).")
+    # A user whose preferred channel is unavailable still gets the message on Discord.
+    bot.messaging_router = MessageRouter(routes=message_routes, adapters=adapters, fallback_to_discord=True)
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)
