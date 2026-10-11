@@ -141,3 +141,88 @@ Decisions: "owner identity" is the internal user id compared with `OWNER_USER_ID
 the `.env` and the database, and the check is a deliberate-typing guard plus an audit trail rather than authentication. `cli` was added to the packages that may import the
 execution plane (next to `scripts`). The manual command deliberately bypasses the barrier limit pool and the release engine, so a manual freeze can be undone by the
 release tick's re-freeze/release logic only through their normal rules; use it on the test lock.
+
+## 10. Phase E gap analysis: multi-wearer support (PROPOSAL, no code)
+
+### 10.1 What the code actually assumes (measured, not guessed)
+
+**Schema.** Of the 67 tables created by migrations 001-034, only 17 carry a user key (`user_id`, `user_account_id` or `connection_id`): identities, preferences, lock reports,
+task assignments, Chaster connections / OAuth states / observations, token ledger, release plans / authorizations, check-ins and escalations, token pool, clean streak, daily
+evaluations, message routes, chat state. The other 50 tables describe ONE subject: Trust (`trust_domains`, `trust_domain_state`, `incidents`, evidence, recalculations), the Penalty
+Engine (`penalty_windows`, freezes, `incident_consumption`, `incident_warnings`, extension decisions), Recovery Plan, Goals (goals, versions, evidence, evaluations, assessments),
+Advanced Mode (`operating_mode_state`, a singleton row with `id = 1`), the Rules Engine (`lock_decision_triggers`, `lock_decisions`, executions), supervision state, `consent_log`,
+`execution_control` (a singleton: one halt for the whole system) and `system_startup_lease` (a singleton).
+
+**Rules that are global by design.** One Penalty Window exists at a time for the whole system (`get_active_or_frozen_penalty_window()` has no subject); a penalty therefore vetoes
+every release (`ReleaseGates.penalty_window_active`). The operating mode is one value. A Rules Engine decision names a Trust domain but no wearer and no lock: the executor resolves
+"the lock" from ONE configured wearer's latest observation. Trust domain ids are free strings, so per-wearer domains are possible, but nothing above the Trust Manager is subject-aware.
+
+**Wiring.** `CHASTER_EXECUTION_WEARER_USER_ID`, `CHECK_IN_USER_ID`, `release_user_id` and `DAILY_EVALUATION_TRUST_DOMAIN` are single values read in `core/config.py`,
+`system/composition.py` (one `ReleaseEnginePeriodicTask`, one `CheckInService`, one `DailyEvaluationTask`, one executor, one snapshot provider), `system/periodic.py` and
+`system/startup.py` (the cycle takes exactly one of each), and `bot/discord_bot.py` (one `bot.periodic` tuple, one `chaster_chat` poller). The conversation engine is shared and its
+working memory is already keyed by subject, but the context providers (lock state, tasks, release phase) read the single-subject tables.
+
+**Already per-user and reusable as they are:** token ledger, release plans, check-ins, escalations, token pool, streak, daily evaluations, message routes, Chaster connections and
+observations, identities, preferences. That is the Phase 1-D layer, not the core.
+
+### 10.2 Options
+
+| | A. Subject key through the core (one database) | B. One database per wearer ("tenant"), one process (recommended) | C. One process and database per wearer |
+|---|---|---|---|
+| Change | Add a subject id to about 25 tables and every public API of Trust, Penalty, Recovery, Goals, Advanced Mode, Rules Engine, supervision, consent; make the Penalty Window, mode and halt per subject | Leave the core untouched. A `Tenant` bundles its own SQLite file, `ApplicationService`, wiring and periodic loop; a thin router sends a Discord/Chaster message to the right tenant | Same as B but separate OS processes |
+| Core invariants (single window, singleton mode, I5, TI rules) | Must be re-proved per subject: highest risk | Hold unchanged inside each tenant | Hold unchanged |
+| Isolation (one wearer can never affect or see another) | Only by discipline in every query | Structural: different files; a cross-tenant leak needs a bug in the router | Strongest |
+| Blocker | Months of work and a regression surface over the whole constitution | Shared things must live in a small platform database (below) | The ONE Discord bot token cannot be used by several processes (duplicate gateway sessions, double replies) |
+| Verdict | Not recommended | **Recommended** | Not viable with one bot account |
+
+### 10.3 Recommended design: tenant per database, shared platform layer
+
+**Platform database (new, one file).** `tenants` (id, display name, Discord id, Chaster account id, database file name, status `invited | active | suspended | removed`, consent recorded at,
+created at), `platform_halt` (global kill switch) and the keyholder account's Chaster connection. The keyholder (bot) connection MUST be single: Chaster refresh tokens rotate, so two
+databases refreshing the same OAuth connection would invalidate each other. All tenants share one `ChasterTokenManager` bound to the platform repository.
+
+**Tenant.** `Tenant(id, core Database, ApplicationService, RulesExecutionWiring, periodic loop, optional chat poller)`. `build_rules_and_execution` is reused per tenant with the tenant's own
+wearer id and Trust domains; the executor's scope check and transport use the SHARED keyholder token manager. Tenants are created from the registry at startup (migrations applied per file,
+startup lease per file).
+
+**Routing.** The Discord bot looks up the author's Discord id in the registry: unknown ids get a fixed refusal (no onboarding unless the owner admitted them, see consent), known ids go to their
+tenant's `ApplicationService`. Chaster chat polling (Phase C) runs per tenant with the shared bot token; check-in and release sends go through the tenant's own router.
+
+**Chaster locks.** A tenant is paired with a managed lock by matching the wearer's Chaster account id (`user._id` from `POST /keyholder/locks/search`) to the registry; the wearer links their
+account through the existing `chaster connect` flow (their consent and identity proof). Because a managed wearer should not have to grant this bot a `locks` token, the observation source for a
+managed tenant becomes the keyholder search result (`LockForKeyholder` carries status, `isFrozen`, `frozenAt`, `endDate`, `isTestLock`); a small mapper produces the existing
+`ChasterProviderObservation`, so the executor, release tick and rules snapshot stay as they are. Each tenant names exactly one lock id (explicit, never "the only active lock").
+
+**Halt.** `ExecutionControl` stays per tenant; the platform adds a global halt that every tenant also reads (either one stops execution). The owner CLI gets `tenants list|pause|resume|halt`.
+
+**Cross-tenant budget.** One Chaster API client budget across tenants (polling, observation refresh, executor), a cap on active tenants, and staggered periodic cycles so N tenants do not hit the
+API in the same second.
+
+### 10.4 Safety and consent requirements (gates, not options)
+1. A tenant exists only after the OWNER admitted the person and the PERSON accepted in their own Discord conversation (consent recorded in that tenant's `consent_log` before any lock action).
+   Nothing is inferred from a Chaster lock merely existing.
+2. A per-tenant kill switch the wearer can trigger from their own Discord DM (`halt`), in addition to the owner's global halt. A wearer's emergency path on Chaster stays their own (the API only
+   lets the wearer emergency-unlock).
+3. No tenant data ever appears in another tenant's prompt, memory, logs or CLI output (the memory subject key, the router and tests enforce it); the owner CLI shows ids and counts only.
+4. Every release and freeze keeps the Phase 1-D rules per tenant: secrecy of timing, windows, vetoes, limits, audit trail.
+5. Removal deletes or archives the tenant database and its routes and drops the pairing, on request.
+
+### 10.5 Implementation plan (each step approval-gated, flag `ENABLE_MULTI_WEARER`, default off)
+- **E1 Platform layer.** Platform database + migrations, `TenantRegistry`, shared keyholder token manager, global halt; owner CLI `tenants list|add|pause|resume`. No behaviour change when the flag is
+  off or only the owner exists (the current system becomes "tenant zero" with its existing database).
+- **E2 Tenant factory.** `Tenant` bundle built from the registry; composition parameterised per tenant instead of read from global config; one periodic loop per tenant with staggering.
+- **E3 Routing and consent.** Discord router by author id; invitation/acceptance flow; per-tenant `halt` command; unknown senders refused.
+- **E4 Managed-lock observation.** Keyholder-search observation source, explicit lock id per tenant, pairing check at startup and on every observation (the lock must still be managed and locked).
+- **E5 Chaster chat and limits.** Per-tenant chat polling with the shared token, global API budget, tenant cap.
+- **E6 Isolation tests and hardening.** Two-tenant integration tests (a penalty, halt, release, check-in or chat message in one tenant changes nothing in the other), leakage guards, removal flow, runbook.
+
+Rough size: E1-E2 are plumbing; E3 and E4 carry the product decisions; E6 is as large as E2. Option A would be an order of magnitude more.
+
+### 10.6 Decisions needed
+1. Approve option B (tenant per database in one process) as the architecture, or choose A or something else?
+2. How many wearers do you expect (this sets the tenant cap and the API budget)?
+3. Consent: is "owner invites, wearer accepts in Discord" the required flow? May the owner remove a wearer unilaterally, and must the wearer be able to leave unilaterally?
+4. Observation source for managed wearers: keyholder search only (no wearer token needed), or also the wearer's own connection when present?
+5. Should the existing system become "tenant zero" unchanged (my plan), keeping your current database and settings?
+6. Is the wearer-triggered per-tenant `halt` command wanted in v1?
+7. Scope of the first usable milestone: owner + one extra wearer (E1-E4), then chat and hardening?
