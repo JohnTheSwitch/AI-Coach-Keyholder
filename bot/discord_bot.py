@@ -64,6 +64,7 @@ from conversation_engine.context_providers.release_phase_provider import Release
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from system.composition import build_rules_and_execution
 from chaster.conversation_client import ChasterConversationClient
+from tenancy.services import open_platform_services
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
 from messaging.chaster_loop import run_chaster_chat_loop
@@ -105,6 +106,7 @@ class CoachKeyholderBot(discord.Client):
         self._chaster_listener: ChasterCallbackListener | None = None
         # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
         self.periodic: tuple | None = None
+        self.platform = None                    # tenancy.services.PlatformServices when ENABLE_MULTI_WEARER (Phase E1)
         self.messaging_router = None            # set by main(): MessageRouter (Phase B)
         self.chaster_chat: tuple | None = None   # (poller, adapter, interval_seconds) when Chaster chat is active
         self._periodic_task: asyncio.Task | None = None
@@ -435,6 +437,15 @@ def main() -> None:
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
+    if config.enable_multi_wearer:
+        # Phase E1: the platform layer only (registry, router, global halt). Per-tenant wiring and routing arrive with E2/E3.
+        platform = open_platform_services(
+            platform_db_path=config.platform_db_path or (config.db_path.parent / "platform.sqlite"), main_db_path=config.db_path,
+            main_core=core, owner_user_id=config.owner_user_id, clock=clock, cap=config.tenant_cap)
+        platform.keyholder_token_manager = chaster_token_manager
+        bot.platform = platform
+        for note in platform.notes:
+            logger.info(note)
     # Messaging layer (Phase B): the Discord adapter shares the bot's client; the router picks the channel from the stored
     # preference (Discord unless a user has a route). Chaster delivery arrives with phase C.
     discord_adapter = DiscordMessagingAdapter()

@@ -226,3 +226,21 @@ Rough size: E1-E2 are plumbing; E3 and E4 carry the product decisions; E6 is as 
 5. Should the existing system become "tenant zero" unchanged (my plan), keeping your current database and settings?
 6. Is the wearer-triggered per-tenant `halt` command wanted in v1?
 7. Scope of the first usable milestone: owner + one extra wearer (E1-E4), then chat and hardening?
+
+## 11. Phase E1 result (platform layer; approved decisions of section 10.6)
+
+Decisions recorded: option B (tenant per database, one process); small scale, default tenant cap 5; consent = the keyholder invites and the wearer accepts in their own Discord DM;
+exit = unilateral removal by the keyholder and unilateral leave by the wearer, both immediate; observation = keyholder search first, plus the wearer's own connection when present;
+the current system becomes `tenant_0`; the wearer `halt` command is required in v1; first milestone E1-E4.
+
+Built in E1 (see `tenancy/README.md`): platform database and migration, `TenantRegistry`, `TenantRouter` (lookup only), `PlatformHalt` / `CombinedHalt`, `TenantAdmin` and the owner CLI
+`python -m cli tenants ...`, `open_platform_services`, `ENABLE_MULTI_WEARER` (off), `PLATFORM_DB_PATH`, `TENANT_CAP`. 44 tests.
+
+Interpretations to confirm:
+1. **The keyholder connection stays in tenant zero's database** instead of moving into the platform database (10.3 proposed moving it). Moving rotating OAuth tokens between databases is a risk
+   with no benefit now; the platform exposes the single token manager built on tenant zero's repository. Nothing about tenant zero changes, as required.
+2. **The cap counts tenant zero.** Cap 5 means the owner plus 4 wearers.
+3. **Wearer exits are immediate and need no keyholder action**; the registry method exists now, the Discord command (`leave`) is E3.
+4. **Removal marks the tenant removed and keeps its database file**; archiving or deleting the file is E6 (removal flow). A re-invited person gets a brand-new tenant and file.
+5. **Tenant zero's Discord id** is taken (read-only) from the owner's identity row when `OWNER_USER_ID` is set; otherwise it stays empty until it is.
+6. **The Tenant Router in E1 is the lookup only**; invitation messages, acceptance and routing of live Discord messages are E3.

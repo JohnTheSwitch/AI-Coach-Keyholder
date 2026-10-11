@@ -155,6 +155,9 @@ class Config:
     checkin_follow_up_minutes: int = 30
     checkin_strict_response_timeout_minutes: int = 30
     checkin_strict_follow_up_minutes: int = 15
+    enable_multi_wearer: bool = False         # v0.39 Phase E: tenant registry and platform database (the running system is unchanged when off)
+    platform_db_path: Path | None = None      # default: platform.sqlite next to the main database
+    tenant_cap: int = 5                       # most non-removed tenants, tenant zero included (protects Chaster API rate limits)
     owner_user_id: str | None = None          # internal user id of the owner; the only identity `python -m cli freeze-lock` accepts
     enable_chaster_messaging: bool = False    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
     chaster_chat_poll_seconds: int = 30
@@ -229,6 +232,9 @@ class Config:
             checkin_strict_response_timeout_minutes=int(get("CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES", "30") or "30"),
             checkin_strict_follow_up_minutes=int(get("CHECKIN_STRICT_FOLLOW_UP_MINUTES", "15") or "15"),
             check_in_user_id=get("CHECK_IN_USER_ID"),
+            enable_multi_wearer=(get("ENABLE_MULTI_WEARER", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            platform_db_path=Path(get("PLATFORM_DB_PATH")) if get("PLATFORM_DB_PATH") else None,
+            tenant_cap=int(get("TENANT_CAP", "5") or "5"),
             owner_user_id=get("OWNER_USER_ID"),
             enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
