@@ -107,3 +107,13 @@ The Phase 3 ban on freeze/unfreeze is lifted **only** for barrier management:
   data + scope + halt clear as before.
 - Verification of the freeze behaviour on a designated test lock (exhausted timer + `isFrozen: true` holds; unfreeze
   releases) must be done before `ENABLE_CHASTER_EXECUTION=true`.
+
+## v0.39 Phase D: the guarded manual freeze (`manual_freeze.py`, migration 034)
+
+`python -m cli freeze-lock <lock_id> --state true|false --owner-id <your internal user id> --yes` freezes or unfreezes ONE managed lock by hand, for live
+verification. It is an operator tool: nothing in `bot/`, `application/`, `conversation_engine/` or `system/` imports it (guarded in tests), so no model, Discord or
+Chaster message can reach it. Checks, in order, each refusal audited and nothing sent: owner (`OWNER_USER_ID`, exact constant-time match; unset refuses everyone),
+`--yes`, plain lock id, runtime halt not set (an unreadable control counts as halted), a live keyholder search lists the lock as managed and locked with a known frozen
+state (self-locks are refused), and the lock is not already in the requested state. Every invocation writes one `manual_lock_actions` row; a real attempt is written
+first as `attempting` and then updated, so a crash cannot hide a physical action. Exit codes: 0 applied or nothing to do, 3 refused, 4 failed or ambiguous (`unknown`:
+check the lock on Chaster; never retried automatically). It does not use the barrier limit pool and creates no Rules Engine decision.

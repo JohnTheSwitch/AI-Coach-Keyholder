@@ -155,6 +155,7 @@ class Config:
     checkin_follow_up_minutes: int = 30
     checkin_strict_response_timeout_minutes: int = 30
     checkin_strict_follow_up_minutes: int = 15
+    owner_user_id: str | None = None          # internal user id of the owner; the only identity `python -m cli freeze-lock` accepts
     enable_chaster_messaging: bool = False    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
     chaster_chat_poll_seconds: int = 30
     daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
@@ -228,6 +229,7 @@ class Config:
             checkin_strict_response_timeout_minutes=int(get("CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES", "30") or "30"),
             checkin_strict_follow_up_minutes=int(get("CHECKIN_STRICT_FOLLOW_UP_MINUTES", "15") or "15"),
             check_in_user_id=get("CHECK_IN_USER_ID"),
+            owner_user_id=get("OWNER_USER_ID"),
             enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
             daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",

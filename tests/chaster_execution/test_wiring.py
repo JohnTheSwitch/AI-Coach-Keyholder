@@ -283,7 +283,7 @@ class TestIsolationGuards:
     def test_only_wiring_imports_the_execution_plane(self) -> None:
         for path in ROOT.rglob("*.py"):
             rel = path.relative_to(ROOT)
-            if rel.parts[0] in {"chaster_execution", "system", "scripts", "tests", ".venv", "venv", "env"} \
+            if rel.parts[0] in {"chaster_execution", "system", "scripts", "cli", "tests", ".venv", "venv", "env"} \
                     or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:
                 continue
             for name in self._imports(path):

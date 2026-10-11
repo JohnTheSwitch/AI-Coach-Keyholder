@@ -129,3 +129,15 @@ inbound text. Off by default (`ENABLE_CHASTER_MESSAGING=false`); the bot account
 Unverified against the live service (to check on the first real run): the ORDER of `results` in `GET /conversations/{id}/messages` and how many it returns by default
 (the poller sorts by `createdAt` itself and asks for 50), the maximum message length (chunks are 1500 characters), whether a `pending` conversation accepts messages from the
 bot, and the rate limits (hence the 15-second floor on polling). Check-in prompts and replies stay on Discord.
+
+## 9. Phase D result (guarded manual freeze)
+
+Built as specified: `python -m cli freeze-lock <lock_id> --state true|false --owner-id <id> --yes` (service: `chaster_execution/manual_freeze.py`, audit table
+`manual_lock_actions`, migration 034). Safeguards: owner-only (`OWNER_USER_ID`), explicit `--yes`, runtime halt check (fail closed), lock-scope verification against a live
+keyholder search (only locked locks the keyholder account manages; wearer self-locks are refused), already-in-state short-circuit, and an audit row for every invocation
+(timestamp, actor, lock id, requested state, outcome, HTTP status), written before the Chaster call for real attempts.
+
+Decisions: "owner identity" is the internal user id compared with `OWNER_USER_ID`; because the CLI is a local process, the real boundary is access to the machine,
+the `.env` and the database, and the check is a deliberate-typing guard plus an audit trail rather than authentication. `cli` was added to the packages that may import the
+execution plane (next to `scripts`). The manual command deliberately bypasses the barrier limit pool and the release engine, so a manual freeze can be undone by the
+release tick's re-freeze/release logic only through their normal rules; use it on the test lock.
