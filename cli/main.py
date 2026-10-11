@@ -164,6 +164,29 @@ def build_tenant_admin():
     return TenantAdmin(registry=services.registry, halt=services.halt, owner_user_id=config.owner_user_id, clock=clock), services
 
 
+def _tenant_execution(admin, services, args, now):
+    """Sets or clears the execution halt inside ONE tenant's own database (owner only; the file must already exist)."""
+    from chaster_execution.control import ExecutionControl
+    from infrastructure.database import Database as CoreDatabase
+    from tenancy.admin import AdminOutcome, AdminResult
+    from tenancy.registry import resolve_db_path
+
+    refusal = admin.authorize(args.owner_id, "execution")
+    if refusal is not None:
+        return refusal
+    tenant = services.registry.get(args.tenant_id)
+    if tenant is None or tenant.is_tenant_zero or not tenant.is_managed:
+        return AdminResult(AdminOutcome.NOT_FOUND)
+    path = resolve_db_path(tenant, services.tenant_dir)
+    if not path.exists():
+        return AdminResult(AdminOutcome.NOT_FOUND)
+    try:
+        ExecutionControl(path, core=CoreDatabase(path)).set_halted(args.action == "halt", reason=args.reason, now=now())
+    except ValueError:
+        return AdminResult(AdminOutcome.INVALID)
+    return AdminResult(AdminOutcome.DONE, tenant)
+
+
 def _render_tenants(tenants) -> str:
     rows = [(t.id, t.display_name, t.status.value, "yes" if t.is_tenant_zero else "-", t.discord_id or "-", t.lock_id or "-")
             for t in tenants]
@@ -212,6 +235,10 @@ def main(argv: list[str], *, out: TextIO | None = None,
     for name, help_text in (("halt", "Stop execution for EVERY tenant."), ("unhalt", "Clear the global halt.")):
         hp = tsub.add_parser(name, help=help_text)
         hp.add_argument("--reason", required=True)
+    ex = tsub.add_parser("execution", help="Halt or clear ONE tenant's execution runtime (a new tenant starts halted).")
+    ex.add_argument("tenant_id")
+    ex.add_argument("action", choices=("halt", "clear"))
+    ex.add_argument("--reason", required=True)
     for p in tsub.choices.values():
         if p.prog.split()[-1] != "list":
             p.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
@@ -237,6 +264,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
             result = admin.resume(actor=args.owner_id, tenant_id=args.tenant_id)
         elif cmd == "remove":
             result = admin.remove(actor=args.owner_id, tenant_id=args.tenant_id, confirmed=args.yes)
+        elif cmd == "execution":
+            result = _tenant_execution(admin, services, args, now)
         elif cmd == "halt":
             result = admin.halt_all(actor=args.owner_id, reason=args.reason)
         else:

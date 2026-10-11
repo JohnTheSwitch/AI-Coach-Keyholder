@@ -100,6 +100,11 @@ class TenantAdmin:
             return AdminResult(AdminOutcome.INVALID)
         return AdminResult(AdminOutcome.DONE)
 
+    def authorize(self, actor: str, action: str) -> AdminResult | None:
+        """None when `actor` is the owner; otherwise the audited refusal. For owner operations that live outside this class
+        (for example a tenant's own execution halt)."""
+        return self._guard(actor, action)
+
     # ------------------------------------------------------------------ internals
 
     def _change(self, actor, action, tenant_id, operation, *, checked: bool = False) -> AdminResult:

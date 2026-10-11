@@ -21,7 +21,10 @@ core domain modules are untouched. See `docs/architecture/dual_role_and_messagin
   registry, router, halt and the SHARED keyholder token manager. The keyholder (bot) Chaster connection stays in tenant zero's database: Chaster refresh tokens rotate, so
   exactly one place may own that connection, and every tenant will use it through this one manager.
 
-The package imports no domain module (AST-guarded); only `bot/`, `cli/` and tests may import it.
+The package imports no domain module (AST-guarded); only `bot/`, `cli/`, `system/` and tests may import it.
 
-Not built yet: the tenant factory and per-tenant periodic loops (E2), Discord routing / invitation and acceptance messages / the wearer `halt` and `leave` commands (E3),
+Phase E2 (in `system/`, not here, because the factory must import the domain modules): `tenant_factory.py` builds an isolated runtime per ACTIVE tenant, `tenant_loops.py` runs one staggered
+periodic loop per tenant and stops it the moment the tenant stops being managed; a new tenant's execution starts halted (`python -m cli tenants execution <id> clear ...`). See the proposal, section 12.
+
+Not built yet: Discord routing / invitation and acceptance messages / the wearer `halt` and `leave` commands (E3),
 the keyholder-search observation source and lock pairing checks (E4).

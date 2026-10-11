@@ -71,7 +71,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3141 passing tests** across the whole repository (`pytest`), including
+**3174 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms

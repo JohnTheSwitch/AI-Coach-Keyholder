@@ -65,6 +65,8 @@ from conversation_engine.model_types import ModelGenerationRequest, ModelMessage
 from system.composition import build_rules_and_execution
 from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
+from system.tenant_factory import SharedServices, TenantFactory
+from system.tenant_loops import TenantLoopSupervisor
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
 from messaging.chaster_loop import run_chaster_chat_loop
@@ -106,6 +108,8 @@ class CoachKeyholderBot(discord.Client):
         self._chaster_listener: ChasterCallbackListener | None = None
         # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
         self.periodic: tuple | None = None
+        self.tenant_supervisor = None           # system.tenant_loops.TenantLoopSupervisor when multi-wearer is on (Phase E2)
+        self._tenant_task: asyncio.Task | None = None
         self.platform = None                    # tenancy.services.PlatformServices when ENABLE_MULTI_WEARER (Phase E1)
         self.messaging_router = None            # set by main(): MessageRouter (Phase B)
         self.chaster_chat: tuple | None = None   # (poller, adapter, interval_seconds) when Chaster chat is active
@@ -129,6 +133,8 @@ class CoachKeyholderBot(discord.Client):
                               interval_seconds=interval, supervision=supervision,
                               release_task=release_task, check_ins=check_ins, daily=daily)
             )
+        if self.tenant_supervisor is not None:
+            self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -170,6 +176,9 @@ class CoachKeyholderBot(discord.Client):
         if self._chat_task is not None:
             self._chat_task.cancel()
             self._chat_task = None
+        if self._tenant_task is not None:
+            self._tenant_task.cancel()
+            self._tenant_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -382,6 +391,15 @@ def main() -> None:
     # objects exist because the lock snapshot and the executor need them. All of
     # it is OFF unless explicitly enabled; startup reconciliation still runs
     # BEFORE the bot accepts any request (bot.run is below).
+    platform = None
+    if config.enable_multi_wearer:
+        # Phase E1: the platform layer (registry, router, global halt). The single keyholder Chaster connection stays in tenant zero's database.
+        platform = open_platform_services(
+            platform_db_path=config.platform_db_path or (config.db_path.parent / "platform.sqlite"), main_db_path=config.db_path,
+            main_core=core, owner_user_id=config.owner_user_id, clock=clock, cap=config.tenant_cap)
+        platform.keyholder_token_manager = chaster_token_manager
+        for note in platform.notes:
+            logger.info(note)
     check_in_sender = DiscordCheckInSender(config.db_path, core=core)
 
     def check_in_complete(system_prompt: str, user_message: str) -> str:
@@ -396,6 +414,7 @@ def main() -> None:
         config, core, connections=chaster_connections, oauth_client=chaster_oauth_client,
         lock_client=chaster_lock_client, token_manager=chaster_token_manager,
         check_in_sender=check_in_sender, check_in_complete=check_in_complete,
+        halt_source=platform.halt if platform is not None else None,
     )
     if wiring.release_engine is not None:
         # The only release datum the model ever sees: a coarse enum (never a time).
@@ -437,17 +456,23 @@ def main() -> None:
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
-    if config.enable_multi_wearer:
-        # Phase E1: the platform layer only (registry, router, global halt). Per-tenant wiring and routing arrive with E2/E3.
-        platform = open_platform_services(
-            platform_db_path=config.platform_db_path or (config.db_path.parent / "platform.sqlite"), main_db_path=config.db_path,
-            main_core=core, owner_user_id=config.owner_user_id, clock=clock, cap=config.tenant_cap)
-        platform.keyholder_token_manager = chaster_token_manager
-        bot.platform = platform
-        for note in platform.notes:
-            logger.info(note)
+    if platform is not None:
+        # Phase E2: every ACTIVE wearer runs as an isolated tenant (own database, own staggered loop); tenant zero keeps the loop above.
+        def tenant_check_in_sender(path, tenant_core):
+            sender = DiscordCheckInSender(path, core=tenant_core)
+            sender.attach(bot)
+            return sender
+
+        shared = SharedServices(
+            config=config, clock=clock, model=ollama_model, oauth_client=chaster_oauth_client, lock_client=chaster_lock_client,
+            keyholder_connections=chaster_connections, keyholder_token_manager=chaster_token_manager, platform_halt=platform.halt,
+            check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete)
+        bot.tenant_supervisor = TenantLoopSupervisor(
+            registry=platform.registry, factory=TenantFactory(registry=platform.registry, shared=shared, tenant_dir=platform.tenant_dir),
+            interval_seconds=config.chaster_execution_interval_seconds)
     # Messaging layer (Phase B): the Discord adapter shares the bot's client; the router picks the channel from the stored
     # preference (Discord unless a user has a route). Chaster delivery arrives with phase C.
+    bot.platform = platform
     discord_adapter = DiscordMessagingAdapter()
     discord_adapter.attach(bot)
     adapters = [discord_adapter]

@@ -398,7 +398,7 @@ class TestIsolation:
         offenders = []
         for path in ROOT.rglob("*.py"):
             rel = path.relative_to(ROOT)
-            if rel.parts[0] in {"tenancy", "tests", "cli", "bot"} or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:
+            if rel.parts[0] in {"tenancy", "tests", "cli", "bot", "system"} or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:
                 continue
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 names = [a.name for a in node.names] if isinstance(node, ast.Import) else \

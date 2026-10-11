@@ -60,6 +60,23 @@ _LIVE_LIMIT_STATUSES = (
 )
 
 
+class _WithGlobalHalt:
+    """The tenant's own ExecutionControl plus an optional platform-wide halt: halted when EITHER is set (both fail closed)."""
+
+    def __init__(self, control, global_halt) -> None:
+        self._control = control
+        self._global = global_halt
+
+    def is_halted(self) -> bool:
+        return bool(self._control.is_halted()) or (self._global is not None and bool(self._global.is_halted()))
+
+    def reason(self):
+        return self._control.reason()
+
+    def set_halted(self, halted, *, reason, now):
+        self._control.set_halted(halted, reason=reason, now=now)
+
+
 @dataclass
 class RulesExecutionWiring:
     rules_engine: RulesEngineService | None = None
@@ -92,12 +109,18 @@ def window_config_from(config) -> WindowConfig:
 def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
     transport=None, clock: Clock | None = None, check_in_sender: CheckInSender | None = None,
-    check_in_complete=None,
+    check_in_complete=None, keyholder_connections=None, keyholder_token_manager=None, halt_source=None,
 ) -> RulesExecutionWiring:
     """`transport` / `check_in_sender` / `check_in_complete` are injectable (tests; the bot supplies the real
     Discord sender and Ollama completion). Production passes transport=None and gets the real
-    ChasterHttpTransport bound to the KEYHOLDER connection."""
+    ChasterHttpTransport bound to the KEYHOLDER connection.
+
+    Multi-wearer (Phase E2): a tenant has its OWN wearer `connections` / `token_manager` (its database) but uses the platform's single
+    keyholder connection, passed as `keyholder_connections` / `keyholder_token_manager` (default: the same objects, the single-wearer case).
+    `halt_source` (any object with is_halted()) is the platform-wide halt; execution stops when it OR the tenant's own halt is set."""
     out = RulesExecutionWiring()
+    kh_connections = keyholder_connections if keyholder_connections is not None else connections
+    kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)
     wearer_id = getattr(config, "chaster_execution_wearer_user_id", None)
     keyholder_id = getattr(config, "chaster_execution_keyholder_user_id", None)
@@ -176,16 +199,16 @@ def build_rules_and_execution(
     if observations is not None:
         snapshot_provider = make_snapshot_provider(lambda: observations.get_latest(wearer_id))
 
-    control = ExecutionControl(config.db_path, core=core)
+    control = _WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source)
     if config.enable_chaster_execution:
         problem = None
-        if observations is None or not keyholder_id or token_manager is None:
+        if observations is None or not keyholder_id or kh_tokens is None or kh_connections is None:
             problem = ("it needs Chaster fully configured plus CHASTER_EXECUTION_WEARER_USER_ID and "
                        "CHASTER_EXECUTION_KEYHOLDER_USER_ID")
         else:
             if transport is None:
                 transport = build_keyholder_transport(
-                    token_manager=token_manager, keyholder_user_id=keyholder_id, clock=clock or SystemClock(),
+                    token_manager=kh_tokens, keyholder_user_id=keyholder_id, clock=clock or SystemClock(),
                 )
             if transport is None:
                 problem = "no Chaster transport is available"
@@ -193,7 +216,7 @@ def build_rules_and_execution(
             out.notes.append(f"ENABLE_CHASTER_EXECUTION is true but execution is NOT active: {problem}.")
         else:
             def granted_scopes():
-                conn = connections.get(keyholder_id)
+                conn = kh_connections.get(keyholder_id)
                 if conn is None or conn.connection_status.value != "active":
                     return None
                 return conn.granted_scopes

@@ -244,3 +244,31 @@ Interpretations to confirm:
 4. **Removal marks the tenant removed and keeps its database file**; archiving or deleting the file is E6 (removal flow). A re-invited person gets a brand-new tenant and file.
 5. **Tenant zero's Discord id** is taken (read-only) from the owner's identity row when `OWNER_USER_ID` is set; otherwise it stays empty until it is.
 6. **The Tenant Router in E1 is the lookup only**; invitation messages, acceptance and routing of live Discord messages are E3.
+
+## 12. Phase E2 result (tenant factory and staggered loops)
+
+Confirmed by the owner after E1: the keyholder connection stays in tenant zero's database behind one shared token manager; the cap is 5 including tenant zero; removed tenants keep their database file and
+a re-invite gets a fresh tenant and database; tenant zero's Discord id comes from the owner identity row; the router stays a lookup until E3.
+
+Built in E2 (all behind `ENABLE_MULTI_WEARER`, default off):
+- `system/tenant_factory.py`: `TenantFactory.build(tenant_id)` turns an ACTIVE, non-zero registry entry into a `TenantRuntime` with its OWN `tenant_<id>.sqlite` (migrated, daily backup), wearer account,
+  conversation memory/queue/context providers, `ApplicationService` and periodic wiring (rules, execution, supervision, release, check-ins, daily evaluation) from `build_rules_and_execution`, plus its own
+  startup lease. `SharedServices` lists exactly what is shared: the stateless model, OAuth client, lock client, the platform halt and the single keyholder connection/token manager.
+- `system/composition.py` gained three optional arguments (`keyholder_connections`, `keyholder_token_manager`, `halt_source`); defaults reproduce the single-wearer behaviour exactly. The execution halt is now
+  "tenant halt OR platform halt" (also for tenant zero when multi-wearer is on).
+- `system/tenant_loops.py`: `TenantLoopSupervisor` reconciles the registry with running loops every 30 s, spreads start offsets evenly over the interval (`interval * index / count`), builds runtimes on worker
+  threads, retries a failed build after 5 minutes without affecting others, and re-checks the registry before EVERY cycle so a suspended, removed or departed tenant stops at once (its runtime is dropped).
+- `bot/discord_bot.py`: with the flag on, the platform is opened before the composition (tenant zero also honours the platform halt) and the supervisor runs next to the existing tenant-zero loop.
+- `python -m cli tenants execution <tenant_id> halt|clear --reason ... --owner-id ...` sets or clears ONE tenant's own execution halt.
+
+Safety defaults: a new tenant's execution starts HALTED (an empty `execution_control` row counts as halted) and stays so until the owner clears it; with no managed-lock observation source yet (E4) every Chaster-dependent
+part reports "NOT active" and nothing is sent. The Chaster LLM tool and the Chaster chat channel are off for tenants. Tenant zero is never built by the factory and its database is not touched (tested by fingerprint).
+
+Isolation tests: two tenants never share database, accounts, preferences, conversation memory or prompts (a marker typed by one never reaches the model call of the other); a cycle of one changes nothing in the other;
+a tenant's settings never inherit the owner's check-in or wearer identities.
+
+Interpretations to confirm:
+1. **Tenant task catalogs start empty** (the owner's catalog is seeded by a development script); `task request` for a wearer finds nothing until templates are seeded per tenant.
+2. **The tenant factory does not accept messages from strangers**: it only builds the runtime. Which runtime a Discord message reaches is E3, so until then tenant runtimes serve only their periodic loop.
+3. **Loop interval** reuses `CHASTER_EXECUTION_INTERVAL_SECONDS` (default 60 s), so N tenants are spread over that interval.
+4. **Reconcile cadence** is 30 s: a newly accepted tenant starts within about half a minute; a removed or suspended one stops before its next cycle.
