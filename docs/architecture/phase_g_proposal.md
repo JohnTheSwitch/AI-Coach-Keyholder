@@ -1,6 +1,6 @@
 # Phase G: Behavioral Telemetry and the opt-in Hive-Mind
 
-Status: G0 specification (binding), G1 (local derived telemetry) and G2 (runtime buffer) built. G3–G6 are specified here and not built yet.
+Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer) and G3 (owner analysis) built. G4–G6 are specified here and not built yet.
 
 Owner decisions (2026-11-02): the three-layer consent model; the hidden factor is exported only as a 0.10 band; retention 180 days locally and 365 days at the
 receiver; `forget all` purges local telemetry; revoking `research on` or running `forget all` queues an erase at the receiver; `bot_mood` is derived from engine
@@ -72,9 +72,22 @@ Retention: rows whose `occurred_at` is older than 180 days are deleted (checked 
 
 ## 6. Later steps (specified, not built)
 
-**G3** `python -m cli research analyze <tenant_id> --days 30`: owner only (`TenantAdmin.authorize`); builds a compact numeric summary from `behavioral_telemetry`
-(no free text) and sends it to the local model; the report goes to stdout or an owner file, is never written to any database and never reaches a prompt. It refuses
-while the bot holds the startup lease unless `--allow-while-live` (one GPU: a long generation would queue live replies). Optional `RESEARCH_OLLAMA_MODEL`.
+**G3 (built)** `python -m cli research analyze <tenant_id> [--days 30] [--output FILE] [--allow-while-live] [--timeout 600] --owner-id <you>`
+(`behavioral_telemetry/analysis.py`, `cli/main.py`):
+- Owner only (`TenantAdmin.authorize`, audited refusal). `--days` 1..180.
+- Live guard: refuses while the bot runs, unless `--allow-while-live`. The periodic cycle releases the startup lease after each pass, so "held right now"
+  alone would almost never be true; the lease release therefore keeps `acquired_at` ("last acquired"), and the bot counts as live when the lease of the
+  tenant's or the owner's database is held now or was acquired within the last 10 minutes. A bot with no periodic feature enabled takes the lease only at
+  startup, so it is detected only for 10 minutes after starting.
+- The database is opened READ-ONLY (`mode=ro`). Per user, a summary of about 1–2 KB: daily results, check-in status and reply delays, token velocity,
+  conditioning factor path and the 7-day performance before each increment, chat latency, structured-output failures, reply gaps, and a weekly trend.
+  No raw rows, no ids beyond an 8-character prefix in the report header, no free text.
+- The local model only: a non-local `OLLAMA_HOST` is refused. `RESEARCH_OLLAMA_MODEL` (default `OLLAMA_MODEL`). The analyst prompt asks for a
+  "Psychological Profile & Recommendations" report: behavioural, not diagnostic, numbers only, wellbeing first, consent marked on every parameter change.
+- The code appends the fixed disclaimer "WARNING: Any recommended parameter changes are critical_changes and require explicit wearer consent before
+  implementation." to every report.
+- Output to stdout or `--output` (a plain file; database file names and the tenant folder are refused). Nothing is written to any database, the idea box or
+  any memory; tests compare database fingerprints before and after.
 
 **G4** Export. Settings `ENABLE_RESEARCH_TELEMETRY=false`, `TELEMETRY_ENDPOINT`, `TELEMETRY_TOKEN`, `TELEMETRY_HMAC_KEY`. Wearer `research on|off|status`.
 Payload allowlist per event type; the subject is `HMAC-SHA256(TELEMETRY_HMAC_KEY, tenant_id + ":" + user_id)` and the instance an HMAC of a random instance id

@@ -546,7 +546,7 @@ v0.34: the Czech status prompt carries the same direct-wording rule for explaini
 `mentions_lock_topic()` (broad word-prefix check, diacritics-insensitive) or an active connection makes `ApplicationService` load the lock data for the normal conversation path via `build_chaster_chat_context`. Any failure yields no context (chat continues). With context present the model-chosen `get_chaster_status` tool is not offered (the data is already there); explicit status questions still use the status path. 2122 tests repository-wide. The Czech status prompt also requires the infinitive after helper verbs (`můžeš zkusit`, not `můžeš zkus`).
 
 
-v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3522 tests repository-wide.
+v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3544 tests repository-wide.
 
 ## v0.39 dual-role discovery (Phase A, read-only)
 

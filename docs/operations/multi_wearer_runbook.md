@@ -149,5 +149,9 @@ summaries) from tables the system already writes, in each tenant's own database.
   a `conversation_gap`. They are held in memory (at most 2000 per database) until the next periodic cycle; a restart loses the undrained ones.
   Many `unparseable` statuses mean the model's JSON is unreliable: run `python -m scripts.eval_structured_output`.
 - **Retention:** 180 days, pruned once a day.
+- **Owner analysis (G3):** `python -m cli research analyze <tenant> [--days 30] [--output report.txt] --owner-id <you>` (`tenant_0` = your own database).
+  Stop the bot first (or wait 10 minutes after it last ran a cycle), or pass `--allow-while-live` and accept slower replies. It uses the local Ollama
+  only (`RESEARCH_OLLAMA_MODEL`, default `OLLAMA_MODEL`; `--timeout` default 600 s). The report ends with the consent warning: any parameter change it
+  suggests is a `critical_change` that needs the wearer's explicit consent first. Nothing is stored; keep the file private.
 - **If records stop appearing:** check the log for `Behavioral telemetry collection failed`; the periodic cycle only runs while at least one periodic feature
   (rules engine, supervision, release engine, check-ins) is enabled. The table is `behavioral_telemetry`; the read positions are in `telemetry_watermarks`.

@@ -319,9 +319,9 @@ class TestWearerCommands:
 
 
 class TestNeverInTheModelContext:
-    ALLOWED = {"behavioral_telemetry", "system", "tests"}
+    ALLOWED = {"behavioral_telemetry", "system", "cli", "tests"}          # cli: the owner's offline analysis (Phase G3)
 
-    def test_only_the_package_the_system_wiring_and_tests_import_it(self) -> None:
+    def test_only_the_package_the_system_wiring_the_owner_cli_and_tests_import_it(self) -> None:
         offenders = []
         for path in ROOT.rglob("*.py"):
             rel = path.relative_to(ROOT)

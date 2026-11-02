@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, TextIO
 
 from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
@@ -329,6 +330,84 @@ def _ai_ideas(args, out, ideas_factory, now) -> int:
     return 0
 
 
+def build_research_model(timeout: float):
+    """The local Ollama model for the offline analysis. Refuses a non-local OLLAMA_HOST: the summary never leaves this machine."""
+    from behavioral_telemetry.analysis import is_local_host
+    from conversation_engine.ollama_adapter import OllamaConversationModel
+    from core.config import Config
+
+    config = Config.load()
+    if not is_local_host(config.ollama_host):
+        raise ValueError("OLLAMA_HOST is not this machine")
+    return OllamaConversationModel(host=config.ollama_host, model_name=config.research_ollama_model or config.ollama_model,
+                                   read_timeout_seconds=timeout, keep_alive=config.ollama_keep_alive)
+
+
+_DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm")
+
+
+def _research_analyze(args, out, tenants_factory, model_factory, now) -> int:
+    """Owner only. Reads one tenant's telemetry read-only, asks the local model for a report and prints it or writes it to a plain file. The report is never
+    stored in any database and never reaches a prompt of the coaching conversation."""
+    from behavioral_telemetry.analysis import analyze, bot_is_live, summarize
+    from behavioral_telemetry.store import RETENTION_DAYS
+    from conversation_engine.model_types import LLMGenerationError
+    from tenancy.registry import resolve_db_path
+
+    admin, services = tenants_factory()
+    refusal = admin.authorize(args.owner_id, "research_analyze")
+    if refusal is not None:
+        print(f"{_ADMIN_TEXT[refusal.outcome.value]} [outcome={refusal.outcome.value}]", file=out)
+        return 3
+    if not 1 <= args.days <= RETENTION_DAYS:
+        print(f"--days must be between 1 and {RETENTION_DAYS}.", file=out)
+        return 3
+    tenant = services.registry.get(args.tenant_id)
+    if tenant is None or tenant.status.value == "removed":
+        print("No such tenant.", file=out)
+        return 3
+    path = resolve_db_path(tenant, services.tenant_dir)
+    if not path.exists():
+        print("That tenant has no database yet.", file=out)
+        return 3
+    if args.output is not None:
+        target = Path(args.output)
+        if target.suffix.lower() in _DATABASE_SUFFIXES or target.resolve().parent == Path(services.tenant_dir).resolve():
+            print("Refused: the report is written only to a plain file outside the database folders.", file=out)
+            return 3
+    zero = [t for t in services.registry.list_tenants() if t.is_tenant_zero]
+    live_paths = [path] + [resolve_db_path(t, services.tenant_dir) for t in zero]
+    if not args.allow_while_live and bot_is_live(live_paths, now()):
+        print("Refused: the bot is running (its startup lease is held or was taken in the last 10 minutes). The analysis would compete with live replies "
+              "for the GPU. Stop the bot, wait, or pass --allow-while-live.", file=out)
+        return 3
+    summaries = summarize(path, days=args.days, now=now())
+    if not summaries:
+        print(f"No behavioral telemetry for {tenant.id} in the last {args.days} days.", file=out)
+        return 0
+    try:
+        model = model_factory(args.timeout)
+    except ValueError as exc:
+        print(f"Refused: {exc}. The analysis only uses a model on this machine.", file=out)
+        return 3
+    sections = []
+    for summary in summaries:
+        try:
+            report = analyze(model, summary)
+        except LLMGenerationError as exc:
+            print(f"The local model did not answer ({exc.code}). Nothing was written.", file=out)
+            return 4
+        sections.append(f"=== Behavioral analysis: {tenant.id}, user {summary.user_id[:8]}, last {args.days} days, {summary.records} records, "
+                        f"generated {now():%Y-%m-%d %H:%M} UTC ===\n\n{report}")
+    text = "\n\n".join(sections) + "\n"
+    if args.output is None:
+        print(text, file=out)
+    else:
+        Path(args.output).write_text(text, encoding="utf-8")
+        print(f"Report written to {args.output} (it is not stored anywhere else).", file=out)
+    return 0
+
+
 def _render_tenants(tenants) -> str:
     rows = [(t.id, t.display_name, t.status.value, "yes" if t.is_tenant_zero else "-", t.discord_id or "-", t.lock_id or "-")
             for t in tenants]
@@ -352,12 +431,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
          directory_factory: Callable[[], tuple[LockDirectory, str | None, str | None]] = build_directory,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
-         ideas_factory: Callable[[], tuple] | None = None) -> int:
+         ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
     pairing_factory = pairing_factory or build_pairing_service
     ideas_factory = ideas_factory or build_idea_sources
+    research_model_factory = research_model_factory or build_research_model
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -380,6 +460,15 @@ def main(argv: list[str], *, out: TextIO | None = None,
         ip.add_argument("--note", default=None)
     for p in isub.choices.values():
         p.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    research = sub.add_parser("research", help="Owner: offline analysis of Behavioral Telemetry with the LOCAL model (nothing is stored).")
+    rsub = research.add_subparsers(dest="research_command", required=True)
+    ra = rsub.add_parser("analyze", help="A 'Psychological Profile & Recommendations' report for one tenant (tenant_0 = your own database).")
+    ra.add_argument("tenant_id")
+    ra.add_argument("--days", type=int, default=30, help="how many days back (1-180, default 30)")
+    ra.add_argument("--output", default=None, help="write the report to this plain file instead of printing it")
+    ra.add_argument("--allow-while-live", action="store_true", help="run even while the bot is running (competes with live replies for the GPU)")
+    ra.add_argument("--timeout", type=float, default=600.0, help="seconds to wait for the model (default 600)")
+    ra.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     lst = tsub.add_parser("list", help="List tenants and the platform halt.")
     lst.add_argument("--all", action="store_true", help="also show removed and archived tenants")
     tsub.add_parser("archive", help="Archive the database files of removed tenants now (normally the bot does it).")
@@ -422,6 +511,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         return 0 if not listing.problems else 2
     if args.command == "ai-ideas":
         return _ai_ideas(args, out, ideas_factory, now)
+    if args.command == "research":
+        return _research_analyze(args, out, tenants_factory, research_model_factory, now)
     if args.command == "tenants":
         admin, services = tenants_factory()
         cmd = args.tenant_command

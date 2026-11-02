@@ -87,9 +87,14 @@ def release_system_startup_lease(db: Database, lease: Lease) -> None:
     only clears the row if it still matches `lease.held_by`, so a process
     that held the lease past its own expiry can never accidentally clear
     a DIFFERENT instance's now-current lease.
+
+    `acquired_at` is kept: after a release it means "last acquired", which
+    lets an offline tool see that a bot is running (Phase G3,
+    behavioral_telemetry.analysis.bot_is_live). Acquisition only ever
+    checks `expires_at`.
     """
     with db.transaction() as tx:
         tx.execute(
-            "UPDATE system_startup_lease SET held_by = NULL, acquired_at = NULL, expires_at = NULL WHERE id = 1 AND held_by = ?",
+            "UPDATE system_startup_lease SET held_by = NULL, expires_at = NULL WHERE id = 1 AND held_by = ?",
             (lease.held_by,),
         )

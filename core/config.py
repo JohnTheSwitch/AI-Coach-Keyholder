@@ -67,6 +67,7 @@ class Config:
     ollama_model: str = "llama3.1"  # TBD until a specific model is confirmed
     ollama_read_timeout_seconds: float = 30.0     # a large local model needs more (for example 120 for a 32B model)
     ollama_keep_alive: str | None = None          # e.g. "30m": keep the model loaded between messages
+    research_ollama_model: str | None = None      # Phase G3: model for `python -m cli research analyze` (default: OLLAMA_MODEL)
     conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data)
     enable_coaching_memory: bool = False          # Phase F2: store and use Coaching Memory (needs structured output)
     enable_ai_suggestions: bool = False           # Phase F3: the write-only idea box for the keyholder (needs structured output)
@@ -201,6 +202,7 @@ class Config:
             ollama_model=get("OLLAMA_MODEL", "llama3.1"),
             ollama_read_timeout_seconds=float(get("OLLAMA_READ_TIMEOUT_SECONDS", "30") or "30"),
             ollama_keep_alive=get("OLLAMA_KEEP_ALIVE") or None,
+            research_ollama_model=get("RESEARCH_OLLAMA_MODEL") or None,
             conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),

@@ -29,6 +29,9 @@ start of each run in one transaction (discarded without consent; samples of a us
 `consent_log`); tenant zero is the owner's own database. The wearer sees categories and counts with `telemetry` (never a value: the conditioning factor stays
 hidden) and erases everything with `forget all` (together with the Coaching Memory). Nothing leaves the database; the opt-in export is Phase G4.
 
+**Owner analysis (G3).** `analysis.py` + `python -m cli research analyze <tenant_id> --days 30 --owner-id <you>`: a read-only summary, the local
+model, the fixed consent disclaimer; printed or written to a plain file, never stored. Refuses while the bot is running unless `--allow-while-live`.
+
 **Guards (tests).** `conversation_engine/` imports no database module; the sink works with every database and file access blocked; a raising sink
 or clock never changes a reply. Only this package, `system/` and tests import it; no package that builds model context mentions the table; the package writes only its
 own two tables and never calls `datetime.now()`.
