@@ -29,13 +29,14 @@ from infrastructure.time_format import parse_iso as _parse_iso
 __all__ = ["TelemetryStore", "TelemetrySummary", "EVENT_TYPES", "RETENTION_DAYS", "DISCLOSURE_MARKER", "TELEMETRY_DISCLOSURE", "record_in",
            "disclosed_in"]
 
-EVENT_TYPES = ("response_delay", "token_burn", "inflation_resilience", "daily_summary")
+EVENT_TYPES = ("response_delay", "token_burn", "inflation_resilience", "daily_summary",
+               "llm_generation", "conversation_gap")          # the last two come from the runtime buffer (Phase G2)
 RETENTION_DAYS = 180
 
 # The invitation text (system/tenant_gateway.py) includes TELEMETRY_DISCLOSURE; a tenant database is recorded only when its accepted consent text contains the marker.
 DISCLOSURE_MARKER = "behavioral telemetry"
 TELEMETRY_DISCLOSURE = (
-    f"It also derives {DISCLOSURE_MARKER} from your records (check-in response times, token use, daily results) for your keyholder's private analysis; "
+    f"It also derives {DISCLOSURE_MARKER} from your records (check-in and chat response times, token use, daily results) for your keyholder's private analysis; "
     f"it stays in your own records for {RETENTION_DAYS} days, you can see it with `telemetry` and erase it with `forget all`, "
     "and nothing is sent anywhere unless you separately opt in.")
 
@@ -82,11 +83,13 @@ class TelemetrySummary:
 
 
 class TelemetryStore:
-    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, consent_target: str | None = None) -> None:
-        """`consent_target`: in a tenant database, the consent_log target of the accepted invitation (recording needs its disclosure); None in tenant zero."""
+    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, consent_target: str | None = None, buffer=None) -> None:
+        """`consent_target`: in a tenant database, the consent_log target of the accepted invitation (recording needs its disclosure); None in tenant zero.
+        `buffer`: the runtime buffer (Phase G2) of this database's conversation engine; `forget_all` also drops its undrained samples."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._consent_target = consent_target
+        self._buffer = buffer
 
     @property
     def core(self) -> CoreDatabase:
@@ -112,6 +115,9 @@ class TelemetryStore:
                                 oldest=_parse_iso(oldest) if oldest else None)
 
     def forget_all(self, user_id: str) -> int:
+        if self._buffer is not None:
+            self._buffer.forget(user_id)                    # first, so a drain running concurrently drops this user's older samples
+
         def write(tx: Transaction, _s: object) -> int:
             return tx.execute("DELETE FROM behavioral_telemetry WHERE user_id = ?", (user_id,)).rowcount
 

@@ -31,8 +31,9 @@ anticipated capacity/read/commit condition.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
-from typing import Sequence
+from typing import Callable, Sequence
 
 from conversation_engine.context import build_response_context
 from conversation_engine.guardrails import build_guardrails
@@ -91,12 +92,19 @@ class ConversationEngine:
         max_output_characters: int = DEFAULT_MAX_OUTPUT_CHARACTERS,
         tool_executor: ToolExecutor | None = None,
         structured_output: bool = False, structured_sink=None,
+        runtime_sink=None, monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._model = model
         # Phase F1: ask for the JSON shape of conversation_engine.structured_output when the model supports it. `structured_sink`
         # (subject_key, StructuredReply, now, user_message) receives the validated side data (Phase F2: Coaching Memory).
         self._structured = bool(structured_output) and callable(getattr(model, "generate_structured", None))
         self._structured_sink = structured_sink
+        # Phase G2: `runtime_sink(subject_key, kind, metrics, at)` receives facts that exist only here (generation latency, structured-output status).
+        # It must be O(1) and in memory (behavioral_telemetry.runtime.RuntimeTelemetryBuffer.record); every call is guarded by `_observe`, so a
+        # failing sink can never change or delay a reply beyond that call.
+        self._runtime_sink = runtime_sink
+        self._monotonic = monotonic
+        self._runtime_sink_failed = False
         self._working_memory_reader = working_memory_reader
         self._working_memory_writer = working_memory_writer
         self._queue = queue
@@ -158,6 +166,10 @@ class ConversationEngine:
             )
 
             tool_outputs: tuple[ToolExecutionResult, ...] = ()
+            structured_status: str | None = None
+            path = ("context" if extra_system_context is not None else "tools" if self._tool_executor is not None
+                    else "structured" if self._structured else "plain")
+            started = self._started()
             try:
                 if extra_system_context is not None:
                     if not extra_system_context.strip():
@@ -172,8 +184,8 @@ class ConversationEngine:
                         request, subject_key=subject_key, now=now, user_message=current_user_message,
                     )
                 elif self._structured:
-                    raw_text = self._generate_structured(request, subject_key=subject_key, now=now, allow_side_data=allow_side_data,
-                                                         user_message=current_user_message)
+                    raw_text, structured_status = self._generate_structured(
+                        request, subject_key=subject_key, now=now, allow_side_data=allow_side_data, user_message=current_user_message)
                 else:
                     raw_text = self._model.generate(request=request)
             except LLMGenerationError as exc:
@@ -184,6 +196,7 @@ class ConversationEngine:
                         "response_category": plan.response_category.value,
                     },
                 )
+                self._observe(subject_key, now, started, path, "generation_failed", structured_status, allow_side_data)
                 return render_fallback(FallbackReason.GENERATION_UNAVAILABLE, language=language)
 
             response = ConversationResponse(text=raw_text, response_category=plan.response_category, tool_outputs=tool_outputs)
@@ -196,6 +209,7 @@ class ConversationEngine:
                         "response_category": plan.response_category.value,
                     },
                 )
+                self._observe(subject_key, now, started, path, "validation_failed", structured_status, allow_side_data)
                 return render_fallback(FallbackReason.GENERATION_UNAVAILABLE, language=language)
 
             # Only a fully successful, validated exchange is committed --
@@ -210,12 +224,36 @@ class ConversationEngine:
             # the next turn does not see this one exchange.
             if not tool_outputs and (extra_system_context is None or remember_exchange):
                 self._commit_exchange(subject_key, current_user_message, response.text)
+            self._observe(subject_key, now, started, path, "ok", structured_status, allow_side_data)
             return response
 
+    def _started(self) -> float | None:
+        if self._runtime_sink is None:
+            return None
+        try:
+            return self._monotonic()
+        except Exception:
+            return None
+
+    def _observe(self, subject_key: str, now: datetime, started: float | None, path: str, outcome: str, structured_status: str | None, trusted: bool) -> None:
+        """Phase G2: one runtime sample per model turn. Never raises; the first failure is logged once, later ones silently ignored."""
+        if self._runtime_sink is None or started is None:
+            return
+        try:
+            latency_ms = max(0, int((self._monotonic() - started) * 1000))
+            self._runtime_sink(subject_key, "llm_generation", {"latency_ms": latency_ms, "path": path, "outcome": outcome,
+                                                              "structured_status": structured_status, "trusted": bool(trusted)}, now)
+        except Exception:
+            if not self._runtime_sink_failed:
+                self._runtime_sink_failed = True
+                logger.warning("Runtime telemetry sink failed; replies are unaffected and further failures are not logged.",
+                               extra={"error_code": "runtime_sink_failed"})
+
     def _generate_structured(self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, allow_side_data: bool,
-                             user_message: str = "") -> str:
+                             user_message: str = "") -> tuple[str, str]:
         """Phase F1 router. Only the reply can reach the user. Side data goes to the sink (none in F1) and only when allowed (never for an
-        untrusted channel). Output without a usable reply is never shown: one plain generation is used instead."""
+        untrusted channel). Output without a usable reply is never shown: one plain generation is used instead. Returns (reply, structured status:
+        ok | side_dropped | unparseable) -- the status only feeds the Phase G2 runtime telemetry."""
         structured_request = ModelGenerationRequest(
             messages=self._with_tool_guidance(request.messages, FORMAT_INSTRUCTIONS),
             max_output_characters=request.max_output_characters,
@@ -225,7 +263,7 @@ class ConversationEngine:
         if parsed is None:
             logger.warning("Structured output unusable; falling back to a plain reply",
                            extra={"error_code": "structured_unparseable", "adapter": type(self._model).__name__})
-            return self._model.generate(request=request)
+            return self._model.generate(request=request), "unparseable"
         if parsed.issues:
             logger.info("Structured side data dropped", extra={"error_code": "structured_side_dropped", "issues": list(parsed.issues)})
         if parsed.has_side_data and allow_side_data and self._structured_sink is not None:
@@ -233,7 +271,7 @@ class ConversationEngine:
                 self._structured_sink(subject_key, parsed, now, user_message)
             except Exception:
                 logger.exception("Structured side data could not be stored; the reply is unaffected.")
-        return parsed.reply
+        return parsed.reply, ("side_dropped" if parsed.issues else "ok")
 
     def _generate_with_tools(
         self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, user_message: str,

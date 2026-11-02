@@ -222,7 +222,8 @@ class TenantFactory:
             providers = providers + (memory_provider,)
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
                                     queue=SubjectConversationQueue(), providers=providers, tool_executor=None,
-                                    structured_output=s.config.conversation_structured_output, structured_sink=memory_sink)
+                                    structured_output=s.config.conversation_structured_output, structured_sink=memory_sink,
+                                    runtime_sink=wiring.telemetry_buffer.record)
         chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
         service = ApplicationService(
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,

@@ -7,11 +7,15 @@ writes, as the LAST step of the periodic cycle; nothing here runs in the reply p
 Each source has a composite watermark (timestamp, id) in `telemetry_watermarks`. A run reads at most BATCH rows per source after the watermark and, in ONE
 transaction per source, records them (`INSERT OR IGNORE` on `source_key`) and moves the watermark, so a re-run, a restart or two instances never duplicate a
 row. Facts older than the retention period are never derived. Old rows are pruned once per day. The sources are only read.
+
+Phase G2: the run first drains the runtime buffer (behavioral_telemetry.runtime) into this database in ONE transaction; without consent the samples
+are discarded, and samples of a user who ran `forget all` after they were taken are dropped.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -49,17 +53,18 @@ def bot_mood(*, strict: bool, clean: bool, streak: int) -> str:
 
 
 class TelemetryCollector:
-    def __init__(self, store: TelemetryStore) -> None:
+    def __init__(self, store: TelemetryStore, *, buffer=None) -> None:
         self._store = store
+        self._buffer = buffer
         self._core = store.core
         self._pruned_on: date | None = None
 
     def run(self, now: datetime) -> int:
         """One collection pass; returns the number of new records."""
+        added = self._drain(now)
         with self._core.transaction() as tx:
             if not self._store.recording_in(tx):
-                return 0
-        added = 0
+                return added
         for source in (self._check_ins, self._token_burn, self._increments, self._daily):
             added += source(now)
         if self._pruned_on != now.date():
@@ -68,6 +73,28 @@ class TelemetryCollector:
         if added:
             logger.debug("Behavioral telemetry: %d new record(s).", added)
         return added
+
+    def _drain(self, now: datetime) -> int:
+        if self._buffer is None:
+            return 0
+        samples = self._buffer.take()
+        if not samples:
+            return 0
+
+        def write(tx: Transaction, _s: object) -> int:
+            if not self._store.recording_in(tx):
+                return 0
+            count = 0
+            for seq, user_id, kind, metrics, at in samples:
+                if self._buffer.is_forgotten(user_id, seq):
+                    continue
+                try:
+                    count += record_in(tx, user_id=user_id, occurred_at=at, event_type=kind, metrics=metrics, source_key=f"runtime:{uuid.uuid4()}", now=now)
+                except ValueError:
+                    logger.warning("A runtime telemetry sample was refused (type %s).", kind)
+            return count
+
+        return apply_transition(self._core, write=write)
 
     # ------------------------------------------------------------------ the generic pass
 

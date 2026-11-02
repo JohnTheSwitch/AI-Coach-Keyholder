@@ -913,7 +913,7 @@ class ApplicationService:
         if self._telemetry is None:
             return OutgoingMessage(text="Behavioral telemetry is not available on this bot.")
         summary = self._telemetry.summary(ctx.user.id)
-        head = ("Behavioral telemetry is recorded for you: numeric facts derived from your check-ins, token use and daily results, kept for 180 days "
+        head = ("Behavioral telemetry is recorded for you: numeric facts derived from your check-ins, chat response times, token use and daily results, kept for 180 days "
                 "and never sent anywhere." if summary.recording else
                 "Behavioral telemetry is not recorded for you (the invitation you accepted did not include it).")
         if not summary.counts:

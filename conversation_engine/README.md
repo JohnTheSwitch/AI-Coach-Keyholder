@@ -673,7 +673,7 @@ v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_con
 
 v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
 
-v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3502 tests.
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3522 tests.
 
 ## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
 
@@ -682,3 +682,5 @@ When enabled and the model supports it, the engine asks Ollama for a JSON object
 dropped when malformed, and handed to an optional sink; none is installed yet, so it has no effect. Unusable output falls back to one plain generation.
 The Chaster tool path and the extra-context path stay plain; untrusted channels pass `allow_side_data=False`. `OLLAMA_KEEP_ALIVE` and
 `OLLAMA_READ_TIMEOUT_SECONDS` tune a large local model. Evaluate first with `python -m scripts.eval_structured_output`.
+
+v0.39 Phase G2: `ConversationEngine(runtime_sink=, monotonic=)`. One `llm_generation` sample per model turn (latency, path, outcome, structured status, trusted) goes to the injected in-memory sink through `_observe`, which never raises; `_generate_structured` now returns (reply, status). The engine still imports no database module (guard test in tests/behavioral_telemetry).

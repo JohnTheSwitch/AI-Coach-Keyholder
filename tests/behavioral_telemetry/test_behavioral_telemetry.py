@@ -220,7 +220,7 @@ class TestConsent:
     def test_the_constants_and_the_invitation_agree(self) -> None:
         text = invitation_text("Alex")
         assert TENANT_CONSENT_TARGET == CONSENT_TARGET and TELEMETRY_DISCLOSURE in text and DISCLOSURE_MARKER in text
-        for part in ("`telemetry`", "`forget all`", f"{RETENTION_DAYS} days", "nothing is sent anywhere unless you separately opt in",
+        for part in ("`telemetry`", "`forget all`", f"{RETENTION_DAYS} days", "chat response times", "nothing is sent anywhere unless you separately opt in",
                      "Progressive Conditioning", "`accept`", "`halt`", "`leave`"):
             assert part in text, part
 

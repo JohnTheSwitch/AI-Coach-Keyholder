@@ -489,6 +489,7 @@ def main() -> None:
     conversation_engine = ConversationEngine(
         model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
         structured_output=config.conversation_structured_output, structured_sink=memory_sink,
+        runtime_sink=wiring.telemetry_buffer.record,
         queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
     )
 

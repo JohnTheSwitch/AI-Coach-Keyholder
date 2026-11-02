@@ -1,6 +1,6 @@
 # Phase G: Behavioral Telemetry and the opt-in Hive-Mind
 
-Status: G0 specification (binding) and G1 (local derived telemetry) built. G2–G6 are specified here and not built yet.
+Status: G0 specification (binding), G1 (local derived telemetry) and G2 (runtime buffer) built. G3–G6 are specified here and not built yet.
 
 Owner decisions (2026-11-02): the three-layer consent model; the hidden factor is exported only as a 0.10 band; retention 180 days locally and 365 days at the
 receiver; `forget all` purges local telemetry; revoking `research on` or running `forget all` queues an erase at the receiver; `bot_mood` is derived from engine
@@ -36,6 +36,8 @@ response, no message, no prompt).
 | `response_delay` | `check_ins` in a concluded status (answered, answered_uncertain, insufficient, missed) | level, slot_index, status, verdict, delay_seconds (responded − sent, null when missed), window_seconds (deadline − sent) |
 | `token_burn` | `token_ledger` spends | amount, balance_after, hours_since_last_earn |
 | `inflation_resilience` | `training_increments` | outcome, training_inflation_factor (after), factor_before, days_since_previous_increment, progress_avg_7d, clean_days_7d (from the 7 evaluated days before) |
+| `llm_generation` (G2) | runtime buffer, one per model turn | latency_ms, path (plain, structured, tools, context), outcome (ok, generation_failed, validation_failed), structured_status (ok, side_dropped, unparseable, or null), trusted |
+| `conversation_gap` (G2) | runtime buffer | seconds_since_last_reply: from the end of the bot's previous reply (received time + latency) to the wearer's next message |
 | `daily_summary` | `daily_evaluations` | local_date, goals_assigned, goals_met, check_ins_due, check_ins_ok, violations, clean, streak_after, tokens_earned, progress, pool_after, trust_used, training_inflation_factor (factor in force when the day was evaluated), operating_mode, bot_mood |
 
 `bot_mood` is derived, not generated: `strict` while a penalty window is active or frozen or any Trust domain is under supervision; otherwise `demanding` after a
@@ -52,9 +54,13 @@ Retention: rows whose `occurred_at` is older than 180 days are deleted (checked 
   restart or two instances never duplicate a row. The conversation engine and the application's reply path do not import or call it.
 - **Tier B (outbox consumers).** Not used: an event with no consumer is lost, and a consumer that raises affects event processing. Every G1 metric is already in
   a table.
-- **Tier C (G2).** Only for facts that exist nowhere but the reply path (LLM latency, parse failures, the wearer's reply latency): a `TelemetrySink` that does a
+- **Tier C (G2, built).** Only for facts that exist nowhere but the reply path (LLM latency, parse failures, the wearer's reply latency): a `TelemetrySink` that does a
   single `deque.append` onto a bounded `collections.deque(maxlen=N)` (no I/O, no SQLite, no await, never raises), drained into the tenant database by the periodic
-  cycle. A crash loses at most N samples (accepted).
+  cycle. A crash loses at most N samples (accepted). Built as `behavioral_telemetry.runtime.RuntimeTelemetryBuffer` (N = 2000), handed to
+  `ConversationEngine(runtime_sink=...)` by injection. The engine measures with `time.monotonic` and calls the sink once per model turn inside
+  `_observe`, which catches everything (the first failure is logged once); even a failing clock only disables the sample. The collector drains the
+  buffer first, in ONE transaction; without consent the samples are discarded; `forget all` marks the user in the buffer before deleting rows, so
+  undrained samples taken earlier are dropped. Proactive pings (check-ins) are already measured exactly by `response_delay`.
 - The periodic cycle only runs when at least one periodic feature is enabled; without one there is nothing to derive (check-ins, the ledger and daily
   evaluations are all produced by that cycle).
 
@@ -65,8 +71,6 @@ Retention: rows whose `occurred_at` is older than 180 days are deleted (checked 
   the erase request for the receiver.)
 
 ## 6. Later steps (specified, not built)
-
-**G2** Tier C sink and drain, with guard tests (no DB connection in the sink, a raising sink does not change the reply).
 
 **G3** `python -m cli research analyze <tenant_id> --days 30`: owner only (`TenantAdmin.authorize`); builds a compact numeric summary from `behavioral_telemetry`
 (no free text) and sends it to the local model; the report goes to stdout or an owner file, is never written to any database and never reaches a prompt. It refuses

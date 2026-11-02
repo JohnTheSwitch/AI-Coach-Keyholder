@@ -89,6 +89,7 @@ class RulesExecutionWiring:
     release_user_id: str | None = None
     telemetry: object | None = None                 # behavioral_telemetry.collector.TelemetryCollector (Phase G1, always built)
     telemetry_store: object | None = None           # its store: the wearer's `telemetry` view and `forget all`
+    telemetry_buffer: object | None = None          # behavioral_telemetry.runtime.RuntimeTelemetryBuffer: the engine's runtime_sink (Phase G2)
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -124,9 +125,11 @@ def build_rules_and_execution(
     `telemetry_consent_target` (Phase G1): in a tenant database, the consent target of the accepted invitation; telemetry is recorded only when it disclosed it."""
     out = RulesExecutionWiring()
     from behavioral_telemetry.collector import TelemetryCollector
+    from behavioral_telemetry.runtime import RuntimeTelemetryBuffer
     from behavioral_telemetry.store import TelemetryStore
-    out.telemetry_store = TelemetryStore(config.db_path, core=core, consent_target=telemetry_consent_target)
-    out.telemetry = TelemetryCollector(out.telemetry_store)
+    out.telemetry_buffer = RuntimeTelemetryBuffer()
+    out.telemetry_store = TelemetryStore(config.db_path, core=core, consent_target=telemetry_consent_target, buffer=out.telemetry_buffer)
+    out.telemetry = TelemetryCollector(out.telemetry_store, buffer=out.telemetry_buffer)
     kh_connections = keyholder_connections if keyholder_connections is not None else connections
     kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)

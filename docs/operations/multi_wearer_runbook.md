@@ -145,6 +145,9 @@ summaries) from tables the system already writes, in each tenant's own database.
 - **Consent:** a tenant is recorded only after accepting an invitation that discloses it. Wearers who accepted an older invitation are not recorded (their
   `telemetry` says so). There is no re-consent command yet.
 - **Wearer:** `telemetry` shows the categories, counts and oldest record (never the conditioning factor); `forget all` erases it together with the Coaching Memory.
+- **Runtime samples (G2):** each model reply adds an `llm_generation` record (latency, structured-output status) and, from the second reply on,
+  a `conversation_gap`. They are held in memory (at most 2000 per database) until the next periodic cycle; a restart loses the undrained ones.
+  Many `unparseable` statuses mean the model's JSON is unreliable: run `python -m scripts.eval_structured_output`.
 - **Retention:** 180 days, pruned once a day.
 - **If records stop appearing:** check the log for `Behavioral telemetry collection failed`; the periodic cycle only runs while at least one periodic feature
   (rules engine, supervision, release engine, check-ins) is enabled. The table is `behavioral_telemetry`; the read positions are in `telemetry_watermarks`.
