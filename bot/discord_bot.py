@@ -46,6 +46,7 @@ from chaster.repository import ChasterConnectionRepository
 from chaster.token_encryptor import TokenEncryptor, TokenEncryptorConfigurationError
 from chaster.token_manager import ChasterTokenManager
 from conversation_engine.context_providers.active_task_provider import ActiveTaskContextProvider
+from conversation_engine.context_providers.iron_contract_provider import IronContractContextProvider
 from conversation_engine.context_providers.lock_state_provider import LockStateContextProvider
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.ollama_adapter import OllamaConversationModel
@@ -490,6 +491,7 @@ def main() -> None:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)
 
+    context_providers = context_providers + (IronContractContextProvider(is_locked=wiring.iron_contract.locked_for_context),)
     coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core)
     if memory_provider is not None:
         context_providers = context_providers + (memory_provider,)
@@ -519,7 +521,7 @@ def main() -> None:
         chaster_token_manager=chaster_token_manager,
         check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
         channel_service=channel_service, coaching_memory=coaching, conditioning=conditioning,
-        telemetry=wiring.telemetry_store, research=wiring.research_preferences,
+        telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)

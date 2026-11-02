@@ -34,6 +34,7 @@ from chaster.repository import ChasterConnectionRepository
 from chaster.token_encryptor import TokenEncryptor, TokenEncryptorConfigurationError
 from chaster.token_manager import ChasterTokenManager
 from conversation_engine.context_providers.active_task_provider import ActiveTaskContextProvider
+from conversation_engine.context_providers.iron_contract_provider import IronContractContextProvider
 from conversation_engine.context_providers.lock_state_provider import LockStateContextProvider
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.engine import ConversationEngine
@@ -213,6 +214,7 @@ class TenantFactory:
             observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET, telemetry_tenant_id=tenant.id)
         if wiring.release_engine is not None:
             providers = providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
+        providers = providers + (IronContractContextProvider(is_locked=wiring.iron_contract.locked_for_context),)
 
         process_id = str(uuid.uuid4())
         on_system_startup(core, process_id, s.clock, wiring.rules_engine, wiring.supervision, release_task=wiring.release_task)
@@ -230,7 +232,7 @@ class TenantFactory:
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
             channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning,
-            telemetry=wiring.telemetry_store, research=wiring.research_preferences)
+            telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
         if chat:

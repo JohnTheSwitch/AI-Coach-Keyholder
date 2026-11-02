@@ -301,13 +301,15 @@ class TestWearerCommands:
         daily(core, (NOW - timedelta(days=1)).date(), user=uid)
         daily(core, (NOW - timedelta(days=1)).date(), user="someone-else")
         TelemetryCollector(TelemetryStore(core.db_path, core=core)).run(NOW)
-        reply = self.say(service, "forget all", "c")
+        assert "Reply `yes`" in self.say(service, "forget all", "c")      # two steps since Phase G6
+        reply = self.say(service, "yes", "c2")
         assert "Erased 1 entry" in reply and "Erased 1 behavioral telemetry record." in reply
         assert mem.entries(uid) == [] and [r["user_id"] for r in rows(core)] == ["someone-else"]
 
     def test_forget_all_works_without_coaching_memory_and_the_view_says_when_it_is_off(self, core) -> None:
         service, _, _ = self._service(core, memory=False)
-        assert "Erased 0 behavioral telemetry records." in self.say(service, "forget all", "d")
+        self.say(service, "forget all", "d")
+        assert "Erased 0 behavioral telemetry records." in self.say(service, "yes", "d2")
         bare, _, _ = self._service(core, telemetry=False, memory=False)
         assert "not available" in self.say(bare, "telemetry", "e")
 

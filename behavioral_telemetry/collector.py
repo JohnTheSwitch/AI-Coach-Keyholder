@@ -187,4 +187,5 @@ class TelemetryCollector:
         return self._pass(
             now, source="daily_evaluations", at="created_at", ident="(user_id || '|' || local_date)", derive=derive,
             sql="SELECT (user_id || '|' || local_date) AS pos_id, created_at AS pos_at, user_id, local_date, goals_assigned, goals_met, check_ins_due, "
-                "check_ins_ok, violations, clean, streak_after, tokens_earned, progress, pool_after, trust_used FROM daily_evaluations WHERE {after}")
+                "check_ins_ok, violations, clean, streak_after, tokens_earned, progress, pool_after, trust_used FROM daily_evaluations "
+                "WHERE paused = 0 AND {after}")                        # Phase G6: a paused (vacation) day is not a behavioural fact

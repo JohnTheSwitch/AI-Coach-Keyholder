@@ -326,12 +326,14 @@ class TestWearerCommands:
     def test_forget_all_revokes_and_queues_the_erase(self, core) -> None:
         service, uid, prefs = self._service(core)
         self.say(service, "research on", "a")
-        reply = self.say(service, "forget all", "b")
+        self.say(service, "forget all", "b")
+        reply = self.say(service, "yes", "b2")
         assert "Research sharing is off" in reply and "erase" in reply and not prefs.is_enabled(uid)
         with core.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM research_erase_requests WHERE user_id = ?", (uid,))["n"] == 1
             assert tx.fetch_one("SELECT user_comment FROM consent_log WHERE action = 'revoked'")["user_comment"] == "forget all"
-        assert "Research sharing" not in self.say(service, "forget all", "c")              # nothing more to revoke
+        self.say(service, "forget all", "c")
+        assert "Research sharing" not in self.say(service, "yes", "c2")                    # nothing more to revoke
 
     def test_unavailable_without_injection(self, core) -> None:
         from tests.application.test_chaster_llm_tool_integration import _onboard

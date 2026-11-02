@@ -104,7 +104,10 @@ class CheckInService:
         strict_response_timeout: timedelta = STRICT_RESPONSE_TIMEOUT,
         strict_follow_up_window: timedelta = STRICT_FOLLOW_UP_WINDOW,
         escalation: "CheckInEscalation | None" = None,
+        paused: Callable[[datetime], bool] = lambda _now: False,
     ) -> None:
+        """`paused(now)` (Phase G6, iron_contract.vacation): while it is true no check-in is scheduled or sent, and open ones are closed as
+        `skipped`, so no deadline can turn into a miss. Replies already received are still evaluated."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._cfg = window_config
@@ -118,12 +121,16 @@ class CheckInService:
         self._timeouts = (response_timeout, follow_up_window)
         self._strict_timeouts = (strict_response_timeout, strict_follow_up_window)
         self._escalation = escalation
+        self._paused = paused
 
     # ------------------------------------------------------------------ driver
 
     def tick(self, now: datetime) -> None:
         self._recover_orphans(now)
         self._evaluate_responses(now)
+        if self._is_paused(now):
+            self._close_open_for_pause(now)
+            return
         self._apply_deadlines(now)
         self._schedule_today(now)
         self._send_due(now)
@@ -132,6 +139,21 @@ class CheckInService:
                 self._escalation.run(now)
             except Exception:
                 logger.exception("Check-in escalation failed; will retry next cycle.")
+
+    def _is_paused(self, now: datetime) -> bool:
+        try:
+            return bool(self._paused(now))
+        except Exception:
+            logger.exception("Could not read the vacation state; check-ins continue.")
+            return False
+
+    def _close_open_for_pause(self, now: datetime) -> None:
+        """A vacation is in force: every scheduled, sent or follow-up check-in becomes `skipped` (never a miss, never a penalty)."""
+        def write(tx: Transaction, _s: object) -> int:
+            return tx.execute("UPDATE check_ins SET status = 'skipped', updated_at = ? WHERE user_id = ? AND status IN "
+                              "('scheduled', 'sent', 'insufficient_pending')", (_iso(now), self._user)).rowcount
+
+        apply_transition(self._core, write=write)
 
     def _response_timeout(self) -> timedelta:
         """Strict Supervision Mode (Trust < 0.40) shortens the response deadline (60 -> 30 minutes)."""

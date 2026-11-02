@@ -18,8 +18,9 @@ this layer's to call).
 
 from __future__ import annotations
 
+import functools
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from ai.identity_catalog import get_identity
@@ -58,6 +59,8 @@ from chaster.token_manager import (
 )
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
+from iron_contract.vacation import MAX_LEAD_DAYS as VACATION_MAX_LEAD_DAYS
+from iron_contract.vacation import MAX_VACATION_DAYS as VACATION_MAX_DAYS
 from lock_state.models import LockKnowledgeState, LockReportStatus
 from lock_state.repository import LockState, LockStateAdministration
 from penalty_engine.repository import PenaltyEngine
@@ -80,6 +83,25 @@ from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.application")
 
+# Phase G6: `forget all` is a two-step command; the second step is `yes` within this window.
+FORGET_CONFIRM_WINDOW = timedelta(minutes=5)
+FORGET_ALL_WARNING = ("This will permanently delete your psychological profile and revoke sharing consent: your Coaching Memory and all behavioral "
+                      "telemetry about you are erased, and research sharing is switched off with an erase request to the research server. "
+                      "Reply `yes` within 5 minutes to confirm; anything else cancels.")
+
+
+def requires_unlocked(*, always: bool = False):
+    """Phase G6, the Iron Contract: the handler runs only while the user is known to be unlocked (iron_contract.guard.IronContract.refusal).
+    `always=True` applies even where the contract was not disclosed (vacations need "unlocked" by their own rules). Never put this on a consent,
+    safety or erasure command (philosophy 2.5, 2.3)."""
+    def wrap(handler):
+        @functools.wraps(handler)
+        def inner(self, ctx):
+            refusal = self._iron_refusal(ctx, always=always)
+            return refusal if refusal is not None else handler(self, ctx)
+        return inner
+    return wrap
+
 
 class ApplicationService:
     def __init__(
@@ -92,7 +114,7 @@ class ApplicationService:
         chaster_token_manager: ChasterTokenManager | None = None,
         check_in_listener=None,
         channel_service=None,
-        coaching_memory=None, conditioning=None, telemetry=None, research=None,
+        coaching_memory=None, conditioning=None, telemetry=None, research=None, iron_contract=None, vacation=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -109,6 +131,10 @@ class ApplicationService:
         self._telemetry = telemetry
         # Phase G4: the user's own research-export switch (behavioral_telemetry.research.ResearchPreferences by injection).
         self._research = research
+        # Phase G6: the Iron Contract guard (iron_contract.guard.IronContract) and vacations (iron_contract.vacation.VacationService), by injection.
+        self._iron_contract = iron_contract
+        self._vacation = vacation
+        self._pending_forget: dict[str, datetime] = {}       # user id -> until when `yes` confirms `forget all` (in memory)
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -200,9 +226,15 @@ class ApplicationService:
                 return result.reply
 
             context = RequestContext(user=user, now=incoming.received_at, external_message_id=incoming.external_message_id)
+            confirmed = self._confirm_pending_forget(incoming.text, context)
+            if confirmed is not None:
+                return confirmed
             forget = self._forget_one(incoming.text, context)
             if forget is not None:
                 return forget
+            vacation = self._vacation_schedule(incoming.text, context)
+            if vacation is not None:
+                return vacation
             result = self.router.route(incoming.text, context)
             if result.matched:
                 return result.outgoing
@@ -325,6 +357,10 @@ class ApplicationService:
         self.router.register("memory", "Show what the coach remembers about you (Coaching Memory)", self._handle_memory)
         self.router.register("forget all", "Erase everything in your Coaching Memory and your behavioral telemetry", self._handle_forget_all)
         self.router.register("telemetry", "Show what behavioral telemetry is recorded about you", self._handle_telemetry)
+        self.router.register("vacation", "Show your planned or running vacation (pause mode)", self._handle_vacation_status)
+        self.router.register("vacation status", "Show your planned or running vacation (pause mode)", self._handle_vacation_status)
+        self.router.register("vacation cancel", "Cancel a planned vacation that has not started (only while unlocked)", self._handle_vacation_cancel)
+        self.router.register("vacation end", "End a running vacation now", self._handle_vacation_end)
         self.router.register("research status", "Show whether your pseudonymized telemetry is shared for research", self._handle_research_status)
         self.router.register("research on", "Share pseudonymized numeric telemetry with the owner's research server", self._handle_research_on)
         self.router.register("research off", "Stop research sharing and ask the server to erase what was sent", self._handle_research_off)
@@ -491,6 +527,7 @@ class ApplicationService:
         )
         return OutgoingMessage(text="\n".join(lines))
 
+    @requires_unlocked()
     def _handle_mode_request_standard(self, ctx: RequestContext) -> OutgoingMessage:
         self._settle_mode_state(ctx)
         consent_id = self._consent_id_for(ctx)
@@ -550,6 +587,10 @@ class ApplicationService:
         request = self.advanced_mode.get_active_request()
         if request is None:
             return OutgoingMessage(text="You don't have a pending mode transition request.")
+        if request.target_mode == OperatingMode.STANDARD:          # lowering the difficulty: the Iron Contract (Phase G6)
+            refusal = self._iron_refusal(ctx)
+            if refusal is not None:
+                return refusal
 
         if request.status != ModeTransitionStatus.AWAITING_CONFIRMATION:
             if request.status == ModeTransitionStatus.BLOCKED_BY_PENALTY_WINDOW:
@@ -903,8 +944,13 @@ class ApplicationService:
                                + "\n\nErase one with `forget <id>` or everything with `forget all`.")
 
     def _handle_forget_all(self, ctx: RequestContext) -> OutgoingMessage:
+        """Step one of two (Phase G6): a warning; `_confirm_pending_forget` erases on `yes`."""
         if self._coaching_memory is None and self._telemetry is None and self._research is None:
             return OutgoingMessage(text="Coaching Memory is not available on this bot.")
+        self._pending_forget[ctx.user.id] = ctx.now + FORGET_CONFIRM_WINDOW
+        return OutgoingMessage(text=FORGET_ALL_WARNING)
+
+    def _erase_everything(self, ctx: RequestContext) -> OutgoingMessage:
         parts = []
         if self._coaching_memory is not None:
             count = self._coaching_memory.forget_all(ctx.user.id)
@@ -915,6 +961,82 @@ class ApplicationService:
             erased = self._telemetry.forget_all(ctx.user.id)
             parts.append(f"Erased {erased} behavioral telemetry record{'' if erased == 1 else 's'}.")
         return OutgoingMessage(text=" ".join(parts))
+
+    # Phase G6 -- the Iron Contract guard, the two-step `forget all` and vacations ------------------------------------------------------
+
+    def _iron_refusal(self, ctx: RequestContext, *, always: bool = False) -> OutgoingMessage | None:
+        if self._iron_contract is None:
+            return None
+        text = self._iron_contract.refusal(ctx.user.id, always=always)
+        return None if text is None else OutgoingMessage(text=text)
+
+    def _confirm_pending_forget(self, text: str, ctx: RequestContext) -> OutgoingMessage | None:
+        """The second step of `forget all`: `yes` within FORGET_CONFIRM_WINDOW erases; any other message cancels the request (and is handled normally)."""
+        expires = self._pending_forget.pop(ctx.user.id, None)
+        if expires is None:
+            return None
+        if (text or "").strip().lower().rstrip(".!") == "yes" and ctx.now <= expires:
+            return self._erase_everything(ctx)
+        if (text or "").strip().lower().rstrip(".!") == "yes":
+            return OutgoingMessage(text="That confirmation came too late; nothing was erased. Send `forget all` again if you still want it.")
+        return None
+
+    def _vacation_schedule(self, text: str, ctx: RequestContext) -> OutgoingMessage | None:
+        """`vacation schedule <first day> <last day>` (YYYY-MM-DD, local dates, inclusive). Only while unlocked."""
+        parts = (text or "").strip().split()
+        if len(parts) < 2 or parts[0].lower() != "vacation" or parts[1].lower() != "schedule":
+            return None
+        if self._vacation is None:
+            return OutgoingMessage(text="Vacations are not available on this bot.")
+        if len(parts) != 4:
+            return OutgoingMessage(text="Use `vacation schedule <first day> <last day>`, for example `vacation schedule 2026-12-24 2026-12-28`.")
+        refusal = self._iron_refusal(ctx, always=True)
+        if refusal is not None:
+            return refusal
+        try:
+            start, end = date.fromisoformat(parts[2]), date.fromisoformat(parts[3])
+        except ValueError:
+            return OutgoingMessage(text="Dates must look like 2026-12-24.")
+        outcome, vacation = self._vacation.schedule(ctx.user.id, start, end, now=ctx.now)
+        texts = {
+            "invalid": "The last day must not be before the first day.",
+            "in_the_past": "A vacation cannot start in the past.",
+            "too_long": f"A vacation can last at most {VACATION_MAX_DAYS} days.",
+            "too_far_ahead": f"A vacation can start at most {VACATION_MAX_LEAD_DAYS} days ahead.",
+            "already_planned": "You already have a vacation planned or running. Send `vacation` to see it.",
+        }
+        if vacation is None:
+            return OutgoingMessage(text=texts.get(outcome.value, "That vacation could not be scheduled."))
+        return OutgoingMessage(text=f"Vacation scheduled: {vacation.start_date.isoformat()} to {vacation.end_date.isoformat()}. "
+                                    "During it no check-ins are sent and fully paused days are not evaluated; Progressive Conditioning does not rise. "
+                                    "Penalties, tokens and your rules stay as they are. You can end it early at any time with `vacation end`.")
+
+    def _handle_vacation_status(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._vacation is None:
+            return OutgoingMessage(text="Vacations are not available on this bot.")
+        v = self._vacation.current_or_next(ctx.user.id, ctx.now)
+        if v is None:
+            return OutgoingMessage(text="No vacation is planned. While you are unlocked you can schedule one with "
+                                        "`vacation schedule <first day> <last day>` (at most "
+                                        f"{VACATION_MAX_DAYS} days).")
+        when = "running now" if v.running(ctx.now) else "planned"
+        return OutgoingMessage(text=f"Vacation {when}: {v.start_date.isoformat()} to {v.end_date.isoformat()}. "
+                                    + ("End it early with `vacation end`." if v.running(ctx.now) else "Cancel it with `vacation cancel` (only while unlocked)."))
+
+    @requires_unlocked(always=True)
+    def _handle_vacation_cancel(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._vacation is None:
+            return OutgoingMessage(text="Vacations are not available on this bot.")
+        if self._vacation.cancel_upcoming(ctx.user.id, now=ctx.now):
+            return OutgoingMessage(text="Your planned vacation is cancelled.")
+        return OutgoingMessage(text="There is no planned vacation that has not started. A running one can be ended with `vacation end`.")
+
+    def _handle_vacation_end(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._vacation is None:
+            return OutgoingMessage(text="Vacations are not available on this bot.")
+        if self._vacation.end_now(ctx.user.id, now=ctx.now):
+            return OutgoingMessage(text="Your vacation has ended. Everything runs normally again from now on.")
+        return OutgoingMessage(text="No vacation is running right now.")
 
     def _handle_research_status(self, ctx: RequestContext) -> OutgoingMessage:
         if self._research is None:

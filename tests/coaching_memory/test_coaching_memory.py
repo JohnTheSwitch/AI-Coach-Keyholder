@@ -235,7 +235,8 @@ class TestEndToEnd:
         assert self.say(service, "forget zzzz", "b").startswith("No single entry")
         assert self.say(service, f"forget {entry.short_id}", "c") == "Erased." and mem.entries(user.id) == []
         assert self.say(service, "memory", "d") == "Your Coaching Memory is empty."
-        assert "Erased 0" in self.say(service, "forget all", "e")
+        self.say(service, "forget all", "e")
+        assert "Erased 0" in self.say(service, "yes", "e2")
 
     def test_commands_are_never_sent_to_the_model(self, core) -> None:
         model = StructuredModel()

@@ -92,6 +92,8 @@ class RulesExecutionWiring:
     telemetry_buffer: object | None = None          # behavioral_telemetry.runtime.RuntimeTelemetryBuffer: the engine's runtime_sink (Phase G2)
     research_preferences: object | None = None      # behavioral_telemetry.research.ResearchPreferences: `research on|off|status` (G4, always built)
     research_exporter: object | None = None         # behavioral_telemetry.research.ResearchExporter of this database, when the link is configured
+    iron_contract: object | None = None             # iron_contract.guard.IronContract (Phase G6, always built)
+    vacation: object | None = None                  # iron_contract.vacation.VacationService (Phase G6, always built)
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -161,6 +163,15 @@ def build_rules_and_execution(
     kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)
     wearer_id = getattr(config, "chaster_execution_wearer_user_id", None)
+    from iron_contract.guard import IronContract
+    from iron_contract.vacation import VacationService
+    try:
+        vacation = VacationService(config.db_path, core=core, timezone_name=getattr(config, "app_timezone", None) or "Europe/Prague")
+    except (KeyError, ValueError):                      # an invalid APP_TIMEZONE is reported below; vacations then use UTC dates
+        vacation = VacationService(config.db_path, core=core, timezone_name="UTC")
+        out.notes.append("Vacations use UTC dates: APP_TIMEZONE is not a valid time zone.")
+    out.vacation = vacation
+    out.iron_contract = IronContract(config.db_path, core=core, consent_target=telemetry_consent_target, wearer_user_id=wearer_id)
     keyholder_id = getattr(config, "chaster_execution_keyholder_user_id", None)
     want_release = bool(getattr(config, "enable_release_engine", False))
     want_check_ins = bool(getattr(config, "enable_check_ins", False))
@@ -200,6 +211,7 @@ def build_rules_and_execution(
                 follow_up_window=minutes("checkin_follow_up_minutes", 30),
                 strict_response_timeout=minutes("checkin_strict_response_timeout_minutes", 30),
                 strict_follow_up_window=minutes("checkin_strict_follow_up_minutes", 15),
+                paused=lambda now, u=user: vacation.is_paused(u, now),
                 escalation=CheckInEscalation(
                     config.db_path, core=core, user_id=user,
                     register_incident=lambda description, now: trust.register_incident_report(
@@ -241,6 +253,7 @@ def build_rules_and_execution(
         get_obs = lambda: observations.get_latest(wearer_id)  # noqa: E731
         refresh_obs = lambda now: obs_service.fetch_and_record(connection_id=wearer_id, now=now)  # noqa: E731
 
+    out.iron_contract.get_observation = get_obs
     snapshot_provider = None
     if get_obs is not None:
         snapshot_provider = make_snapshot_provider(get_obs)
@@ -319,13 +332,14 @@ def build_rules_and_execution(
                 conditioning = None
                 if getattr(config, "enable_slave_training", False):
                     from release_engine.conditioning import ProgressiveConditioning
-                    conditioning = ProgressiveConditioning(config.db_path, core=core)
+                    conditioning = ProgressiveConditioning(config.db_path, core=core, vacation_in=vacation.running_id_in)
                     out.release_task.conditioning = conditioning
                     out.notes.append("Progressive Conditioning enabled (the per-database owner switch and the wearer's consent still apply).")
                 daily_domain = getattr(config, "daily_evaluation_trust_domain", None) or "routine"
                 out.daily = DailyEvaluationTask(
                     config.db_path, core=core, window_config=window_cfg, user_id=wearer_id, trust_domain=daily_domain,
                     engine=engine, trust=trust, conditioning=conditioning,
+                    paused_between=lambda start, end, u=wearer_id: vacation.covers(u, start, end),
                 )
                 out.notes.append(f"Daily evaluation enabled at local midnight (token pool and clean-day streak; Trust domain {daily_domain!r}).")
                 out.notes.append("Release engine enabled ("

@@ -76,7 +76,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3600 passing tests** across the whole repository (`pytest`), including
+**3624 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -115,7 +115,7 @@ unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
 Thirty-eight sequential database migrations are applied so far
-(`database/migrations/001` through `040`), covering the initial Phase 0
+(`database/migrations/001` through `041`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -146,7 +146,7 @@ execution audit log and the runtime halt switch; see
 engine's token ledger, release plans and authorizations ([`release_engine/README.md`](release_engine/README.md)),
 (028) proactive-supervision state ([`supervision/README.md`](supervision/README.md)), and (029) check-ins plus
 the provider `frozenAt` observation column, (030) the check-in escalation ledger, and (031) the behavioural model (mode-dependent penalty caps, incident warnings,
-token pool, clean-day streak, daily evaluations), (032) messaging channel routes, (033) Chaster chat polling state, (034) the manual lock-action audit trail, (035) managed-lock observations for tenants, (036) Coaching Memory and the conditioning preference, (037) the idea box, (038) Progressive Conditioning, (039) local Behavioral Telemetry ([`behavioral_telemetry/README.md`](behavioral_telemetry/README.md)), and (040) the opt-in research export. See
+token pool, clean-day streak, daily evaluations), (032) messaging channel routes, (033) Chaster chat polling state, (034) the manual lock-action audit trail, (035) managed-lock observations for tenants, (036) Coaching Memory and the conditioning preference, (037) the idea box, (038) Progressive Conditioning, (039) local Behavioral Telemetry ([`behavioral_telemetry/README.md`](behavioral_telemetry/README.md)), (040) the opt-in research export, and (041) vacations and the pause audit ([`iron_contract/README.md`](iron_contract/README.md)). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 

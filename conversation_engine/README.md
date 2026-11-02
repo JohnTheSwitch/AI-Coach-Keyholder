@@ -673,7 +673,7 @@ v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_con
 
 v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
 
-v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3600 tests.
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3624 tests.
 
 ## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
 
@@ -684,3 +684,5 @@ The Chaster tool path and the extra-context path stay plain; untrusted channels 
 `OLLAMA_READ_TIMEOUT_SECONDS` tune a large local model. Evaluate first with `python -m scripts.eval_structured_output`.
 
 v0.39 Phase G2: `ConversationEngine(runtime_sink=, monotonic=)`. One `llm_generation` sample per model turn (latency, path, outcome, structured status, trusted) goes to the injected in-memory sink through `_observe`, which never raises; `_generate_structured` now returns (reply, status). The engine still imports no database module (guard test in tests/behavioral_telemetry).
+
+v0.39 Phase G6: `IronContractContextProvider` (namespace `contract`) puts `[STATE: LOCKED]` into the domain-context section when the wearer is locked and the Iron Contract applies; guardrail rule 7 holds the matching behaviour (no negotiation, real life and safety first). Nothing is added inside the fenced memory block; `_SYSTEM_BOUNDARIES` is unchanged.

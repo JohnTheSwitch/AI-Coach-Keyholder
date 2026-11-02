@@ -60,6 +60,7 @@ class IncrementOutcome(StrEnum):
     NOT_TOKEN = "not_token"            # the 72-hour backstop (kind 'backstop') never counts
     WEARER_OFF = "wearer_off"          # the wearer ran `conditioning off`: the factor stays frozen
     OWNER_OFF = "owner_off"            # the owner's switch for this database is off
+    PAUSED = "paused"                  # Phase G6: a vacation was in force (audited in conditioning_paused_releases, not training_increments)
 
 
 class ProgressiveConditioning:
@@ -72,10 +73,13 @@ class ProgressiveConditioning:
     (UNIQUE audit row). The factor never appears in an event, a log line, a prompt or a wearer-facing reply."""
 
     def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None,
-                 preferences: ConditioningPreferences | None = None) -> None:
+                 preferences: ConditioningPreferences | None = None, vacation_in=None) -> None:
+        """`vacation_in(tx, user_id, at)` (Phase G6, iron_contract.vacation.VacationService.running_id_in) returns the id of a vacation in force, which
+        freezes the factor."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._prefs = preferences or ConditioningPreferences(self.db_path, core=self._core)
+        self._vacation_in = vacation_in
 
     # ------------------------------------------------------------------ owner switch (per database)
 
@@ -114,10 +118,17 @@ class ProgressiveConditioning:
         """Consumer side of `release.provider_confirmed`. Returns None when this authorization was already considered or is unknown."""
         if tx.fetch_one("SELECT 1 FROM training_increments WHERE authorization_id = ?", (authorization_id,)):
             return None
+        if tx.fetch_one("SELECT 1 FROM conditioning_paused_releases WHERE authorization_id = ?", (authorization_id,)):
+            return None
         auth = tx.fetch_one("SELECT user_id, kind, state FROM release_authorizations WHERE id = ?", (authorization_id,))
         if auth is None or auth["state"] != "provider_confirmed":
             return None
         user_id = auth["user_id"]
+        vacation_id = self._vacation_in(tx, user_id, now) if self._vacation_in is not None and auth["kind"] == "token" else None
+        if vacation_id is not None:
+            tx.execute("INSERT INTO conditioning_paused_releases (authorization_id, user_id, vacation_id, created_at) VALUES (?, ?, ?, ?)",
+                       (authorization_id, user_id, vacation_id, _iso(now)))
+            return IncrementOutcome.PAUSED
         before = self.factor_in(tx, user_id)
         if auth["kind"] != "token":
             outcome = IncrementOutcome.NOT_TOKEN

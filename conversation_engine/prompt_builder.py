@@ -203,6 +203,13 @@ def _render_release(data: object) -> str:
     return "Release: the user's requirements are not met yet."
 
 
+def _render_contract(data: object) -> str:
+    # v0.39 Phase G6: a single fixed marker; the behaviour that goes with it is guardrail rule 7.
+    if data["state"] != "LOCKED":
+        return ""
+    return "[STATE: LOCKED] The user's lock is locked and the Iron Contract is in force (guardrail rule 7)."
+
+
 # Deterministic order + only the namespaces this module explicitly
 # knows how to render -- an unrecognized namespace is silently
 # skipped, never guessed at or dumped raw.
@@ -210,8 +217,9 @@ _FRAGMENT_RENDERERS = {
     "lock_state": _render_lock_state,
     "active_task": _render_active_task,
     "release": _render_release,
+    "contract": _render_contract,
 }
-_FRAGMENT_ORDER = ("lock_state", "active_task", "release")
+_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "release")
 
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:
@@ -220,6 +228,7 @@ def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:
         for namespace in _FRAGMENT_ORDER
         if namespace in snapshot.context_fragments
     ]
+    lines = [line for line in lines if line]
     if not lines:
         return ""
     return _DOMAIN_CONTEXT_PREAMBLE + "\n" + "\n".join(lines)

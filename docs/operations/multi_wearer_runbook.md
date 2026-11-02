@@ -114,7 +114,7 @@ All of them are off by default and apply to every tenant (and to the owner's own
 
 Model settings for Qwen 2.5 32B: `OLLAMA_MODEL=<your qwen2.5 32b tag>`, `OLLAMA_READ_TIMEOUT_SECONDS=120`, `OLLAMA_KEEP_ALIVE=30m`.
 
-**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`, `telemetry`, `research status|on|off`.
+**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`, `telemetry`, `research status|on|off`, `vacation`, `vacation schedule <first day> <last day>`, `vacation cancel`, `vacation end`. `forget all` asks for `yes` within 5 minutes.
 `conditioning off` freezes the factor at its current value; it never resets.
 
 **Owner commands:**
@@ -163,3 +163,12 @@ summaries) from tables the system already writes, in each tenant's own database.
 - **Running the receiver (G5):** see `hive_mind_receiver/README.md`: its own virtual environment outside the repository, one token per sending
   instance in `TELEMETRY_TOKENS` (remove a token to revoke that sender), `python -m hive_mind_receiver`, and a Cloudflare tunnel to
   `http://127.0.0.1:8787`. A 401 or 422 from the receiver shows in the bot's log as `Research telemetry link is down (HTTP 401)`.
+
+## 11. Phase G6: the Iron Contract and vacations
+
+- **Iron Contract:** while a wearer is locked (Chaster says locked, or they reported it), switching back to Standard Mode is refused, and the coach does
+  not negotiate deadlines or excuses (real-life problems and safety are always taken seriously). It binds a tenant only after they accepted the current
+  invitation (it discloses it); `halt`, `leave`, `conditioning off`, `research off`, `forget all` and `vacation end` always work.
+- **Vacations:** a wearer schedules one while unlocked (up to 14 days, up to 90 days ahead). During it no check-ins go out and fully paused days are not
+  evaluated; penalties, tokens and rules stay. An unknown lock status counts as "not unlocked": the wearer can send `lock report unlocked` first.
+- **Where to look:** `vacations`, `conditioning_paused_releases`, and `daily_evaluations.paused`.

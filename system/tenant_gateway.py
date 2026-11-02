@@ -31,6 +31,7 @@ from typing import Awaitable, Callable
 
 from application.models import EmbedSpec, IncomingMessage, OutgoingMessage
 from behavioral_telemetry.store import TELEMETRY_DISCLOSURE
+from iron_contract.guard import IRON_CONTRACT_DISCLOSURE
 from chaster_execution.control import ExecutionControl
 from database.database import Database
 from database.models import ConsentAction, ConsentRecord, ConsentTargetType
@@ -90,7 +91,7 @@ def invitation_text(name: str) -> str:
             "This system uses Progressive Conditioning: over time, earning a release becomes gradually harder. The exact amount stays hidden. "
             "The bot also keeps a Coaching Memory of your goals, patterns and quotes, which you can view with `memory` and erase with `forget`, "
             "and it may write private suggestions about your regime for your keyholder. You can switch Progressive Conditioning off at any time "
-            "with `conditioning off`; it then stays at its current level. " + TELEMETRY_DISCLOSURE + "\n"
+            "with `conditioning off`; it then stays at its current level. " + TELEMETRY_DISCLOSURE + " " + IRON_CONTRACT_DISCLOSURE + "\n"
             "Reply `accept` to join or `decline` to refuse. Nothing happens until you accept.")
 
 

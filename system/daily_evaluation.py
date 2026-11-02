@@ -54,10 +54,11 @@ class DayFacts:
 class DailyEvaluationTask:
     def __init__(
         self, db_path: str | Path, *, core: CoreDatabase | None = None, window_config: WindowConfig, user_id: str,
-        trust_domain: str, engine: ReleaseEngine, trust: TrustManager, conditioning=None,
+        trust_domain: str, engine: ReleaseEngine, trust: TrustManager, conditioning=None, paused_between=None,
     ) -> None:
         """`conditioning` (release_engine.conditioning.ProgressiveConditioning, Phase F4, only while ENABLE_SLAVE_TRAINING is on) sets the pool's
-        payout threshold to base(mode) * factor; without it the threshold is 1.0."""
+        payout threshold to base(mode) * factor; without it the threshold is 1.0. `paused_between(start, end)` (Phase G6, iron_contract.vacation) is true
+        for a local day that lies entirely inside a vacation: such a day is recorded as paused and changes neither the pool, nor the streak, nor tokens."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._cfg = window_config
@@ -66,6 +67,7 @@ class DailyEvaluationTask:
         self._engine = engine
         self._trust = trust
         self._conditioning = conditioning
+        self._paused_between = paused_between
 
     def run(self, now: datetime) -> list[str]:
         """Evaluates every finished local day that has not been evaluated yet; returns the dates done."""
@@ -121,6 +123,8 @@ class DailyEvaluationTask:
             return False
         score = Decimal(str(min(1.0, max(0.0, state.score))))
         facts = self._facts(day)
+        if self._paused_between is not None and self._paused_between(*self._bounds(day)):
+            return self._record_paused(day, facts, score, now)
         clean = is_clean_day(
             violations=facts.violations, goals_assigned=facts.goals_assigned, goals_met=facts.goals_met,
             check_ins_due=facts.check_ins_due, check_ins_ok=facts.check_ins_ok,
@@ -163,6 +167,27 @@ class DailyEvaluationTask:
                 event_type="daily_evaluation.completed", source_module="system",
                 payload={"local_date": day.isoformat(), "tokens_earned": result.tokens_earned, "clean": clean,
                          "streak": step.streak},
+                occurred_at=now))
+            return True
+
+        return bool(apply_transition(self._core, write=write))
+
+    def _record_paused(self, day: date, facts: DayFacts, score: Decimal, now: datetime) -> bool:
+        def write(tx: Transaction, _s: object) -> bool:
+            if tx.fetch_one("SELECT 1 FROM daily_evaluations WHERE user_id = ? AND local_date = ?", (self._user, day.isoformat())):
+                return False
+            pool_row = tx.fetch_one("SELECT pool FROM token_pool_state WHERE user_id = ?", (self._user,))
+            streak_row = tx.fetch_one("SELECT streak FROM clean_streak_state WHERE user_id = ?", (self._user,))
+            tx.execute(
+                "INSERT INTO daily_evaluations (user_id, local_date, goals_assigned, goals_met, check_ins_due, check_ins_ok, "
+                "violations, trust_used, progress, pool_after, tokens_earned, clean, streak_after, bonus, created_at, paused) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '0', ?, 0, 0, ?, '0', ?, 1)",
+                (self._user, day.isoformat(), facts.goals_assigned, facts.goals_met, facts.check_ins_due, facts.check_ins_ok, facts.violations,
+                 str(score), pool_row["pool"] if pool_row else "0", int(streak_row["streak"]) if streak_row else 0, _iso(now)))
+            write_event(tx, DomainEvent(
+                event_type="daily_evaluation.completed", source_module="system",
+                payload={"local_date": day.isoformat(), "tokens_earned": 0, "clean": False, "streak": int(streak_row["streak"]) if streak_row else 0,
+                         "paused": True},
                 occurred_at=now))
             return True
 

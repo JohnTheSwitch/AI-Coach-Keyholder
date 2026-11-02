@@ -1,6 +1,6 @@
 # Phase G: Behavioral Telemetry and the opt-in Hive-Mind
 
-Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer), G3 (owner analysis), G4 (opt-in export) and G5 (receiver) built. G6 is specified here and not built yet.
+Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer), G3 (owner analysis), G4 (opt-in export), G5 (receiver) and G6 (hardening, two-step erase, Iron Contract, vacations) built. Phase G is complete.
 
 Owner decisions (2026-11-02): the three-layer consent model; the hidden factor is exported only as a 0.10 band; retention 180 days locally and 365 days at the
 receiver; `forget all` purges local telemetry; revoking `research on` or running `forget all` queues an erase at the receiver; `bot_mood` is derived from engine
@@ -131,3 +131,36 @@ standard library, FastAPI/Pydantic/Starlette/Uvicorn and itself (guard test in t
 
 **G6** Hardening: cross-tenant isolation tests for telemetry, an injection test (wearer text never reaches a payload), an audit of the outbound payload against
 the allowlist, a runbook section.
+
+## 7. G6: hardening, the two-step erase, the Iron Contract and vacations (built)
+
+Owner request (2026-11-03): a confirmation for `forget all`; an "Iron Contract" that, while locked, blocks changing check-in schedules, lowering the
+difficulty and approving new rules, injects `[STATE: LOCKED]` and makes the model refuse negotiation; vacations schedulable only while unlocked; and a
+cross-tenant audit of everything in Phase G.
+
+**`forget all`** now takes two steps. The first answer is the owner's warning ("This will permanently delete your psychological profile and revoke sharing
+consent ..."), followed by what exactly is erased. Only `yes` (case-insensitive) within 5 minutes erases; any other message cancels, and a late `yes`
+erases nothing. The pending request is held in memory per user (a restart cancels it) and can never be confirmed from the untrusted Chaster chat path.
+
+**Constitutional limits on the Iron Contract** (`philosophy.md`):
+- 2.5: consent is revocable "at any time", including "a slowdown, a relaxation, or a suspension". So `conditioning off`, `research off`, `forget all`,
+  `halt`, `resume`, `leave` and `vacation end` are never blocked. The invitation already promises `conditioning off` "at any time". Lowering the operating
+  mode is a different matter: it is a commitment the wearer chose, already gated (30 days, 24 h, penalty windows), and the new lock gate is disclosed in the
+  invitation and applied only after that disclosure was accepted.
+- 2.3 / 2.4: "real-life circumstances (exams, illness, crises, work overload)" always come first. Rule 7 therefore refuses negotiation and excuses but never
+  treats real life as an excuse, never mocks, and keeps the safety exception.
+- The `[STATE: LOCKED]` marker is application state in the domain-context section; the behaviour is guardrail rule 7. Nothing is placed inside the fenced
+  `<context>` memory block, which the model is told is data, never instructions. `_SYSTEM_BOUNDARIES` is unchanged.
+
+**What the gate covers today.** The wearer has no command to change the check-in schedule and no command to approve rules (idea-box adoption is an owner
+decision followed by the wearer's normal consent flow). The guard therefore covers `mode request standard` and `mode confirm` toward Standard, plus
+`vacation schedule` / `vacation cancel` (which need "unlocked" everywhere, as a property of the vacation feature). Any future command of those kinds should
+carry `@requires_unlocked`.
+
+**Lock status and vacations:** see `iron_contract/README.md`. Defaults chosen here: at most 14 days, at most 90 days ahead, one at a time, a vacation
+starting today begins at that moment, and only days lying entirely inside it are paused.
+
+**Cross-tenant audit** (`tests/iron_contract/test_iron_contract.py::TestCrossTenantAudit`). For two tenants built by the factory, these are separate
+objects over separate databases: the runtime buffers, telemetry stores, research preferences, contracts and vacations. A chat turn of tenant A lands in
+A's database only. An opt-in and an erase of A are invisible to B. Pseudonyms differ per tenant for the same user id. The G3 summary reads one database. The
+owner's database receives nothing. The receiver keeps senders apart (keys and erase scoped by sender; its own suite covers it end to end).
