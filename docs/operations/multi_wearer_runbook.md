@@ -107,3 +107,4 @@ All tenants use the one keyholder account. The bot counts every request made wit
 - Coaching Memory is stored and used only with `CONVERSATION_STRUCTURED_OUTPUT=true` and `ENABLE_COACHING_MEMORY=true`; entries live in each tenant's own database.
 - For Qwen 2.5 32B set `OLLAMA_READ_TIMEOUT_SECONDS=120` and `OLLAMA_KEEP_ALIVE=30m`; check the model first with `python -m scripts.eval_structured_output`.
 - Model suggestions for you (`ENABLE_AI_SUGGESTIONS=true`): `python -m cli ai-ideas list --owner-id <you>`, then `ai-ideas accept|reject|archive <tenant>:<id>`. Accepting changes nothing by itself.
+- Progressive Conditioning (`ENABLE_SLAVE_TRAINING=true`): `python -m cli tenants slave-training <tenant> --enable|--disable|--status --owner-id <you>`. The wearer's `conditioning off` always freezes it.

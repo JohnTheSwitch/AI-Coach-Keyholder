@@ -54,8 +54,10 @@ class DayFacts:
 class DailyEvaluationTask:
     def __init__(
         self, db_path: str | Path, *, core: CoreDatabase | None = None, window_config: WindowConfig, user_id: str,
-        trust_domain: str, engine: ReleaseEngine, trust: TrustManager,
+        trust_domain: str, engine: ReleaseEngine, trust: TrustManager, conditioning=None,
     ) -> None:
+        """`conditioning` (release_engine.conditioning.ProgressiveConditioning, Phase F4, only while ENABLE_SLAVE_TRAINING is on) sets the pool's
+        payout threshold to base(mode) * factor; without it the threshold is 1.0."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._cfg = window_config
@@ -63,6 +65,7 @@ class DailyEvaluationTask:
         self._domain = trust_domain
         self._engine = engine
         self._trust = trust
+        self._conditioning = conditioning
 
     def run(self, now: datetime) -> list[str]:
         """Evaluates every finished local day that has not been evaluated yet; returns the dates done."""
@@ -131,7 +134,8 @@ class DailyEvaluationTask:
             pool_before = Decimal(pool_row["pool"]) if pool_row else Decimal(0)
             streak_before = int(streak_row["streak"]) if streak_row else 0
 
-            result = apply_day(pool_before, facts.goals_met, facts.goals_assigned, score)
+            threshold = self._conditioning.threshold_in(tx, self._user) if self._conditioning is not None else 1
+            result = apply_day(pool_before, facts.goals_met, facts.goals_assigned, score, threshold)
             if result.tokens_earned:
                 self._engine._earn_in_transaction(
                     tx, user_id=self._user, amount=result.tokens_earned, reason_code=TOKEN_SOURCE,

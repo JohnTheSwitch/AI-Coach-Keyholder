@@ -51,9 +51,13 @@ class TestTokenPool:
         with pytest.raises(ValueError):
             daily_progress(*args)
 
-    def test_pool_must_be_below_one(self) -> None:
+    def test_a_pool_is_never_negative_and_the_threshold_positive(self) -> None:
+        # Phase F4: the threshold can move (base(mode) * factor), so a stored pool at or above a lowered threshold simply pays out.
         with pytest.raises(ValueError):
-            apply_day(1, 1, 1, 1.0)
+            apply_day(-0.1, 1, 1, 1.0)
+        with pytest.raises(ValueError):
+            apply_day(0, 1, 1, 1.0, threshold=0)
+        assert apply_day(1, 1, 1, 1.0).tokens_earned == 1
 
 
 class TestCleanStreak:

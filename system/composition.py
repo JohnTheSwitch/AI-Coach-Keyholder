@@ -279,10 +279,16 @@ def build_rules_and_execution(
                     is_halted=control.is_halted, can_execute=out.executor is not None,
                     max_hold=timedelta(hours=config.max_barrier_hold_hours),
                 )
+                conditioning = None
+                if getattr(config, "enable_slave_training", False):
+                    from release_engine.conditioning import ProgressiveConditioning
+                    conditioning = ProgressiveConditioning(config.db_path, core=core)
+                    out.release_task.conditioning = conditioning
+                    out.notes.append("Progressive Conditioning enabled (the per-database owner switch and the wearer's consent still apply).")
                 daily_domain = getattr(config, "daily_evaluation_trust_domain", None) or "routine"
                 out.daily = DailyEvaluationTask(
                     config.db_path, core=core, window_config=window_cfg, user_id=wearer_id, trust_domain=daily_domain,
-                    engine=engine, trust=trust,
+                    engine=engine, trust=trust, conditioning=conditioning,
                 )
                 out.notes.append(f"Daily evaluation enabled at local midnight (token pool and clean-day streak; Trust domain {daily_domain!r}).")
                 out.notes.append("Release engine enabled ("

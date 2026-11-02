@@ -82,6 +82,9 @@ class ReleaseEnginePeriodicTask:
         self._halted = is_halted
         self._can_execute = can_execute
         self._max_hold = max_hold
+        # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
+        # `release.provider_confirmed` (system/startup.py) uses it. None = Progressive Conditioning is off.
+        self.conditioning = None
 
     @property
     def engine(self) -> ReleaseEngine:

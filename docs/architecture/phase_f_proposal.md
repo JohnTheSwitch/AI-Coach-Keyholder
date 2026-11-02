@@ -227,3 +227,27 @@ Interpretations to confirm:
 1. **Reading is owner-only too**, not just reviewing.
 2. **Archived tenants are not read** (their database is in the read-only archive); live and suspended tenants are.
 3. **The same exclusion list as Coaching Memory** applies to suggestions, so sensitive details never reach the owner through this channel.
+
+## 9. F4 result (Progressive Conditioning)
+
+Confirmed after F3: reading the idea box is owner-only; archived tenants are not read; suggestions use the Coaching Memory exclusion list.
+
+Built in F4 (`ENABLE_SLAVE_TRAINING`, default false; with it off nothing changes and the pool threshold stays 1.0):
+- **Storage** (migration 038, per database): `training_settings` (the owner's switch for this database), `training_state` (the hidden factor per user, decimal text, 1.000 by default),
+  `training_increments` (append-only audit, UNIQUE per release authorization, outcome `increased | capped | not_token | wearer_off | owner_off`).
+- **Threshold:** the daily evaluation pays a token when the pool reaches `base(mode) * factor`, with base 1.0 in Standard Mode (a token after 4 days of full performance, about 3.5 on average)
+  and 2.0 in Advanced Mode (exactly 7 days); at the cap in Advanced Mode it is 11 days. `token_pool.apply_day` takes the threshold; a stored pool above a lowered threshold simply pays out.
+- **The only trigger:** the outbox consumer of `release.provider_confirmed` (registered only while the global flag is on). It raises the factor by 0.025, up to 1.500, only when the confirmed
+  authorization is of kind `token`, the owner's switch for that database is on, and the wearer has not switched conditioning off. The 72-hour backstop is kind `backstop` (`not_token`); failed,
+  ambiguous or merely requested releases never emit the event; manual `freeze-lock` and the emergency unlock create no release authorization at all. Each authorization is considered once, also on
+  redelivery.
+- **Consent:** `conditioning off` freezes the factor (no increase, no reset; `conditioning on` resumes from the frozen value). Releases while it was off are never paid back later.
+- **Owner switch:** `python -m cli tenants slave-training <tenant> --enable | --disable | --status --owner-id <you>` (`tenant_0` = the owner's own database); `--status` shows the factor to the owner.
+- **Secrecy:** the factor appears in no event payload and no log line; nothing on the model or wearer path imports it (only `ConditioningPreferences` is imported there); the wearer's
+  `conditioning status` reply contains no number; the model-facing release phase is unchanged.
+
+Interpretations to confirm:
+1. **The Advanced base (2.0) is part of Progressive Conditioning:** with `ENABLE_SLAVE_TRAINING` off the threshold is 1.0 in both modes, so switching the flag off disables the whole mechanism
+   (the stored factor is kept, not used).
+2. **The owner switch is per database** (per tenant), not per user; each tenant database has one wearer.
+3. **The audit table keeps the before/after factor** for the owner; it is never read by anything that reaches the model or the wearer.

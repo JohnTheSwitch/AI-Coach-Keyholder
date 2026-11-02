@@ -203,6 +203,34 @@ def build_pairing_service(services):
         wearer_account_of=wearer_account_lookup(services.tenant_dir))
 
 
+def _slave_training(args, services, out, now) -> int:
+    """The owner's per-database switch, and (for the owner only) the current hidden factor of the database's users."""
+    from infrastructure.database import Database as CoreDatabase
+    from release_engine.conditioning import ProgressiveConditioning
+    from tenancy.registry import resolve_db_path
+
+    tenant = services.registry.get(args.tenant_id)
+    if tenant is None or tenant.status.value == "removed":
+        print("No such tenant.", file=out)
+        return 3
+    path = resolve_db_path(tenant, services.tenant_dir)
+    if not path.exists():
+        print("That tenant has no database yet.", file=out)
+        return 3
+    core = CoreDatabase(path)
+    conditioning = ProgressiveConditioning(path, core=core)
+    if args.enable or args.disable:
+        conditioning.set_owner_enabled(bool(args.enable), now=now())
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT user_id, factor FROM training_state ORDER BY user_id")
+    state = "on" if conditioning.owner_enabled() else "off"
+    print(f"Progressive Conditioning owner switch for {tenant.id}: {state}.", file=out)
+    for row in rows:
+        print(f"  user {row['user_id'][:8]}: factor {row['factor']}", file=out)
+    print("The wearer's own `conditioning off` still freezes the factor; ENABLE_SLAVE_TRAINING must be true for anything to change.", file=out)
+    return 0
+
+
 def _tenant_execution(admin, services, args, now):
     """Sets or clears the execution halt inside ONE tenant's own database (owner only; the file must already exist)."""
     from chaster_execution.control import ExecutionControl
@@ -372,6 +400,12 @@ def main(argv: list[str], *, out: TextIO | None = None,
     pr.add_argument("lock_id")
     up = tsub.add_parser("unpair", help="Remove a tenant's lock pairing.")
     up.add_argument("tenant_id")
+    st = tsub.add_parser("slave-training", help="Owner switch for Progressive Conditioning in ONE database (tenant_0 = the owner's).")
+    st.add_argument("tenant_id")
+    group = st.add_mutually_exclusive_group(required=True)
+    group.add_argument("--enable", action="store_true")
+    group.add_argument("--disable", action="store_true")
+    group.add_argument("--status", action="store_true")
     ex = tsub.add_parser("execution", help="Halt or clear ONE tenant's execution runtime (a new tenant starts halted).")
     ex.add_argument("tenant_id")
     ex.add_argument("action", choices=("halt", "clear"))
@@ -413,6 +447,12 @@ def main(argv: list[str], *, out: TextIO | None = None,
                 done = TenantArchiver(registry=services.registry, tenant_dir=services.tenant_dir, clock=_CliClock(now)).archive_pending()
                 print(f"Archived {len(done)} tenant database(s).", file=out)
                 result = AdminResult(AdminOutcome.DONE)
+        elif cmd == "slave-training":
+            refusal = admin.authorize(args.owner_id, "slave_training")
+            if refusal is not None:
+                result = refusal
+            else:
+                return _slave_training(args, services, out, now)
         elif cmd in ("pair", "unpair"):
             refusal = admin.authorize(args.owner_id, cmd)
             if refusal is not None:

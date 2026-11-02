@@ -71,3 +71,8 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
 - **Limits:** the barrier pool (2 per 24 h, 4 h cooldown) counts RELEASES (unfreezes). A re-freeze is never blocked and does not
   use the release budget, otherwise a release and its re-freeze would block the next day's release.
 
+## v0.39 Phase F4: Progressive Conditioning (`conditioning.py`, migration 038, `ENABLE_SLAVE_TRAINING`)
+
+The pool pays a token at `base(mode) * factor` (base 1.0 Standard, 2.0 Advanced). The hidden factor (1.000 .. 1.500, +0.025) rises only through the consumer of
+`release.provider_confirmed` for a `token` authorization, with the owner's per-database switch on and the wearer's `conditioning` on (off freezes it). Never in events,
+logs, prompts or wearer replies. See docs/architecture/phase_f_proposal.md section 9.

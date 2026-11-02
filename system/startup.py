@@ -64,6 +64,7 @@ def build_consumer_registry(
     trust_manager: TrustManager, penalty_engine: PenaltyEngine, recovery_plan: RecoveryPlanManager,
     rules_engine: RulesEngineService | None = None, supervision: SupervisionService | None = None,
     release_engine=None, release_user_id: str | None = None,   # kept for call compatibility; tokens come from the daily pool
+    conditioning=None,
 ) -> ConsumerRegistry:
     """
     The real, working cross-module wiring this project's architecture
@@ -134,6 +135,14 @@ def build_consumer_registry(
 
     registry.register("check_in.missed", "trust_manager", on_check_in_missed)
     registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
+
+    if conditioning is not None:
+        # Phase F4: a release that Chaster CONFIRMED may raise the hidden Progressive Conditioning factor (token-funded only, consent and owner switch
+        # checked inside, once per authorization). Nothing else can raise it.
+        def on_release_confirmed(tx, event) -> None:
+            conditioning.on_release_confirmed_in_transaction(tx, authorization_id=event.payload["authorization_id"], now=event.occurred_at)
+
+        registry.register("release.provider_confirmed", "progressive_conditioning", on_release_confirmed)
 
     if supervision is not None:
         # v0.39: a Trust recalculation may start/stop proactive supervision (derived state).
@@ -271,6 +280,7 @@ def on_system_startup(
             trust_manager, penalty_engine, recovery_plan, rules_engine, supervision,
             release_engine=None if release_task is None else release_task.engine,
             release_user_id=None if release_task is None else release_task.user_id,
+            conditioning=getattr(release_task, "conditioning", None),
         )
         process_pending_events(core, registry, claimant=process_id, now=now)
 

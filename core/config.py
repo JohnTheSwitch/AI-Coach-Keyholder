@@ -70,6 +70,7 @@ class Config:
     conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data)
     enable_coaching_memory: bool = False          # Phase F2: store and use Coaching Memory (needs structured output)
     enable_ai_suggestions: bool = False           # Phase F3: the write-only idea box for the keyholder (needs structured output)
+    enable_slave_training: bool = False           # Phase F4: Progressive Conditioning (also needs the per-database owner switch)
 
     # Database
     db_path: Path = DEFAULT_DB_PATH
@@ -203,6 +204,7 @@ class Config:
             conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_slave_training=(get("ENABLE_SLAVE_TRAINING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             db_path=Path(db_path_str) if db_path_str else DEFAULT_DB_PATH,
             backup_retention_count=int(retention_str) if retention_str else 14,
             chaster_api_token=get("CHASTER_API_TOKEN"),

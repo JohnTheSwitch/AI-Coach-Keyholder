@@ -73,7 +73,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3408 passing tests** across the whole repository (`pytest`), including
+**3435 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -111,8 +111,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Thirty-seven sequential database migrations are applied so far
-(`database/migrations/001` through `037`), covering the initial Phase 0
+Thirty-eight sequential database migrations are applied so far
+(`database/migrations/001` through `038`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -143,7 +143,7 @@ execution audit log and the runtime halt switch; see
 engine's token ledger, release plans and authorizations ([`release_engine/README.md`](release_engine/README.md)),
 (028) proactive-supervision state ([`supervision/README.md`](supervision/README.md)), and (029) check-ins plus
 the provider `frozenAt` observation column, (030) the check-in escalation ledger, and (031) the behavioural model (mode-dependent penalty caps, incident warnings,
-token pool, clean-day streak, daily evaluations), (032) messaging channel routes, (033) Chaster chat polling state, (034) the manual lock-action audit trail, (035) managed-lock observations for tenants, (036) Coaching Memory and the conditioning preference, and (037) the idea box. See
+token pool, clean-day streak, daily evaluations), (032) messaging channel routes, (033) Chaster chat polling state, (034) the manual lock-action audit trail, (035) managed-lock observations for tenants, (036) Coaching Memory and the conditioning preference, (037) the idea box, and (038) Progressive Conditioning. See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
