@@ -27,10 +27,15 @@ start of each run in one transaction (discarded without consent; samples of a us
 
 **Consent.** In a tenant database the collector records only after the wearer accepted an invitation whose text contains `TELEMETRY_DISCLOSURE` (checked in
 `consent_log`); tenant zero is the owner's own database. The wearer sees categories and counts with `telemetry` (never a value: the conditioning factor stays
-hidden) and erases everything with `forget all` (together with the Coaching Memory). Nothing leaves the database; the opt-in export is Phase G4.
+hidden) and erases everything with `forget all` (together with the Coaching Memory and, if it was on, research sharing).
 
 **Owner analysis (G3).** `analysis.py` + `python -m cli research analyze <tenant_id> --days 30 --owner-id <you>`: a read-only summary, the local
 model, the fixed consent disclaimer; printed or written to a plain file, never stored. Refuses while the bot is running unless `--allow-while-live`.
+
+**Opt-in research export (G4).** `research.py`: the wearer's `research on|off|status` (default off, consent-logged, not retroactive), an allowlist
+payload (HMAC pseudonyms, hour rounding, the conditioning factor only as a 0.10 band, enum strings only), and a store-and-forward link in its own background
+task (HTTPS, bearer token, batches of 200 / 256 KB, HTTP 200 only, exponential backoff, one warning per outage). `research off` and `forget all` queue an
+erase of the pseudonym. Needs `ENABLE_RESEARCH_TELEMETRY`, `TELEMETRY_ENDPOINT`, `TELEMETRY_TOKEN`, `TELEMETRY_HMAC_KEY`.
 
 **Guards (tests).** `conversation_engine/` imports no database module; the sink works with every database and file access blocked; a raising sink
 or clock never changes a reply. Only this package, `system/` and tests import it; no package that builds model context mentions the table; the package writes only its

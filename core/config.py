@@ -20,7 +20,7 @@ Usage:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -68,6 +68,11 @@ class Config:
     ollama_read_timeout_seconds: float = 30.0     # a large local model needs more (for example 120 for a 32B model)
     ollama_keep_alive: str | None = None          # e.g. "30m": keep the model loaded between messages
     research_ollama_model: str | None = None      # Phase G3: model for `python -m cli research analyze` (default: OLLAMA_MODEL)
+    # Phase G4: opt-in research export (also needs each wearer's `research on`). The token and key are secrets (never logged).
+    enable_research_telemetry: bool = False
+    telemetry_endpoint: str | None = None         # https:// base URL of the receiver (G5); records go to /v1/records, erasures to /v1/erase
+    telemetry_token: str | None = field(default=None, repr=False)
+    telemetry_hmac_key: str | None = field(default=None, repr=False)
     conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data)
     enable_coaching_memory: bool = False          # Phase F2: store and use Coaching Memory (needs structured output)
     enable_ai_suggestions: bool = False           # Phase F3: the write-only idea box for the keyholder (needs structured output)
@@ -203,6 +208,10 @@ class Config:
             ollama_read_timeout_seconds=float(get("OLLAMA_READ_TIMEOUT_SECONDS", "30") or "30"),
             ollama_keep_alive=get("OLLAMA_KEEP_ALIVE") or None,
             research_ollama_model=get("RESEARCH_OLLAMA_MODEL") or None,
+            enable_research_telemetry=(get("ENABLE_RESEARCH_TELEMETRY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            telemetry_endpoint=get("TELEMETRY_ENDPOINT") or None,
+            telemetry_token=get("TELEMETRY_TOKEN") or None,
+            telemetry_hmac_key=get("TELEMETRY_HMAC_KEY") or None,
             conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),

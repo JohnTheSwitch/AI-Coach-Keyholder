@@ -90,6 +90,8 @@ class RulesExecutionWiring:
     telemetry: object | None = None                 # behavioral_telemetry.collector.TelemetryCollector (Phase G1, always built)
     telemetry_store: object | None = None           # its store: the wearer's `telemetry` view and `forget all`
     telemetry_buffer: object | None = None          # behavioral_telemetry.runtime.RuntimeTelemetryBuffer: the engine's runtime_sink (Phase G2)
+    research_preferences: object | None = None      # behavioral_telemetry.research.ResearchPreferences: `research on|off|status` (G4, always built)
+    research_exporter: object | None = None         # behavioral_telemetry.research.ResearchExporter of this database, when the link is configured
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -98,6 +100,23 @@ class RulesExecutionWiring:
         if self.release_engine is None or user_id != self.release_user_id:
             return None
         return self.release_engine.coarse_phase(user_id)
+
+
+def research_link_configured(config) -> bool:
+    """Phase G4: endpoint (https), token and a key of at least 32 characters are all set."""
+    from behavioral_telemetry.research import valid_endpoint
+    key = getattr(config, "telemetry_hmac_key", None)
+    return bool(valid_endpoint(getattr(config, "telemetry_endpoint", None)) and getattr(config, "telemetry_token", None) and key and len(key) >= 32)
+
+
+def research_export_loop_for(config, exporters, clock, *, interval_seconds: float = 60.0):
+    """Phase G4: the background export coroutine (one link for the owner's database and every tenant's), or None when the link is not configured.
+    `exporters()` returns the current ResearchExporter of every live database."""
+    if not research_link_configured(config):
+        return None
+    from behavioral_telemetry.research import TelemetryLink, research_export_loop
+    link = TelemetryLink(endpoint=config.telemetry_endpoint, token=config.telemetry_token, key=config.telemetry_hmac_key)
+    return research_export_loop(link, exporters, clock, interval_seconds=interval_seconds)
 
 
 def window_config_from(config) -> WindowConfig:
@@ -113,7 +132,7 @@ def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
     transport=None, clock: Clock | None = None, check_in_sender: CheckInSender | None = None,
     check_in_complete=None, keyholder_connections=None, keyholder_token_manager=None, halt_source=None,
-    observation_source=None, telemetry_consent_target: str | None = None,
+    observation_source=None, telemetry_consent_target: str | None = None, telemetry_tenant_id: str = "tenant_0",
 ) -> RulesExecutionWiring:
     """`transport` / `check_in_sender` / `check_in_complete` are injectable (tests; the bot supplies the real
     Discord sender and Ollama completion). Production passes transport=None and gets the real
@@ -130,6 +149,14 @@ def build_rules_and_execution(
     out.telemetry_buffer = RuntimeTelemetryBuffer()
     out.telemetry_store = TelemetryStore(config.db_path, core=core, consent_target=telemetry_consent_target, buffer=out.telemetry_buffer)
     out.telemetry = TelemetryCollector(out.telemetry_store, buffer=out.telemetry_buffer)
+    from behavioral_telemetry.research import ResearchExporter, ResearchPreferences
+    export_on = bool(getattr(config, "enable_research_telemetry", False))
+    out.research_preferences = ResearchPreferences(config.db_path, core=core, export_active=export_on and research_link_configured(config))
+    if research_link_configured(config):
+        out.research_exporter = ResearchExporter(core, tenant_id=telemetry_tenant_id, key=config.telemetry_hmac_key, export_records=export_on)
+    elif export_on:
+        out.notes.append("ENABLE_RESEARCH_TELEMETRY is true but the research export is NOT active: it needs an https:// TELEMETRY_ENDPOINT, "
+                         "TELEMETRY_TOKEN and TELEMETRY_HMAC_KEY (at least 32 characters).")
     kh_connections = keyholder_connections if keyholder_connections is not None else connections
     kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)

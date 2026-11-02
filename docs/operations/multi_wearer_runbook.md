@@ -114,7 +114,7 @@ All of them are off by default and apply to every tenant (and to the owner's own
 
 Model settings for Qwen 2.5 32B: `OLLAMA_MODEL=<your qwen2.5 32b tag>`, `OLLAMA_READ_TIMEOUT_SECONDS=120`, `OLLAMA_KEEP_ALIVE=30m`.
 
-**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`, `telemetry`.
+**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`, `telemetry`, `research status|on|off`.
 `conditioning off` freezes the factor at its current value; it never resets.
 
 **Owner commands:**
@@ -155,3 +155,8 @@ summaries) from tables the system already writes, in each tenant's own database.
   suggests is a `critical_change` that needs the wearer's explicit consent first. Nothing is stored; keep the file private.
 - **If records stop appearing:** check the log for `Behavioral telemetry collection failed`; the periodic cycle only runs while at least one periodic feature
   (rules engine, supervision, release engine, check-ins) is enabled. The table is `behavioral_telemetry`; the read positions are in `telemetry_watermarks`.
+- **Research export (G4, opt-in):** set `ENABLE_RESEARCH_TELEMETRY=true`, `TELEMETRY_ENDPOINT=https://...` (the receiver), `TELEMETRY_TOKEN` (issued by the
+  receiver) and `TELEMETRY_HMAC_KEY` (32+ random characters, keep it forever: a new key makes earlier exports unerasable). The startup notes say when one is
+  missing. Each wearer decides with `research on|off`; only records made after `research on` leave, pseudonymized. `research off` / `forget all` send an
+  erase request (even with the flag off). An outage logs one warning (`Research telemetry link is down`) and one recovery line; nothing is lost meanwhile.
+  Pending items: `research_erase_requests WHERE sent_at IS NULL`, `behavioral_telemetry WHERE synced_at IS NULL`.

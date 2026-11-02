@@ -210,7 +210,7 @@ class TenantFactory:
             cfg, core, connections=connections, oauth_client=s.oauth_client, lock_client=s.lock_client, token_manager=tokens,
             clock=s.clock, check_in_sender=sender, check_in_complete=s.check_in_complete,
             keyholder_connections=s.keyholder_connections, keyholder_token_manager=s.keyholder_token_manager, halt_source=s.platform_halt,
-            observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET)
+            observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET, telemetry_tenant_id=tenant.id)
         if wiring.release_engine is not None:
             providers = providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
 
@@ -230,7 +230,7 @@ class TenantFactory:
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
             channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning,
-            telemetry=wiring.telemetry_store)
+            telemetry=wiring.telemetry_store, research=wiring.research_preferences)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
         if chat:

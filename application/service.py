@@ -92,7 +92,7 @@ class ApplicationService:
         chaster_token_manager: ChasterTokenManager | None = None,
         check_in_listener=None,
         channel_service=None,
-        coaching_memory=None, conditioning=None, telemetry=None,
+        coaching_memory=None, conditioning=None, telemetry=None, research=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -107,6 +107,8 @@ class ApplicationService:
         self._conditioning = conditioning
         # Phase G1: the user's own Behavioral Telemetry (view counts / erase); behavioral_telemetry.store.TelemetryStore by injection.
         self._telemetry = telemetry
+        # Phase G4: the user's own research-export switch (behavioral_telemetry.research.ResearchPreferences by injection).
+        self._research = research
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -323,6 +325,10 @@ class ApplicationService:
         self.router.register("memory", "Show what the coach remembers about you (Coaching Memory)", self._handle_memory)
         self.router.register("forget all", "Erase everything in your Coaching Memory and your behavioral telemetry", self._handle_forget_all)
         self.router.register("telemetry", "Show what behavioral telemetry is recorded about you", self._handle_telemetry)
+        self.router.register("research status", "Show whether your pseudonymized telemetry is shared for research", self._handle_research_status)
+        self.router.register("research on", "Share pseudonymized numeric telemetry with the owner's research server", self._handle_research_on)
+        self.router.register("research off", "Stop research sharing and ask the server to erase what was sent", self._handle_research_off)
+        self.router.register_family("research", invalid_handler=self._handle_research_status)
         self.router.register("conditioning status", "Show whether Progressive Conditioning is on for you", self._handle_conditioning_status)
         self.router.register("conditioning off", "Stop Progressive Conditioning from increasing (it stays at its current level)",
                              self._handle_conditioning_off)
@@ -897,16 +903,41 @@ class ApplicationService:
                                + "\n\nErase one with `forget <id>` or everything with `forget all`.")
 
     def _handle_forget_all(self, ctx: RequestContext) -> OutgoingMessage:
-        if self._coaching_memory is None and self._telemetry is None:
+        if self._coaching_memory is None and self._telemetry is None and self._research is None:
             return OutgoingMessage(text="Coaching Memory is not available on this bot.")
         parts = []
         if self._coaching_memory is not None:
             count = self._coaching_memory.forget_all(ctx.user.id)
             parts.append(f"Erased {count} entr{'y' if count == 1 else 'ies'}. Your Coaching Memory is empty.")
+        if self._research is not None and self._research.revoke(ctx.user.id, now=ctx.now, reason="forget all"):
+            parts.append("Research sharing is off, and the research server will be asked to erase everything sent under your pseudonym.")
         if self._telemetry is not None:
             erased = self._telemetry.forget_all(ctx.user.id)
             parts.append(f"Erased {erased} behavioral telemetry record{'' if erased == 1 else 's'}.")
         return OutgoingMessage(text=" ".join(parts))
+
+    def _handle_research_status(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._research is None:
+            return OutgoingMessage(text="Research sharing is not available on this bot.")
+        state = "on" if self._research.is_enabled(ctx.user.id) else "off"
+        owner = "" if self._research.export_active else " The bot owner has not enabled the research export, so nothing is sent at the moment."
+        return OutgoingMessage(text=f"Research sharing is {state} for you.{owner}\n{self._research.explanation}\nUse `research on` or `research off`.")
+
+    def _handle_research_on(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._research is None:
+            return OutgoingMessage(text="Research sharing is not available on this bot.")
+        if not self._research.enable(ctx.user.id, now=ctx.now):
+            return OutgoingMessage(text="Research sharing is already on.")
+        owner = "" if self._research.export_active else " (The bot owner has not enabled the research export yet; nothing is sent until they do.)"
+        return OutgoingMessage(text=f"Research sharing is on.{owner}\n{self._research.explanation}")
+
+    def _handle_research_off(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._research is None:
+            return OutgoingMessage(text="Research sharing is not available on this bot.")
+        if not self._research.revoke(ctx.user.id, now=ctx.now):
+            return OutgoingMessage(text="Research sharing is already off.")
+        return OutgoingMessage(text="Research sharing is off. Nothing more is sent, and the research server will be asked to erase everything sent "
+                                    "under your pseudonym.")
 
     def _handle_telemetry(self, ctx: RequestContext) -> OutgoingMessage:
         """Categories and counts only, never a metric value (the conditioning factor stays hidden, philosophy 4.2)."""
@@ -914,7 +945,7 @@ class ApplicationService:
             return OutgoingMessage(text="Behavioral telemetry is not available on this bot.")
         summary = self._telemetry.summary(ctx.user.id)
         head = ("Behavioral telemetry is recorded for you: numeric facts derived from your check-ins, chat response times, token use and daily results, kept for 180 days "
-                "and never sent anywhere." if summary.recording else
+                "and sent nowhere unless you turn on `research on`." if summary.recording else
                 "Behavioral telemetry is not recorded for you (the invitation you accepted did not include it).")
         if not summary.counts:
             body = "There are no records."

@@ -1,6 +1,6 @@
 # Phase G: Behavioral Telemetry and the opt-in Hive-Mind
 
-Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer) and G3 (owner analysis) built. G4–G6 are specified here and not built yet.
+Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer), G3 (owner analysis) and G4 (opt-in export) built. G5 and G6 are specified here and not built yet.
 
 Owner decisions (2026-11-02): the three-layer consent model; the hidden factor is exported only as a 0.10 band; retention 180 days locally and 365 days at the
 receiver; `forget all` purges local telemetry; revoking `research on` or running `forget all` queues an erase at the receiver; `bot_mood` is derived from engine
@@ -89,12 +89,31 @@ Retention: rows whose `occurred_at` is older than 180 days are deleted (checked 
 - Output to stdout or `--output` (a plain file; database file names and the tenant folder are refused). Nothing is written to any database, the idea box or
   any memory; tests compare database fingerprints before and after.
 
-**G4** Export. Settings `ENABLE_RESEARCH_TELEMETRY=false`, `TELEMETRY_ENDPOINT`, `TELEMETRY_TOKEN`, `TELEMETRY_HMAC_KEY`. Wearer `research on|off|status`.
-Payload allowlist per event type; the subject is `HMAC-SHA256(TELEMETRY_HMAC_KEY, tenant_id + ":" + user_id)` and the instance an HMAC of a random instance id
-(never a plain hash: `tenant_0` is guessable); timestamps rounded to the hour; `training_inflation_factor` as a band (`1.00-1.10`, `1.10-1.20`, …); no
-`local_date`-level free text. Store-and-forward worker outside the cycle's critical section: batches of rows with `synced_at IS NULL` and consent, the row id as
-the idempotency key, TLS with verification (never `verify=False`), timeouts, exponential backoff, one warning when the link goes down and one info line when it
-comes back. `synced_at` is set only on HTTP 200. Erase requests (`research off`, `forget all`) are queued per user and sent the same way.
+**G4 (built)** Opt-in store and forward (`behavioral_telemetry/research.py`, migration 040).
+- Settings: `ENABLE_RESEARCH_TELEMETRY=false`, `TELEMETRY_ENDPOINT` (https only), `TELEMETRY_TOKEN`, `TELEMETRY_HMAC_KEY` (at least 32 characters). The token
+  and key are excluded from `Config`'s repr and never logged.
+- Wearer: `research status|on|off`, default off. `research on` records an `approved` consent row with the explanation shown; only records that occur AFTER it
+  are exported (not retroactive, also after a later re-consent). `research off` and `forget all` (which switches research off too) record `revoked` and
+  queue an erase request.
+- Gates: a record leaves only with the owner's flag AND the wearer's `research on`. Erase requests are sent whenever the link is configured, even with the
+  flag off, so a revocation is never stranded.
+- Payload: an allowlist per event type; every string must be one of a fixed enum set and every number finite, otherwise the value becomes null. Subject =
+  `HMAC-SHA256(key, "subject:<tenant id>:<user id>")`; record id = first 32 hex of `HMAC(key, "record:<tenant id>:<row id>")` (stable for idempotent
+  retries, unlinkable to the local row); instance = `HMAC(key, "instance")`; `occurred_hour` rounded down to the hour; `training_inflation_factor` only as
+  `training_inflation_band` (`1.00-1.10` … `1.40-1.50`, the cap in the last band). Never sent: tenant id, user id, row id, `local_date`, `slot_index`,
+  `factor_before`, any text.
+- Link: one background task in the bot (`research_export_loop`, a worker thread every 60 s) over the owner's database and every live tenant's. Per pass and
+  database: erase requests first, then records in batches of at most 200 and 256 KB (halved until they fit; only what was sent is marked). Timeouts 5 s
+  connect / 20 s read, no redirects, TLS verification as the library default (never disabled). Only HTTP 200 counts; then `synced_at` / `sent_at` is set.
+  Any other status or exception: stop the pass, back off 1, 2, 4 … minutes up to 1 hour, one warning when the link goes down, one info line when it
+  recovers, nothing in between.
+- Changing `TELEMETRY_HMAC_KEY` changes every pseudonym: earlier exports can then no longer be erased by pseudonym. Keep the key stable and secret.
+
+**Wire contract for G5** (`schema` `hive-telemetry/1`, header `Authorization: Bearer <token>`, JSON body):
+- `POST <endpoint>/v1/records`: `{"schema", "instance": <64 hex>, "records": [{"id": <32 hex>, "subject": <64 hex>, "event_type", "occurred_hour":
+  "YYYY-MM-DDTHH:00:00Z", "metrics": {...allowlisted keys...}}]}` (1–200 records). Answer 200 only after every record is stored or already present.
+- `POST <endpoint>/v1/erase`: `{"schema", "instance", "erase": {"id": <32 hex>, "subject": <64 hex>}}`. Answer 200 after deleting every record of that
+  subject (and remembering the erase id, so a retry is harmless).
 
 **G5** `hive_mind_receiver/`: standalone FastAPI + SQLite, no imports from this codebase. Bearer tokens per sending instance (revocable), strict schema validation
 (unknown fields and types refused), request size and rate limits, `UNIQUE(id)` for idempotency, `DELETE` by subject HMAC, 365-day retention job, a README for the

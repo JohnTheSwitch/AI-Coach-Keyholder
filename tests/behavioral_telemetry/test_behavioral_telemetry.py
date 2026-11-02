@@ -94,7 +94,7 @@ class TestSchemaAndStore:
     def test_migration_039_creates_the_tables(self, core) -> None:
         with core.transaction() as tx:
             names = {r["name"] for r in tx.fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 39
+            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] >= 39
         assert {"behavioral_telemetry", "telemetry_watermarks"} <= names
 
     @pytest.mark.parametrize("metrics", [{"note": "the wearer said something private"}, {"x": "a" * 33}, {"Bad Key": 1}, {"x": [1]}, {"x": {"y": 1}}, "nope"])
@@ -344,4 +344,7 @@ class TestNeverInTheModelContext:
             text = path.read_text(encoding="utf-8")
             assert "datetime.now" not in text and "verify=False" not in text
             written = set(re.findall(r"(?:INSERT(?: OR IGNORE)? INTO|UPDATE|DELETE FROM)\s+([a-z_]+)", text))
-            assert written <= {"behavioral_telemetry", "telemetry_watermarks"}, written
+            own = {"behavioral_telemetry", "telemetry_watermarks"}
+            if path.name == "research.py":                    # Phase G4: the opt-in switch, the erase queue and its consent audit rows
+                own = {"behavioral_telemetry", "research_preferences", "research_erase_requests", "consent_log"}
+            assert written <= own, (path.name, written)

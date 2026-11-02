@@ -62,7 +62,7 @@ from infrastructure.database import Database as CoreDatabase
 from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
-from system.composition import build_rules_and_execution
+from system.composition import build_rules_and_execution, research_export_loop_for
 from chaster.api_budget import ApiBudget, BudgetedTokenManager, Lane
 from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
@@ -123,6 +123,8 @@ class CoachKeyholderBot(discord.Client):
         self.chaster_chat: tuple | None = None   # (poller, adapter, interval_seconds) when Chaster chat is active
         self._periodic_task: asyncio.Task | None = None
         self._chat_task: asyncio.Task | None = None
+        self.research_export = None              # Phase G4: the export coroutine (system.composition.research_export_loop_for) when configured
+        self._research_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -145,6 +147,8 @@ class CoachKeyholderBot(discord.Client):
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
         if self.invitations is not None:
             self._invite_task = asyncio.create_task(self.invitations.run(), name="tenant-invitations")
+        if self.research_export is not None:
+            self._research_task = asyncio.create_task(self.research_export, name="research-export")
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -192,6 +196,9 @@ class CoachKeyholderBot(discord.Client):
         if self._invite_task is not None:
             self._invite_task.cancel()
             self._invite_task = None
+        if self._research_task is not None:
+            self._research_task.cancel()
+            self._research_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -512,7 +519,7 @@ def main() -> None:
         chaster_token_manager=chaster_token_manager,
         check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
         channel_service=channel_service, coaching_memory=coaching, conditioning=conditioning,
-        telemetry=wiring.telemetry_store,
+        telemetry=wiring.telemetry_store, research=wiring.research_preferences,
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)
@@ -569,6 +576,15 @@ def main() -> None:
                 keyholder_connections=chaster_connections, keyholder_user_id=config.chaster_execution_keyholder_user_id, clock=clock,
                 wearer_account_of=wearer_account_lookup(platform.tenant_dir)))
         bot.invitations = InvitationNotifier(registry=platform.registry, send=discord_adapter.send_message, clock=clock)
+    def research_exporters():
+        found = [wiring.research_exporter] if wiring.research_exporter is not None else []
+        if bot.tenant_supervisor is not None:
+            found += [r.wiring.research_exporter for r in list(bot.tenant_supervisor.runtimes.values()) if r.wiring.research_exporter is not None]
+        return found
+
+    bot.research_export = research_export_loop_for(config, research_exporters, clock)
+    if bot.research_export is not None:
+        logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, wiring.telemetry)
