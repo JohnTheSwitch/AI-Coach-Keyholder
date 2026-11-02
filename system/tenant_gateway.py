@@ -64,6 +64,12 @@ TEXTS = {
     "owner_cannot_leave": "The owner's own account cannot leave.",
     "unavailable": "I cannot reach your space right now. Your safety commands `halt` and `leave` still work.",
     "invite_usage": "Usage: `invite <discord id> <name>`.",
+    "no_lock": "No lock is paired with you yet. Your keyholder pairs it; then you confirm it here.",
+    "lock_unreachable": "I cannot check Chaster right now. Nothing was changed; try again later.",
+    "lock_not_managed": "The paired lock is not currently a locked lock held by this bot, so nothing can act on it.",
+    "lock_confirmed": "Confirmed. This lock is now yours to be managed here; `halt` still stops everything at once.",
+    "lock_rejected": "The pairing was removed. Nothing will act on that lock.",
+    "nothing_to_confirm": "There is nothing to confirm.",
 }
 
 _INVITE_TEXTS = {
@@ -93,7 +99,8 @@ class GatewayReply:
 class TenantGateway:
     def __init__(self, *, registry: TenantRegistry, supervisor: TenantLoopSupervisor, admin: TenantAdmin | None,
                  owner_user_id: str | None, tenant_zero_handler: Callable[[IncomingMessage], OutgoingMessage],
-                 tenant_zero_db: Database, tenant_dir, clock: Clock, tenant_zero_control: ExecutionControl | None = None) -> None:
+                 tenant_zero_db: Database, tenant_dir, clock: Clock, tenant_zero_control: ExecutionControl | None = None,
+                 pairing=None) -> None:
         self._registry = registry
         self._router = TenantRouter(registry)
         self._supervisor = supervisor
@@ -103,6 +110,7 @@ class TenantGateway:
         self._zero_db = tenant_zero_db
         self._zero_control = tenant_zero_control or ExecutionControl(tenant_zero_db.db_path, core=tenant_zero_db._core)
         self._tenant_dir = tenant_dir
+        self._pairing = pairing          # system.lock_pairing.LockPairingService (Phase E4)
         self._clock = clock
 
     async def handle(self, incoming: IncomingMessage) -> GatewayReply:
@@ -120,6 +128,8 @@ class TenantGateway:
             return GatewayReply(safety, log_db=log_db)
         if route.kind is RouteKind.SUSPENDED:
             return GatewayReply(TEXTS["suspended"], log_db=log_db)
+        if not tenant.is_tenant_zero and command in ("lock", "confirm lock", "reject lock"):
+            return GatewayReply(await asyncio.to_thread(self._lock_command, tenant, command), log_db=log_db)
 
         if tenant.is_tenant_zero:
             owner = self._owner_command(incoming.text or "")
@@ -217,6 +227,28 @@ class TenantGateway:
         left = self._registry.leave(discord_id=tenant.discord_id, now=self._clock.now())
         await self._supervisor.stop_tenant(tenant.id)
         return TEXTS["left"] if left is not None else TEXTS["accept_failed"]
+
+    # ------------------------------------------------------------------ lock pairing (wearer side)
+
+    def _lock_command(self, tenant: Tenant, command: str) -> str:
+        if self._pairing is None or not tenant.lock_id:
+            return TEXTS["no_lock"]
+        if command == "reject lock":
+            self._pairing.reject_by_wearer(tenant)
+            return TEXTS["lock_rejected"]
+        if command == "confirm lock" and tenant.pairing_confirmed_at is not None:
+            return TEXTS["nothing_to_confirm"]
+        described = self._pairing.describe(tenant)                 # always checked live: never confirm a lock that is not held right now
+        if described is None:
+            return TEXTS["no_lock"]
+        if described.outcome.value == "unavailable":
+            return TEXTS["lock_unreachable"]
+        if described.outcome.value == "not_managed":
+            return TEXTS["lock_not_managed"]
+        if command == "confirm lock":
+            return TEXTS["lock_confirmed"] if self._pairing.confirm_by_wearer(tenant) else TEXTS["nothing_to_confirm"]
+        state = "is confirmed" if tenant.pairing_confirmed_at is not None else "waits for you: send `confirm lock` if it is yours, otherwise `reject lock`"
+        return f"Paired lock: '{described.title or 'untitled'}' of Chaster user {described.wearer_username or 'unknown'}. The pairing {state}."
 
     # ------------------------------------------------------------------ owner
 

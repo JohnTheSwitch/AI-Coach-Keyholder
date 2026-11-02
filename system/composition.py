@@ -110,6 +110,7 @@ def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
     transport=None, clock: Clock | None = None, check_in_sender: CheckInSender | None = None,
     check_in_complete=None, keyholder_connections=None, keyholder_token_manager=None, halt_source=None,
+    observation_source=None,
 ) -> RulesExecutionWiring:
     """`transport` / `check_in_sender` / `check_in_complete` are injectable (tests; the bot supplies the real
     Discord sender and Ollama completion). Production passes transport=None and gets the real
@@ -180,8 +181,13 @@ def build_rules_and_execution(
             out.notes.append("ENABLE_RELEASE_ENGINE is true but the release engine is NOT active: it needs the Rules Engine.")
         return out
 
+    # Where lock observations come from: a tenant passes its managed-lock source (keyholder search, Phase E4); the single-wearer
+    # system reads the wearer's own connection as before.
+    get_obs = refresh_obs = None
     observations = recorder = obs_service = None
-    if connections is not None and oauth_client is not None and lock_client is not None and wearer_id:
+    if observation_source is not None and wearer_id:
+        get_obs, refresh_obs = observation_source.get_latest, observation_source.refresh
+    elif connections is not None and oauth_client is not None and lock_client is not None and wearer_id:
         from chaster.provider_observation_repository import (
             ChasterProviderObservationRecorder,
             ChasterProviderObservations,
@@ -195,14 +201,17 @@ def build_rules_and_execution(
             observations=observations, recorder=recorder, token_manager=token_manager,
         )
 
+        get_obs = lambda: observations.get_latest(wearer_id)  # noqa: E731
+        refresh_obs = lambda now: obs_service.fetch_and_record(connection_id=wearer_id, now=now)  # noqa: E731
+
     snapshot_provider = None
-    if observations is not None:
-        snapshot_provider = make_snapshot_provider(lambda: observations.get_latest(wearer_id))
+    if get_obs is not None:
+        snapshot_provider = make_snapshot_provider(get_obs)
 
     control = _WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source)
     if config.enable_chaster_execution:
         problem = None
-        if observations is None or not keyholder_id or kh_tokens is None or kh_connections is None:
+        if get_obs is None or not keyholder_id or kh_tokens is None or kh_connections is None:
             problem = ("it needs Chaster fully configured plus CHASTER_EXECUTION_WEARER_USER_ID and "
                        "CHASTER_EXECUTION_KEYHOLDER_USER_ID")
         else:
@@ -223,8 +232,7 @@ def build_rules_and_execution(
 
             out.executor = ChasterExecutor(
                 config.db_path, core=core, enabled=True, control=control,
-                transport=transport, get_latest_observation=lambda: observations.get_latest(wearer_id),
-                refresh_observation=lambda now: obs_service.fetch_and_record(connection_id=wearer_id, now=now),
+                transport=transport, get_latest_observation=get_obs, refresh_observation=refresh_obs,
                 get_granted_scopes=granted_scopes,
                 allow_barrier_actions=want_release,
                 window_check=(lambda now: classify(window_cfg, now) is WindowKind.DISCRETIONARY) if window_cfg else None,
@@ -241,7 +249,7 @@ def build_rules_and_execution(
     )
 
     if want_release:
-        if observations is None or not wearer_id:
+        if get_obs is None or not wearer_id:
             out.notes.append("ENABLE_RELEASE_ENGINE is true but the release engine is NOT active: it needs Chaster fully "
                              "configured and CHASTER_EXECUTION_WEARER_USER_ID.")
         else:
@@ -264,8 +272,7 @@ def build_rules_and_execution(
                 out.release_user_id = wearer_id
                 out.release_task = ReleaseEnginePeriodicTask(
                     engine=engine, rules=out.rules_engine, user_id=wearer_id,
-                    get_observation=lambda: observations.get_latest(wearer_id),
-                    refresh_observation=lambda now: obs_service.fetch_and_record(connection_id=wearer_id, now=now),
+                    get_observation=get_obs, refresh_observation=refresh_obs,
                     penalty_window_active=lambda: penalties.get_active_or_frozen_penalty_window() is not None,
                     supervision_active=(lambda: supervision.is_active()) if supervision is not None else (lambda: False),
                     last_check_in_missed=(lambda: check_ins.last_check_in_missed()) if check_ins is not None else (lambda: False),

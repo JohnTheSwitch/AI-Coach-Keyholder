@@ -68,6 +68,7 @@ from tenancy.services import open_platform_services
 from system.tenant_factory import SharedServices, TenantFactory
 from system.tenant_loops import TenantLoopSupervisor
 from system.tenant_gateway import InvitationNotifier, TenantGateway
+from system.lock_pairing import LockPairingService, wearer_account_lookup
 from tenancy.admin import TenantAdmin
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
@@ -538,7 +539,11 @@ def main() -> None:
             registry=platform.registry, supervisor=bot.tenant_supervisor,
             admin=TenantAdmin(registry=platform.registry, halt=platform.halt, owner_user_id=config.owner_user_id, clock=clock),
             owner_user_id=config.owner_user_id, tenant_zero_handler=application_service.handle_message, tenant_zero_db=db,
-            tenant_dir=platform.tenant_dir, clock=clock)
+            tenant_dir=platform.tenant_dir, clock=clock,
+            pairing=LockPairingService(
+                registry=platform.registry, lock_client=chaster_lock_client, keyholder_tokens=chaster_token_manager,
+                keyholder_connections=chaster_connections, keyholder_user_id=config.chaster_execution_keyholder_user_id, clock=clock,
+                wearer_account_of=wearer_account_lookup(platform.tenant_dir)))
         bot.invitations = InvitationNotifier(registry=platform.registry, send=discord_adapter.send_message, clock=clock)
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,

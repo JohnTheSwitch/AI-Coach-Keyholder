@@ -46,8 +46,14 @@ class Tenant:
     removed_by: RemovedBy | None
     created_at: datetime
     updated_at: datetime
+    pairing_confirmed_at: datetime | None = None
 
     @property
     def is_managed(self) -> bool:
         """Management, polling and execution are allowed only for an ACTIVE tenant."""
         return self.status is TenantStatus.ACTIVE
+
+    @property
+    def lock_ready(self) -> bool:
+        """The tenant's lock may be observed and acted on: managed, paired and the pairing confirmed."""
+        return self.is_managed and bool(self.lock_id) and bool(self.chaster_account_id) and self.pairing_confirmed_at is not None

@@ -29,4 +29,8 @@ periodic loop per tenant and stops it the moment the tenant stops being managed;
 Phase E3 (`system/tenant_gateway.py`): Discord routing by author id, the invitation DM and `accept` / `decline`, the wearer commands `halt`, `resume` and
 `leave` / `leave confirm`, per-tenant message logging (platform migration 002). See the proposal, section 13.
 
-Not built yet: the keyholder-search observation source and lock pairing checks (E4).
+Phase E4 (`system/managed_lock_source.py`, `system/lock_pairing.py`): each tenant's lock is observed through the keyholder search and only after the pairing check
+(active tenant, confirmed pairing, the paired lock and wearer, the bot as keyholder, `locked`); the owner pairs with `tenants pair`, the wearer confirms with `confirm lock`
+(platform migration 003, main migration 035). See the proposal, section 14.
+
+Not built yet: E5 (per-tenant Chaster chat, global API budget) and E6 (isolation hardening, removal/archival flow, runbook).

@@ -149,10 +149,31 @@ class TenantRegistry:
             raise InvalidTenantInput("lock_id and chaster_account_id must be plain Chaster ids")
 
         def write(tx: Transaction, _s: object) -> bool:
-            cur = tx.execute("UPDATE tenants SET lock_id = ?, chaster_account_id = ?, updated_at = ? WHERE id = ? AND status != 'removed'",
-                             (lock_id, chaster_account_id, _iso(now), tenant_id))
+            cur = tx.execute("UPDATE tenants SET lock_id = ?, chaster_account_id = ?, pairing_confirmed_at = NULL, updated_at = ? "
+                             "WHERE id = ? AND status != 'removed' AND is_tenant_zero = 0", (lock_id, chaster_account_id, _iso(now), tenant_id))
             if cur.rowcount:
                 self._audit(tx, tenant_id, "paired", actor, "", now)
+            return cur.rowcount > 0
+
+        return bool(apply_transition(self._core, write=write))
+
+    def confirm_pairing(self, tenant_id: str, *, actor: str, now: datetime) -> bool:
+        """The pairing becomes usable (the wearer confirmed it, or their own connected account proved it)."""
+        def write(tx: Transaction, _s: object) -> bool:
+            cur = tx.execute("UPDATE tenants SET pairing_confirmed_at = ?, updated_at = ? WHERE id = ? AND status != 'removed' "
+                             "AND lock_id IS NOT NULL AND pairing_confirmed_at IS NULL", (_iso(now), _iso(now), tenant_id))
+            if cur.rowcount:
+                self._audit(tx, tenant_id, "pairing_confirmed", actor, "", now)
+            return cur.rowcount > 0
+
+        return bool(apply_transition(self._core, write=write))
+
+    def unpair(self, tenant_id: str, *, actor: str, now: datetime) -> bool:
+        def write(tx: Transaction, _s: object) -> bool:
+            cur = tx.execute("UPDATE tenants SET lock_id = NULL, chaster_account_id = NULL, pairing_confirmed_at = NULL, updated_at = ? "
+                             "WHERE id = ? AND lock_id IS NOT NULL", (_iso(now), tenant_id))
+            if cur.rowcount:
+                self._audit(tx, tenant_id, "unpaired", actor, "", now)
             return cur.rowcount > 0
 
         return bool(apply_transition(self._core, write=write))
@@ -265,4 +286,5 @@ def _row_to_tenant(row) -> Tenant:
         accepted_at=_opt(row["accepted_at"]), removed_at=_opt(row["removed_at"]),
         removed_by=None if row["removed_by"] is None else RemovedBy(row["removed_by"]),
         created_at=_parse_iso(row["created_at"]), updated_at=_parse_iso(row["updated_at"]),
+        pairing_confirmed_at=_opt(row["pairing_confirmed_at"]) if "pairing_confirmed_at" in row.keys() else None,
     )

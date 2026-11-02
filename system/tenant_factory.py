@@ -9,9 +9,10 @@ halt and the single keyholder Chaster connection (Chaster refresh tokens rotate,
 Tenant zero (the owner) is NOT built here: it keeps running through the existing single-wearer composition in bot/discord_bot.py, untouched.
 
 Safety defaults for a new tenant:
+- Its lock is observed ONLY through `ManagedLockObservationSource` (keyholder search + pairing check, Phase E4); without a confirmed pairing
+  nothing is observed and nothing can act.
 - Its execution runtime starts HALTED (an empty execution_control row counts as halted); the owner enables it explicitly
-  (`python -m cli tenants execution <id> clear --reason ...`). Until the managed-lock observation source exists (E4) the Chaster-dependent parts report
-  "NOT active" and nothing is ever sent for the tenant.
+  (`python -m cli tenants execution <id> clear --reason ...`).
 - The Chaster LLM tool and the Chaster chat channel are not enabled for tenants yet.
 """
 
@@ -44,6 +45,7 @@ from infrastructure.database import Database as CoreDatabase
 from lock_state.repository import LockState
 from memory_system.working_memory import InMemoryWorkingMemory
 from system.composition import RulesExecutionWiring, build_rules_and_execution
+from system.managed_lock_source import ManagedLockObservationSource
 from system.periodic import run_periodic_cycle
 from system.startup import on_system_startup
 from task_catalog.repository import TaskCatalog
@@ -147,12 +149,19 @@ class TenantFactory:
         providers = (LockStateContextProvider(lock_state=lock_state), ActiveTaskContextProvider(task_runtime=task_runtime, task_catalog=task_catalog))
 
         # 5. Rules / execution / release / check-ins / daily evaluation for this tenant.
+        # The tenant's lock is observed through the keyholder search and only after the pairing check (Phase E4).
+        source = ManagedLockObservationSource(
+            path, core=core, get_tenant=lambda tid=tenant.id: self._registry.get(tid), wearer_user_id=wearer.id,
+            keyholder_user_id=s.config.chaster_execution_keyholder_user_id, keyholder_tokens=s.keyholder_token_manager,
+            keyholder_connections=s.keyholder_connections, lock_client=s.lock_client, clock=s.clock,
+            wearer_tokens=tokens, wearer_connections=connections)
         cfg = tenant_config(s.config, db_path=path, wearer_user_id=wearer.id)
         sender = s.check_in_sender_factory(path, core) if s.check_in_sender_factory is not None else None
         wiring = build_rules_and_execution(
             cfg, core, connections=connections, oauth_client=s.oauth_client, lock_client=s.lock_client, token_manager=tokens,
             clock=s.clock, check_in_sender=sender, check_in_complete=s.check_in_complete,
-            keyholder_connections=s.keyholder_connections, keyholder_token_manager=s.keyholder_token_manager, halt_source=s.platform_halt)
+            keyholder_connections=s.keyholder_connections, keyholder_token_manager=s.keyholder_token_manager, halt_source=s.platform_halt,
+            observation_source=source)
         if wiring.release_engine is not None:
             providers = providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
 

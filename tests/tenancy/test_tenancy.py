@@ -51,7 +51,7 @@ class TestPlatformDatabase:
             tables = {r["name"] for r in tx.fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")}
             versions = [r["version"] for r in tx.fetch_all("SELECT version FROM schema_version")]
         assert {"tenants", "platform_halt", "tenant_events", "schema_version"} <= tables
-        assert versions == [1, 2] and not any(t in tables for t in ("goals", "trust_domains", "chaster_connections", "token_ledger"))
+        assert versions == [1, 2, 3] and not any(t in tables for t in ("goals", "trust_domains", "chaster_connections", "token_ledger"))
 
     def test_the_database_enforces_status_and_removal_invariants(self, platform) -> None:
         for sql in (
@@ -416,4 +416,4 @@ class TestIsolation:
                 assert not [n for n in names if n.split(".")[0] in forbidden], (path.name, names)
 
     def test_the_main_database_migrations_are_unchanged_by_phase_e1(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 34
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 35

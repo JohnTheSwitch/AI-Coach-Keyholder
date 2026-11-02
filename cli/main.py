@@ -165,6 +165,44 @@ def build_tenant_admin():
     return TenantAdmin(registry=services.registry, halt=services.halt, owner_user_id=config.owner_user_id, clock=clock), services
 
 
+_PAIR_TEXT = {
+    "paired_awaiting_wearer": "Paired. The wearer must now send `confirm lock` in their DM before anything can act on it.",
+    "paired_confirmed": "Paired and confirmed (the wearer's own connected Chaster account is this lock's wearer).",
+    "not_a_tenant": "Refused: not an active tenant (tenant zero is never paired this way).",
+    "unavailable": "Refused: the keyholder search could not be done (check the keyholder connection and its `keyholder` scope).",
+    "not_managed": "Refused: that lock is not a locked lock held by the bot's keyholder account.",
+    "already_paired_elsewhere": "Refused: that lock or that Chaster account is already paired with another tenant.",
+    "invalid": "Refused: invalid lock id.",
+}
+
+
+def build_pairing_service(services):
+    """The real lock-pairing wiring (tests inject their own)."""
+    from chaster.lock_client import ChasterLockClient
+    from chaster.oauth_client import ChasterOAuthClient
+    from chaster.repository import ChasterConnectionRepository
+    from chaster.token_encryptor import TokenEncryptor
+    from chaster.token_manager import ChasterTokenManager
+    from core.config import Config
+    from infrastructure.clock import SystemClock
+    from infrastructure.database import Database as CoreDatabase
+    from system.lock_pairing import LockPairingService, wearer_account_lookup
+
+    config = Config.load()
+    if not (config.chaster_token_encryption_key and config.chaster_client_id and config.chaster_client_secret
+            and config.chaster_redirect_uri and config.chaster_execution_keyholder_user_id):
+        raise SystemExit("Chaster is not fully configured (token key, client id/secret, redirect URI and CHASTER_EXECUTION_KEYHOLDER_USER_ID).")
+    connections = ChasterConnectionRepository(config.db_path, core=CoreDatabase(config.db_path),
+                                              encryptor=TokenEncryptor(config.chaster_token_encryption_key))
+    oauth = ChasterOAuthClient(client_id=config.chaster_client_id, client_secret=config.chaster_client_secret,
+                               redirect_uri=config.chaster_redirect_uri, scopes=tuple(config.chaster_oauth_scopes.split()) or ("locks",))
+    return LockPairingService(
+        registry=services.registry, lock_client=ChasterLockClient(),
+        keyholder_tokens=ChasterTokenManager(connections=connections, oauth_client=oauth), keyholder_connections=connections,
+        keyholder_user_id=config.chaster_execution_keyholder_user_id, clock=SystemClock(),
+        wearer_account_of=wearer_account_lookup(services.tenant_dir))
+
+
 def _tenant_execution(admin, services, args, now):
     """Sets or clears the execution halt inside ONE tenant's own database (owner only; the file must already exist)."""
     from chaster_execution.control import ExecutionControl
@@ -213,10 +251,11 @@ def _state(value: str) -> bool:
 def main(argv: list[str], *, out: TextIO | None = None,
          directory_factory: Callable[[], tuple[LockDirectory, str | None, str | None]] = build_directory,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
-         tenants_factory: Callable[[], tuple] = build_tenant_admin) -> int:
+         tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
+    pairing_factory = pairing_factory or build_pairing_service
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -241,6 +280,11 @@ def main(argv: list[str], *, out: TextIO | None = None,
     for name, help_text in (("halt", "Stop execution for EVERY tenant."), ("unhalt", "Clear the global halt.")):
         hp = tsub.add_parser(name, help=help_text)
         hp.add_argument("--reason", required=True)
+    pr = tsub.add_parser("pair", help="Pair a tenant with ONE managed lock (verified live; the wearer must confirm).")
+    pr.add_argument("tenant_id")
+    pr.add_argument("lock_id")
+    up = tsub.add_parser("unpair", help="Remove a tenant's lock pairing.")
+    up.add_argument("tenant_id")
     ex = tsub.add_parser("execution", help="Halt or clear ONE tenant's execution runtime (a new tenant starts halted).")
     ex.add_argument("tenant_id")
     ex.add_argument("action", choices=("halt", "clear"))
@@ -270,6 +314,19 @@ def main(argv: list[str], *, out: TextIO | None = None,
             result = admin.resume(actor=args.owner_id, tenant_id=args.tenant_id)
         elif cmd == "remove":
             result = admin.remove(actor=args.owner_id, tenant_id=args.tenant_id, confirmed=args.yes)
+        elif cmd in ("pair", "unpair"):
+            refusal = admin.authorize(args.owner_id, cmd)
+            if refusal is not None:
+                result = refusal
+            elif cmd == "unpair":
+                from tenancy.admin import AdminOutcome, AdminResult
+                ok = services.registry.unpair(args.tenant_id, actor="owner", now=now())
+                result = AdminResult(AdminOutcome.DONE if ok else AdminOutcome.NOT_FOUND)
+            else:
+                paired = pairing_factory(services).pair(args.tenant_id, args.lock_id, actor="owner")
+                print(_PAIR_TEXT[paired.outcome.value] + (f" Lock: '{paired.title}' of Chaster user {paired.wearer_username}."
+                                                          if paired.title or paired.wearer_username else ""), file=out)
+                return 0 if paired.outcome.value.startswith("paired") else 3
         elif cmd == "execution":
             result = _tenant_execution(admin, services, args, now)
         elif cmd == "halt":

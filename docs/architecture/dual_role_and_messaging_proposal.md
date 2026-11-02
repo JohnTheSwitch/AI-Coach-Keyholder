@@ -301,3 +301,30 @@ Interpretations to confirm:
 2. **A wearer's halt can only be cleared by the wearer** (`resume`); the owner's CLI refuses. A keyholder halt can only be cleared by the keyholder.
 3. **The owner's DM also understands `halt`, `resume` and `invite`** while multi-wearer is on; these words no longer reach the owner's conversation as plain text.
 4. **Strangers get one fixed reply** (not silence), so an invited person who writes before the invitation exists knows why nothing happens.
+
+## 14. Phase E4 result (managed-lock observation and lock pairing)
+
+Confirmed after E3: two-step `leave confirm`; a halt is cleared only by whoever set it; `halt` / `resume` / `invite` take precedence in the owner's DM; strangers get one fixed reply.
+
+Built in E4 (behind `ENABLE_MULTI_WEARER`):
+- **Observation source** (`system/managed_lock_source.py`, migration 035 `managed_lock_observations` in each tenant database): a tenant's executor, release tick and rules
+  snapshot read the lock ONLY through `ManagedLockObservationSource`. It uses the KEYHOLDER search (`POST /keyholder/locks/search`, status `locked`) with the platform's single
+  keyholder token; if that fails and the wearer has connected their own Chaster account, the wearer's `GET /locks` is used instead (owner decision 4). `status`, `isFrozen`,
+  `frozenAt` and `endDate` are mapped into the existing `ChasterProviderObservation`, so the executor's freshness, locked, keyholder and frozen-state checks and the release
+  engine's secrecy rules are unchanged. The lock combination is never read or stored.
+- **Pairing check on every read:** the tenant is ACTIVE, its pairing is CONFIRMED, the lock id is the paired one, the lock's wearer is the paired Chaster account, the keyholder is the
+  bot's own Chaster account and the lock is `locked`. Otherwise the row is recorded as `not_found` (unlocked, archived, gone) or `mismatch`, and `get_latest()` returns nothing, so
+  every consumer skips (fail closed). Observations older than the current pairing are ignored. A failed search records nothing; the last state simply goes stale and the executor's
+  15-minute freshness rule refuses.
+- **Pairing** (`system/lock_pairing.py`, platform migration 003 `pairing_confirmed_at`): the owner runs `python -m cli tenants pair <tenant> <lock id>`; a live keyholder search must show
+  the lock `locked` with the bot as keyholder, and the wearer's Chaster account is taken from that response. The pairing is usable only after confirmation: automatically when the
+  wearer's own connected Chaster account is that lock's wearer, otherwise by the wearer in their DM (`lock` shows title and Chaster username, `confirm lock`, `reject lock`). Confirming
+  re-checks Chaster live. Re-pairing clears the confirmation; `tenants unpair` removes it. One lock and one Chaster account can belong to only one live tenant.
+- **Composition:** `build_rules_and_execution(..., observation_source=...)`; without it the single-wearer system reads the wearer's own connection exactly as before.
+
+Interpretations to confirm:
+1. **The wearer confirms the pairing** (or their own OAuth connection proves it). Without that, an owner typo could bind a stranger's lock to a tenant; nothing acts until it is confirmed.
+2. **Unlocked / missing locks are skipped, not halted:** the tenant's execution halt is not changed automatically; there is simply no observation to act on. When the lock appears
+   locked again under the same pairing, execution can resume without anyone clearing a halt.
+3. **Penalties** reach Chaster only through executor decisions, so the same observation gate covers them; Penalty Windows themselves are tenant-internal records and are not blocked.
+4. **The fallback to the wearer's connection** is used only when the keyholder search fails, and passes the same pairing check (including the bot as keyholder).
