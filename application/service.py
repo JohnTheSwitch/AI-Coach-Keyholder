@@ -248,7 +248,7 @@ class ApplicationService:
                 return None
             response = self._conversation_engine.generate_response(
                 subject_key=user_id, current_user_message=text, language="en",
-                identity_id=preferences.identity_id, now=now,
+                identity_id=preferences.identity_id, now=now, allow_side_data=False,   # untrusted channel: never stored as memory
             )
             return OutgoingMessage(text=response.text)
         except UnknownIdentityError:

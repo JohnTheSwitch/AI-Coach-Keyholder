@@ -366,7 +366,8 @@ def main() -> None:
     # fields are introduced for timeouts in this slice (the adapter's
     # own DEFAULT_CONNECT_TIMEOUT_SECONDS/DEFAULT_READ_TIMEOUT_SECONDS
     # bootstrap defaults are used as-is).
-    ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model)
+    ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model,
+                                           read_timeout_seconds=config.ollama_read_timeout_seconds, keep_alive=config.ollama_keep_alive)
     working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
     conversation_queue = SubjectConversationQueue()
 
@@ -484,6 +485,7 @@ def main() -> None:
 
     conversation_engine = ConversationEngine(
         model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
+        structured_output=config.conversation_structured_output,
         queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
     )
 

@@ -57,6 +57,7 @@ from conversation_engine.prompt_builder import build_generation_request
 from conversation_engine.providers import ConversationContextProvider
 from conversation_engine.subject_queue import SubjectConversationQueue
 from conversation_engine.tools import ToolExecutionContext, ToolExecutor, build_tool_guidance
+from conversation_engine.structured_output import FORMAT_INSTRUCTIONS, RESPONSE_SCHEMA, parse_structured_reply
 from conversation_engine.validation import validate_response
 from memory_system.models import WorkingMemoryCapacityError, WorkingMemoryError, WorkingMemorySnapshot
 from memory_system.working_memory import WorkingMemoryReader, WorkingMemoryWriter
@@ -89,8 +90,13 @@ class ConversationEngine:
         queue: SubjectConversationQueue, providers: Sequence[ConversationContextProvider] = (),
         max_output_characters: int = DEFAULT_MAX_OUTPUT_CHARACTERS,
         tool_executor: ToolExecutor | None = None,
+        structured_output: bool = False, structured_sink=None,
     ) -> None:
         self._model = model
+        # Phase F1: ask for the JSON shape of conversation_engine.structured_output when the model supports it. `structured_sink`
+        # (subject_key, StructuredReply, now) receives the validated side data; none is installed in F1, so it has no effect.
+        self._structured = bool(structured_output) and callable(getattr(model, "generate_structured", None))
+        self._structured_sink = structured_sink
         self._working_memory_reader = working_memory_reader
         self._working_memory_writer = working_memory_writer
         self._queue = queue
@@ -113,7 +119,7 @@ class ConversationEngine:
 
     def generate_response(
         self, *, subject_key: str, current_user_message: str, language: str, identity_id: str, now: datetime,
-        extra_system_context: str | None = None, remember_exchange: bool = False,
+        extra_system_context: str | None = None, remember_exchange: bool = False, allow_side_data: bool = True,
     ) -> ConversationResponse:
         """`extra_system_context` is verified, application-supplied DATA
         for this one reply (e.g. freshly read Chaster lock state). When
@@ -165,6 +171,8 @@ class ConversationEngine:
                     raw_text, tool_outputs = self._generate_with_tools(
                         request, subject_key=subject_key, now=now, user_message=current_user_message,
                     )
+                elif self._structured:
+                    raw_text = self._generate_structured(request, subject_key=subject_key, now=now, allow_side_data=allow_side_data)
                 else:
                     raw_text = self._model.generate(request=request)
             except LLMGenerationError as exc:
@@ -202,6 +210,28 @@ class ConversationEngine:
             if not tool_outputs and (extra_system_context is None or remember_exchange):
                 self._commit_exchange(subject_key, current_user_message, response.text)
             return response
+
+    def _generate_structured(self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, allow_side_data: bool) -> str:
+        """Phase F1 router. Only the reply can reach the user. Side data goes to the sink (none in F1) and only when allowed (never for an
+        untrusted channel). Output without a usable reply is never shown: one plain generation is used instead."""
+        structured_request = ModelGenerationRequest(
+            messages=self._with_tool_guidance(request.messages, FORMAT_INSTRUCTIONS),
+            max_output_characters=request.max_output_characters,
+        )
+        raw = self._model.generate_structured(request=structured_request, schema=RESPONSE_SCHEMA)
+        parsed = parse_structured_reply(raw, max_reply_characters=request.max_output_characters)
+        if parsed is None:
+            logger.warning("Structured output unusable; falling back to a plain reply",
+                           extra={"error_code": "structured_unparseable", "adapter": type(self._model).__name__})
+            return self._model.generate(request=request)
+        if parsed.issues:
+            logger.info("Structured side data dropped", extra={"error_code": "structured_side_dropped", "issues": list(parsed.issues)})
+        if parsed.has_side_data and allow_side_data and self._structured_sink is not None:
+            try:
+                self._structured_sink(subject_key, parsed, now)
+            except Exception:
+                logger.exception("Structured side data could not be stored; the reply is unaffected.")
+        return parsed.reply
 
     def _generate_with_tools(
         self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, user_message: str,

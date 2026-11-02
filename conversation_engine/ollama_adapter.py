@@ -31,11 +31,13 @@ __all__ = [
     "DEFAULT_READ_TIMEOUT_SECONDS",
     "DEFAULT_MAX_RESPONSE_BODY_BYTES",
     "DEFAULT_HTTP_CHUNK_SIZE_BYTES",
+    "STRUCTURED_OVERHEAD_CHARACTERS",
 ]
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 DEFAULT_READ_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_RESPONSE_BODY_BYTES = 1_000_000
+STRUCTURED_OVERHEAD_CHARACTERS = 2000   # JSON keys + the two side notes (300 + 500) + escaping
 DEFAULT_HTTP_CHUNK_SIZE_BYTES = 8192  # a reasonable default read-chunk size only --
                                        # the actual safety limit is max_bytes itself, not this.
 
@@ -107,16 +109,26 @@ class OllamaConversationModel:
         connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         read_timeout_seconds: float = DEFAULT_READ_TIMEOUT_SECONDS,
         max_response_body_bytes: int = DEFAULT_MAX_RESPONSE_BODY_BYTES,
+        keep_alive: str | None = None,
     ) -> None:
+        """`keep_alive` (for example "30m") asks Ollama to keep the model loaded between messages, so only the first reply after a quiet
+        period pays the load time; None leaves Ollama's own default."""
         self._host = host.rstrip("/")
         self._model_name = model_name
         self._connect_timeout = connect_timeout_seconds
         self._read_timeout = read_timeout_seconds
         self._max_body_bytes = max_response_body_bytes
+        self._keep_alive = keep_alive
 
     def generate(self, *, request: ModelGenerationRequest) -> str:
         payload = self._post_chat(request=request, tools=())
         return self._extract_text(payload, max_characters=request.max_output_characters)
+
+    def generate_structured(self, *, request: ModelGenerationRequest, schema: dict) -> str:
+        """Asks Ollama for output constrained by a JSON schema (`format`). Returns the RAW text; parsing and validation belong to
+        conversation_engine.structured_output. The size bound allows the reply plus the small side fields."""
+        payload = self._post_chat(request=request, tools=(), response_format=schema)
+        return self._extract_text(payload, max_characters=request.max_output_characters + STRUCTURED_OVERHEAD_CHARACTERS)
 
     def generate_with_tools(
         self, *, request: ModelGenerationRequest, tools: tuple[ToolDefinition, ...],
@@ -179,7 +191,8 @@ class OllamaConversationModel:
             },
         }
 
-    def _post_chat(self, *, request: ModelGenerationRequest, tools: tuple[ToolDefinition, ...]) -> dict:
+    def _post_chat(self, *, request: ModelGenerationRequest, tools: tuple[ToolDefinition, ...],
+                   response_format: dict | None = None) -> dict:
         body: dict = {
             "model": self._model_name,
             "messages": [self._serialize_message(m) for m in request.messages],
@@ -187,6 +200,10 @@ class OllamaConversationModel:
         }
         if tools:
             body["tools"] = [self._serialize_tool(t) for t in tools]
+        if response_format is not None:
+            body["format"] = json.loads(json.dumps(response_format))
+        if self._keep_alive:
+            body["keep_alive"] = self._keep_alive
         try:
             response = requests.post(
                 f"{self._host}/api/chat",

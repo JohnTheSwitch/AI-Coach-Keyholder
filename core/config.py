@@ -65,6 +65,9 @@ class Config:
     # Ollama
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"  # TBD until a specific model is confirmed
+    ollama_read_timeout_seconds: float = 30.0     # a large local model needs more (for example 120 for a 32B model)
+    ollama_keep_alive: str | None = None          # e.g. "30m": keep the model loaded between messages
+    conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data, which has no effect yet)
 
     # Database
     db_path: Path = DEFAULT_DB_PATH
@@ -193,6 +196,9 @@ class Config:
             discord_command_prefix=get("DISCORD_COMMAND_PREFIX", "!"),
             ollama_host=get("OLLAMA_HOST", "http://localhost:11434"),
             ollama_model=get("OLLAMA_MODEL", "llama3.1"),
+            ollama_read_timeout_seconds=float(get("OLLAMA_READ_TIMEOUT_SECONDS", "30") or "30"),
+            ollama_keep_alive=get("OLLAMA_KEEP_ALIVE") or None,
+            conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             db_path=Path(db_path_str) if db_path_str else DEFAULT_DB_PATH,
             backup_retention_count=int(retention_str) if retention_str else 14,
             chaster_api_token=get("CHASTER_API_TOKEN"),

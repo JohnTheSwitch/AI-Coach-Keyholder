@@ -673,4 +673,12 @@ v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_con
 
 v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
 
-v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3271 tests.
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3323 tests.
+
+## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
+
+When enabled and the model supports it, the engine asks Ollama for a JSON object (`format` = `RESPONSE_SCHEMA`): `reply_to_user` plus optional
+`save_to_memory` / `submit_suggestion`. Only the reply reaches the user (validated and stored in working memory as before). Side data is parsed strictly,
+dropped when malformed, and handed to an optional sink; none is installed yet, so it has no effect. Unusable output falls back to one plain generation.
+The Chaster tool path and the extra-context path stay plain; untrusted channels pass `allow_side_data=False`. `OLLAMA_KEEP_ALIVE` and
+`OLLAMA_READ_TIMEOUT_SECONDS` tune a large local model. Evaluate first with `python -m scripts.eval_structured_output`.

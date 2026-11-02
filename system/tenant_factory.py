@@ -181,7 +181,8 @@ class TenantFactory:
         on_system_startup(core, process_id, s.clock, wiring.rules_engine, wiring.supervision, release_task=wiring.release_task)
 
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
-                                    queue=SubjectConversationQueue(), providers=providers, tool_executor=None)
+                                    queue=SubjectConversationQueue(), providers=providers, tool_executor=None,
+                                    structured_output=s.config.conversation_structured_output)
         chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
         service = ApplicationService(
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
