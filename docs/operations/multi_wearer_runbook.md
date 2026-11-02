@@ -101,10 +101,38 @@ All tenants use the one keyholder account. The bot counts every request made wit
 - Never copy a live tenant database into another tenant's file name, and never edit `platform.sqlite` by hand: the registry's uniqueness rules (one Discord id, one lock, one Chaster account per live tenant) are what keep wearers apart.
 - The model never sees release times, and inbound Chaster chat is only conversation text in every tenant.
 
-## 9. Phase F (Coaching Memory and Progressive Conditioning)
+## 9. Phase F features (Coaching Memory, idea box, Progressive Conditioning)
 
-- Wearers (and the owner) can always run `memory`, `forget <id>`, `forget all`, `conditioning status|on|off` in their DM.
-- Coaching Memory is stored and used only with `CONVERSATION_STRUCTURED_OUTPUT=true` and `ENABLE_COACHING_MEMORY=true`; entries live in each tenant's own database.
-- For Qwen 2.5 32B set `OLLAMA_READ_TIMEOUT_SECONDS=120` and `OLLAMA_KEEP_ALIVE=30m`; check the model first with `python -m scripts.eval_structured_output`.
-- Model suggestions for you (`ENABLE_AI_SUGGESTIONS=true`): `python -m cli ai-ideas list --owner-id <you>`, then `ai-ideas accept|reject|archive <tenant>:<id>`. Accepting changes nothing by itself.
-- Progressive Conditioning (`ENABLE_SLAVE_TRAINING=true`): `python -m cli tenants slave-training <tenant> --enable|--disable|--status --owner-id <you>`. The wearer's `conditioning off` always freezes it.
+All of them are off by default and apply to every tenant (and to the owner's own system) when switched on.
+
+| Feature | Flags | Notes |
+|---|---|---|
+| Structured replies | `CONVERSATION_STRUCTURED_OUTPUT=true` | Required by everything below. Check the model first: `python -m scripts.eval_structured_output` |
+| Coaching Memory | `ENABLE_COACHING_MEMORY=true` | Notes about the user's own patterns, goals and quotes; never health, trauma, self-harm or distress |
+| Idea box | `ENABLE_AI_SUGGESTIONS=true` | Private suggestions for the owner; never shown to the model again |
+| Progressive Conditioning | `ENABLE_SLAVE_TRAINING=true` (with the release engine) + per-database owner switch | Hidden factor on the token payout threshold |
+
+Model settings for Qwen 2.5 32B: `OLLAMA_MODEL=<your qwen2.5 32b tag>`, `OLLAMA_READ_TIMEOUT_SECONDS=120`, `OLLAMA_KEEP_ALIVE=30m`.
+
+**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`.
+`conditioning off` freezes the factor at its current value; it never resets.
+
+**Owner commands:**
+- `python -m cli ai-ideas list [--status new|accepted|rejected|archived|all] [--tenant <id>] --owner-id <you>`: suggestions from every live tenant, labelled `<tenant>:<id>`.
+- `python -m cli ai-ideas accept|reject|archive <tenant>:<id> [--note "..."] --owner-id <you>`: a verdict on one suggestion. It changes nothing by itself; adopting an idea is a separate
+  change that needs the wearer's consent.
+- `python -m cli tenants slave-training <tenant> --enable|--disable|--status --owner-id <you>` (`tenant_0` = your own database): the owner switch; `--status` shows the factor.
+
+**How the factor moves:** +0.025 (cap 1.500) only when Chaster confirms a release that a token paid for, with the global flag on, the owner switch on and the wearer's `conditioning` on.
+The 72-hour backstop, failed or ambiguous releases, `freeze-lock` and emergency unlocks never raise it. The payout threshold is base x factor (base 1.0 Standard, 2.0 Advanced).
+Turning `ENABLE_SLAVE_TRAINING` off returns every threshold to 1.0 (the stored factor is kept, unused).
+
+**Troubleshooting:**
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| Replies are plain, never JSON | `CONVERSATION_STRUCTURED_OUTPUT` off, or the model's JSON is unusable (log `structured_unparseable`) | run the evaluation script; check the model tag |
+| `memory` stays empty | the flags are off, the notes were filtered (log `Coaching memory note not stored` with an outcome code), or the daily limit (5) was reached | expected for sensitive topics |
+| No suggestions in `ai-ideas list` | `ENABLE_AI_SUGGESTIONS` off, filtered content, or the daily limit | check the flags |
+| The factor never rises | global flag, owner switch, wearer `conditioning off`, or no Chaster-confirmed token release yet | `tenants slave-training <id> --status`; the audit table `training_increments` records why each release did or did not count |
+| First reply after a pause takes a minute | the 32B model is loading | expected; keep `OLLAMA_KEEP_ALIVE=30m` |

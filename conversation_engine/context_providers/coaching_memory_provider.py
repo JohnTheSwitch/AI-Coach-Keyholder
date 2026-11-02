@@ -26,8 +26,8 @@ class CoachingMemoryContextProvider:
         self._get_entries = get_entries
 
     def provide_context(self, *, subject_key: str, now: datetime) -> ConversationContextFragment | None:
-        entries = [(c, t) for c, t in self._get_entries(subject_key)[:MAX_RENDERED_ENTRIES]
-                   if c in _ALLOWED and isinstance(t, str) and t.strip()]
+        entries = [(c, t) for c, t in self._get_entries(subject_key)
+                   if c in _ALLOWED and isinstance(t, str) and t.strip()][:MAX_RENDERED_ENTRIES]
         if not entries:
             return None
         return ConversationContextFragment(

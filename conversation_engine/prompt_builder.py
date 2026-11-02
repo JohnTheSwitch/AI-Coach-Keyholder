@@ -32,6 +32,7 @@ guessed at.
 from __future__ import annotations
 
 import json
+import unicodedata
 from types import MappingProxyType
 
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
@@ -277,9 +278,16 @@ _COACHING_MEMORY_PREAMBLE = (
 )
 
 
+# Characters that could open or close a tag, a template token or a code fence once the text is normalised (Phase F5 hardening).
+_FENCE_BREAKERS = frozenset("<>‹›«»⟨⟩〈〉❬❭`|")
+
+
 def _clean_memory_text(text: str) -> str:
-    # The fence must stay intact: no markup and no line breaks can come from stored text.
-    return " ".join(str(text).replace("<", " ").replace(">", " ").split())[:300]
+    """The fence must stay intact whatever was stored: compatibility forms are normalised first (a full-width bracket becomes a plain one),
+    then every bracket-like, backtick, pipe and invisible / control character is removed, and line breaks collapse to single spaces."""
+    normalised = unicodedata.normalize("NFKC", str(text))
+    kept = "".join(" " if (c in _FENCE_BREAKERS or unicodedata.category(c).startswith(("C", "Z"))) else c for c in normalised)
+    return " ".join(kept.split())[:300]
 
 
 def _build_coaching_memory_section(snapshot: ResponseContextSnapshot) -> str:

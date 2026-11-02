@@ -251,3 +251,31 @@ Interpretations to confirm:
    (the stored factor is kept, not used).
 2. **The owner switch is per database** (per tenant), not per user; each tenant database has one wearer.
 3. **The audit table keeps the before/after factor** for the owner; it is never read by anything that reaches the model or the wearer.
+
+## 10. F5 result (hardening) and the Phase F summary
+
+Confirmed after F4: the Advanced base belongs to the feature; the owner switch is per database; the audit keeps the factor for the owner only.
+
+Built in F5:
+- **Fence hardening:** Coaching Memory text is normalised (NFKC, so full-width brackets become plain ones) and every bracket-like character (including lookalikes such as ‹ › « » ⟨ ⟩ 〈 〉),
+  backtick, pipe and invisible or control character is removed before rendering; line breaks of any kind collapse to spaces. Invalid categories no longer take one of the five slots.
+- **Injection tests:** twelve hostile payloads (closing tags, chat-template tokens, full-width and lookalike brackets, Unicode line separators, zero-width characters, fake "AUTHORITATIVE APPLICATION
+  STATE" text, code fences) are written straight into the table, bypassing every store-time filter; the rendered section keeps exactly one `<context>` and one `</context>`, one clean line per
+  entry and nothing outside the fence. End to end, none of the hostile text appears anywhere else in the prompt, no extra message is created and the section stays after the personality block.
+- **Router failure matrix:** ten malformed outputs (missing or extra braces, hallucinated keys and actions, missing or non-string reply, an array, prose around the JSON, empty, single quotes) give
+  the plain reply and store nothing; seven kinds of unauthorised side data (weakness or health categories, extra fields, lists, unknown suggestion types, over-long or non-string notes) are dropped
+  while the reply is kept; when both calls fail the standard fallback is used and nothing is stored.
+- **Cross-tenant audit, Phase F:** two tenants with every feature on, each with a memory note and an idea, and a confirmed token release raising Alex's factor to 1.025: no memory text, idea,
+  user id, authorization id or factor of one tenant appears in any table of the other tenant or of the owner's database; Bo's database has no conditioning rows; no idea and no factor ever
+  appears in any prompt; each wearer's own memory reaches only their own prompts.
+- **Runbook:** section 9 rewritten (flags, model settings, wearer and owner commands, how the factor moves, troubleshooting).
+
+### Phase F summary
+| Step | What it added | Flag |
+|---|---|---|
+| F0 | Binding specification and consent wording | - |
+| F1 | Structured-output router (reply only), evaluation script, Ollama keep-alive and timeout | `CONVERSATION_STRUCTURED_OUTPUT` |
+| F2 | Coaching Memory with code-level exclusions, fenced context, `memory` / `forget`, `conditioning` switch, consent text | `ENABLE_COACHING_MEMORY` |
+| F3 | Write-only per-tenant idea box, owner CLI across tenants | `ENABLE_AI_SUGGESTIONS` |
+| F4 | Progressive Conditioning factor on the pool threshold, confirmed-release trigger, consent and owner gates, audit | `ENABLE_SLAVE_TRAINING` |
+| F5 | Fence hardening, injection and failure tests, Phase F cross-tenant audit, runbook | - |
