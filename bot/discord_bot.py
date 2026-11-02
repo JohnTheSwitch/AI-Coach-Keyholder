@@ -67,6 +67,8 @@ from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
 from system.tenant_factory import SharedServices, TenantFactory
 from system.tenant_loops import TenantLoopSupervisor
+from system.tenant_gateway import InvitationNotifier, TenantGateway
+from tenancy.admin import TenantAdmin
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
 from messaging.chaster_loop import run_chaster_chat_loop
@@ -108,6 +110,9 @@ class CoachKeyholderBot(discord.Client):
         self._chaster_listener: ChasterCallbackListener | None = None
         # (core, rules_engine, executor, interval_seconds) when the Phase 2/3 periodic cycle is on.
         self.periodic: tuple | None = None
+        self.gateway = None                     # system.tenant_gateway.TenantGateway when multi-wearer is on (Phase E3)
+        self.invitations = None
+        self._invite_task: asyncio.Task | None = None
         self.tenant_supervisor = None           # system.tenant_loops.TenantLoopSupervisor when multi-wearer is on (Phase E2)
         self._tenant_task: asyncio.Task | None = None
         self.platform = None                    # tenancy.services.PlatformServices when ENABLE_MULTI_WEARER (Phase E1)
@@ -135,6 +140,8 @@ class CoachKeyholderBot(discord.Client):
             )
         if self.tenant_supervisor is not None:
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
+        if self.invitations is not None:
+            self._invite_task = asyncio.create_task(self.invitations.run(), name="tenant-invitations")
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -179,6 +186,9 @@ class CoachKeyholderBot(discord.Client):
         if self._tenant_task is not None:
             self._tenant_task.cancel()
             self._tenant_task = None
+        if self._invite_task is not None:
+            self._invite_task.cancel()
+            self._invite_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -200,6 +210,10 @@ class CoachKeyholderBot(discord.Client):
         # a server channel is silently ignored, not processed and not
         # replied to.
         if not isinstance(message.channel, discord.DMChannel):
+            return
+
+        if self.gateway is not None:
+            await self._on_message_via_gateway(message)
             return
 
         now = self.clock.now()
@@ -265,9 +279,33 @@ class CoachKeyholderBot(discord.Client):
 
         self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id)
 
-    def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id) -> None:
+    async def _on_message_via_gateway(self, message: discord.Message) -> None:
+        """Multi-wearer path (Phase E3): the gateway picks the tenant; the exchange is stored only in THAT tenant's database
+        (never for strangers or invitees)."""
+        now = self.clock.now()
+        incoming = IncomingMessage(channel="discord", external_user_id=str(message.author.id), text=message.content,
+                                   received_at=now, external_message_id=str(message.id))
         try:
-            self.db.save_conversation_message(
+            reply = await self.gateway.handle(incoming)
+        except Exception:
+            logger.exception("The tenant gateway failed for a DM.")
+            reply = None
+        text = reply.text if reply is not None else "Something went wrong handling that. It's been logged."
+        embed = _build_discord_embed(reply.embed) if reply is not None and reply.embed is not None else None
+        log_db = reply.log_db if reply is not None else None
+        if log_db is not None:
+            self._log_message_best_effort(now, MessageRole.USER, message.content, message.channel.id, message.id, db=log_db)
+        try:
+            sent = await (message.channel.send(embed=embed) if embed is not None else message.channel.send(text))
+        except Exception:
+            logger.exception("Failed to send a reply through the tenant gateway.")
+            return
+        if log_db is not None:
+            self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, text, message.channel.id, sent.id, db=log_db)
+
+    def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id, *, db=None) -> None:
+        try:
+            (db or self.db).save_conversation_message(
                 ConversationMessage(
                     created_at=created_at, role=role, content=content,
                     discord_channel_id=str(channel_id), discord_message_id=str(message_id),
@@ -494,6 +532,14 @@ def main() -> None:
         logger.info("Chaster chat channel enabled (opt-in per user; inbound by polling).")
     # A user whose preferred channel is unavailable still gets the message on Discord.
     bot.messaging_router = MessageRouter(routes=message_routes, adapters=adapters, fallback_to_discord=True)
+    if platform is not None and bot.tenant_supervisor is not None:
+        # Phase E3: every DM goes through the tenant gateway (routing by author, invitations, wearer safety commands).
+        bot.gateway = TenantGateway(
+            registry=platform.registry, supervisor=bot.tenant_supervisor,
+            admin=TenantAdmin(registry=platform.registry, halt=platform.halt, owner_user_id=config.owner_user_id, clock=clock),
+            owner_user_id=config.owner_user_id, tenant_zero_handler=application_service.handle_message, tenant_zero_db=db,
+            tenant_dir=platform.tenant_dir, clock=clock)
+        bot.invitations = InvitationNotifier(registry=platform.registry, send=discord_adapter.send_message, clock=clock)
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)

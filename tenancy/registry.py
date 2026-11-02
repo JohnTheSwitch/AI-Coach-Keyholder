@@ -188,6 +188,22 @@ class TenantRegistry:
         tenant = self.get(tenant_id)
         return tenant is not None and tenant.is_managed
 
+    def pending_invitations(self) -> list[Tenant]:
+        """Invited tenants whose invitation DM has not been delivered yet."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT * FROM tenants WHERE status = 'invited' AND invite_notified_at IS NULL ORDER BY created_at")
+        return [_row_to_tenant(r) for r in rows]
+
+    def mark_invite_notified(self, tenant_id: str, *, now: datetime) -> bool:
+        def write(tx: Transaction, _s: object) -> bool:
+            cur = tx.execute("UPDATE tenants SET invite_notified_at = ?, updated_at = ? WHERE id = ? AND status = 'invited' "
+                             "AND invite_notified_at IS NULL", (_iso(now), _iso(now), tenant_id))
+            if cur.rowcount:
+                self._audit(tx, tenant_id, "invitation_delivered", "system", "", now)
+            return cur.rowcount > 0
+
+        return bool(apply_transition(self._core, write=write))
+
     def events(self, tenant_id: str | None = None, *, limit: int = 100) -> list[dict]:
         with self._core.transaction() as tx:
             if tenant_id is None:

@@ -145,6 +145,7 @@ _ADMIN_TEXT = {
     "cap_reached": "Refused: the tenant cap is reached.",
     "refused": "Refused: that Discord id already belongs to a tenant.",
     "invalid": "Refused: invalid input (a Discord id is 5-25 digits; a name is 1-64 characters).",
+    "wearer_halt": "Refused: the wearer halted their own execution; only the wearer can clear it (`resume` in their DM).",
 }
 
 
@@ -180,8 +181,13 @@ def _tenant_execution(admin, services, args, now):
     path = resolve_db_path(tenant, services.tenant_dir)
     if not path.exists():
         return AdminResult(AdminOutcome.NOT_FOUND)
+    from tenancy.models import WEARER_HALT_REASON
+
+    control = ExecutionControl(path, core=CoreDatabase(path))
+    if args.action == "clear" and control.is_halted() and control.reason() == WEARER_HALT_REASON:
+        return AdminResult(AdminOutcome.WEARER_HALT, tenant)                 # the wearer's own stop is theirs to lift
     try:
-        ExecutionControl(path, core=CoreDatabase(path)).set_halted(args.action == "halt", reason=args.reason, now=now())
+        control.set_halted(args.action == "halt", reason=args.reason, now=now())
     except ValueError:
         return AdminResult(AdminOutcome.INVALID)
     return AdminResult(AdminOutcome.DONE, tenant)

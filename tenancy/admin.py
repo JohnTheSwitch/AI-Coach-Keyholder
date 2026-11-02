@@ -33,6 +33,7 @@ class AdminOutcome(StrEnum):
     CAP_REACHED = "cap_reached"
     REFUSED = "refused"                    # duplicate Discord id, tenant zero protection, ...
     INVALID = "invalid"
+    WEARER_HALT = "wearer_halt"            # the wearer halted their own execution: only the wearer can clear it
 
 
 @dataclass(frozen=True)

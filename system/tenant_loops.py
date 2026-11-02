@@ -46,6 +46,7 @@ class TenantLoopSupervisor:
         self._tasks: dict[str, asyncio.Task] = {}
         self.runtimes: dict[str, TenantRuntime] = {}
         self._retry_at: dict[str, float] = {}
+        self._build_locks: dict[str, asyncio.Lock] = {}
 
     async def run(self) -> None:
         try:
@@ -72,14 +73,33 @@ class TenantLoopSupervisor:
         for tenant, offset in zip(sorted(new, key=lambda t: t.id), offsets):
             if self._retry_at.get(tenant.id, 0.0) > loop_time:
                 continue
-            try:
-                runtime = await asyncio.to_thread(self._factory.build, tenant.id)
-            except Exception:
-                logger.exception("Tenant %s could not be started; retrying later.", tenant.id)
+            runtime = await self.get_or_build(tenant.id)
+            if runtime is None:
                 self._retry_at[tenant.id] = loop_time + BUILD_RETRY_SECONDS
                 continue
-            self.runtimes[tenant.id] = runtime
             self._tasks[tenant.id] = asyncio.create_task(self._loop(runtime, offset), name=f"tenant-{tenant.id}")
+
+    async def get_or_build(self, tenant_id: str) -> TenantRuntime | None:
+        """The ONE runtime of a managed tenant, shared by its periodic loop and its message routing (built at most once at a time).
+        None when the tenant is not managed or cannot be built right now."""
+        if not self._registry.is_managed(tenant_id):
+            return None
+        lock = self._build_locks.setdefault(tenant_id, asyncio.Lock())
+        async with lock:
+            runtime = self.runtimes.get(tenant_id)
+            if runtime is not None:
+                return runtime
+            try:
+                runtime = await asyncio.to_thread(self._factory.build, tenant_id)
+            except Exception:
+                logger.exception("Tenant %s could not be started.", tenant_id)
+                return None
+            self.runtimes[tenant_id] = runtime
+            return runtime
+
+    async def stop_tenant(self, tenant_id: str) -> None:
+        """Stops a tenant's loop and drops its runtime at once (used when the wearer leaves)."""
+        await self._stop(tenant_id)
 
     async def stop_all(self) -> None:
         for tenant_id in list(self._tasks):

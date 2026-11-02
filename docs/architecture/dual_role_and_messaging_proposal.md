@@ -272,3 +272,32 @@ Interpretations to confirm:
 2. **The tenant factory does not accept messages from strangers**: it only builds the runtime. Which runtime a Discord message reaches is E3, so until then tenant runtimes serve only their periodic loop.
 3. **Loop interval** reuses `CHASTER_EXECUTION_INTERVAL_SECONDS` (default 60 s), so N tenants are spread over that interval.
 4. **Reconcile cadence** is 30 s: a newly accepted tenant starts within about half a minute; a removed or suspended one stops before its next cycle.
+
+## 13. Phase E3 result (Discord routing, invitation, wearer lifecycle)
+
+Approved after E2: the tenant loops stay in `system/tenant_loops.py`, separate from `system/periodic.py`.
+
+Built in E3 (behind `ENABLE_MULTI_WEARER`, default off; with the flag off the bot's message path is exactly as before):
+- `system/tenant_gateway.py` `TenantGateway`: every DM is routed by the author's Discord id.
+  - **Strangers and removed people** get one fixed refusal; their text is not processed and not stored anywhere.
+  - **Invitees** only see the invitation until they send `accept` or `decline`; nothing is created or stored before consent.
+  - **Suspended wearers** get a fixed notice; only their safety commands work.
+  - **Active wearers** reach their own tenant's `ApplicationService`; the owner reaches the existing system unchanged.
+- **Invitation.** The owner invites from the CLI (`tenants invite`) or from their own DM (`invite <discord id> <name>`; only tenant zero's verified Discord id can do this).
+  `InvitationNotifier` delivers the invitation DM (platform migration 002, `tenants.invite_notified_at`): delivered once, a failed delivery retried every 30 s.
+  The invitation explains what accepting means, and `halt` and `leave`.
+- **Acceptance.** `accept` moves the tenant to ACTIVE in `platform.sqlite`, builds its database and writes a consent record (`consent_log`, target `multi_wearer_keyholder`, the exact invitation text
+  shown) into the tenant's own database. The tenant's execution is still halted until the owner enables it. `decline` removes the invitation as the person's own choice.
+- **Wearer commands** (exact, case-insensitive, handled before any conversation and never by a model):
+  - `halt` sets the tenant's own execution halt with reason `wearer_halt`, at once, also while suspended and also after a restart (the existing database is used).
+  - `resume` clears ONLY a halt the wearer set; it cannot clear the keyholder's halt or a new tenant's initial halt. In the other direction the owner's
+    `tenants execution <id> clear` refuses to clear a wearer's halt: only the wearer can lift their own stop.
+  - `leave` asks for confirmation; `leave confirm` halts the tenant, removes it (`removed_by = wearer`) and stops its loop immediately. The owner (tenant zero) cannot leave but can `halt` / `resume`.
+- **Logging.** In multi-wearer mode a DM exchange is stored only in the database of the tenant it belongs to (the owner's in the main database); strangers' and invitees' texts are never stored.
+- The supervisor and the gateway share ONE runtime per tenant (`get_or_build`, built at most once at a time).
+
+Interpretations to confirm:
+1. **`leave` needs `leave confirm`** to prevent an accidental exit from a one-word message; `decline` (invitees) is one step.
+2. **A wearer's halt can only be cleared by the wearer** (`resume`); the owner's CLI refuses. A keyholder halt can only be cleared by the keyholder.
+3. **The owner's DM also understands `halt`, `resume` and `invite`** while multi-wearer is on; these words no longer reach the owner's conversation as plain text.
+4. **Strangers get one fixed reply** (not silence), so an invited person who writes before the invitation exists knows why nothing happens.

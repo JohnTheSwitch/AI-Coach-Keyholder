@@ -26,5 +26,7 @@ The package imports no domain module (AST-guarded); only `bot/`, `cli/`, `system
 Phase E2 (in `system/`, not here, because the factory must import the domain modules): `tenant_factory.py` builds an isolated runtime per ACTIVE tenant, `tenant_loops.py` runs one staggered
 periodic loop per tenant and stops it the moment the tenant stops being managed; a new tenant's execution starts halted (`python -m cli tenants execution <id> clear ...`). See the proposal, section 12.
 
-Not built yet: Discord routing / invitation and acceptance messages / the wearer `halt` and `leave` commands (E3),
-the keyholder-search observation source and lock pairing checks (E4).
+Phase E3 (`system/tenant_gateway.py`): Discord routing by author id, the invitation DM and `accept` / `decline`, the wearer commands `halt`, `resume` and
+`leave` / `leave confirm`, per-tenant message logging (platform migration 002). See the proposal, section 13.
+
+Not built yet: the keyholder-search observation source and lock pairing checks (E4).

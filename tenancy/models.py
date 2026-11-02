@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-__all__ = ["TenantStatus", "RemovedBy", "Tenant", "TENANT_ZERO_ID", "DEFAULT_TENANT_CAP"]
+__all__ = ["TenantStatus", "RemovedBy", "Tenant", "TENANT_ZERO_ID", "DEFAULT_TENANT_CAP", "WEARER_HALT_REASON"]
 
 TENANT_ZERO_ID = "tenant_0"
+WEARER_HALT_REASON = "wearer_halt"     # a halt the WEARER set; only the wearer may clear it
 DEFAULT_TENANT_CAP = 5            # counts every non-removed tenant, tenant zero included
 
 
