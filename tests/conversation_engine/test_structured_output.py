@@ -193,7 +193,7 @@ class TestEngineRouter:
     def test_a_sink_receives_validated_side_data_when_installed(self) -> None:
         received = []
         eng, _ = engine(Model(structured=dumps(memory={"category": "stated_goal", "note": "Run 5k"})),
-                        sink=lambda subject, parsed, now: received.append((subject, parsed.memory_note, now)))
+                        sink=lambda subject, parsed, now, message: received.append((subject, parsed.memory_note, now)))
         ask(eng)
         assert received == [("s1", MemoryNote("stated_goal", "Run 5k"), NOW)]
 

@@ -66,7 +66,7 @@ from system.composition import build_rules_and_execution
 from chaster.api_budget import ApiBudget, BudgetedTokenManager, Lane
 from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
-from system.tenant_factory import SharedServices, TenantFactory
+from system.tenant_factory import SharedServices, TenantFactory, coaching_memory_parts
 from system.tenant_loops import TenantLoopSupervisor
 from system.tenant_gateway import InvitationNotifier, TenantGateway
 from system.lock_pairing import LockPairingService, wearer_account_lookup
@@ -483,9 +483,12 @@ def main() -> None:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)
 
+    coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core)
+    if memory_provider is not None:
+        context_providers = context_providers + (memory_provider,)
     conversation_engine = ConversationEngine(
         model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
-        structured_output=config.conversation_structured_output,
+        structured_output=config.conversation_structured_output, structured_sink=memory_sink,
         queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
     )
 
@@ -507,7 +510,7 @@ def main() -> None:
         chaster_connections=chaster_connections, chaster_oauth_client=chaster_oauth_client,
         chaster_token_manager=chaster_token_manager,
         check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
-        channel_service=channel_service,
+        channel_service=channel_service, coaching_memory=coaching, conditioning=conditioning,
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)

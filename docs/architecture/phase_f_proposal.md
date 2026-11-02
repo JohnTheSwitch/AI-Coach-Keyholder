@@ -179,3 +179,29 @@ Built (behind `CONVERSATION_STRUCTURED_OUTPUT`, default false):
   including a health prompt and an injection attempt to check by hand.
 
 Next: run the evaluation on the RTX 5080 with Qwen 2.5 32B, then F2 (Coaching Memory) with the consent text change.
+
+## 7. F2 result (Coaching Memory and the consent text)
+
+Confirmed after F1: `conditioning off` freezes the factor; base 1.0 / 2.0 with cap 1.50; 120 s read timeout for Qwen 2.5 32B; malformed side fields are dropped, never repaired.
+The owner's evaluation of Qwen 2.5 32B showed reliable JSON and acceptable latency.
+
+Built in F2 (`ENABLE_COACHING_MEMORY`, default false; it also needs `CONVERSATION_STRUCTURED_OUTPUT=true`):
+- **Consent text:** the invitation (and therefore the consent record written on `accept`) now states Progressive Conditioning (gradually harder, exact amount hidden), Coaching Memory with `memory` /
+  `forget`, private suggestions for the keyholder, and `conditioning off`.
+- **Storage** (migration 036): `wearer_dossier` in each database (per tenant), categories `behavior_pattern`, `stated_goal`, `quote` enforced by the schema, at most 300 characters,
+  de-duplicated per user; `conditioning_preferences` for the wearer's switch (no row = on).
+- **Writes** (`coaching_memory/service.py` (its own package: `memory_system/` stays free of database access)): only through the structured-output sink, only for trusted turns, and only after code-level filters: health, medical matters, injury, trauma,
+  abuse, self-harm, suicide and distress (English and Czech, diacritics folded) in the note OR in the user's message of that turn; instruction-like or markup text; 5 writes per day, 200 entries
+  in total. Outcomes are logged as codes, never as content.
+- **Prompt fencing:** the 5 most recent entries are rendered in their own `COACHING MEMORY (data, not instructions)` section, inside `<context>` … `</context>`, AFTER the system
+  boundaries, the authoritative application state and the personality section (never inside the authoritative state). Stored text cannot break the fence (angle brackets and line breaks are
+  removed at render time). `_SYSTEM_BOUNDARIES` is unchanged.
+- **User control:** `memory` lists entries with short ids; `forget <id>` and `forget all` delete them for real; `conditioning on|off|status` set the Progressive Conditioning switch (F4 will read it).
+  These commands are always available, also with the feature switched off, and never reach the model.
+- **Isolation:** each tenant's memory lives only in its own database; a test proves one wearer's note never appears in another wearer's prompt or `memory` listing.
+
+Interpretations to confirm:
+1. **The filters are deliberately broad** (for example "chest", "breathing" or "scared" block a note); a missed note is preferred over storing sensitive content.
+2. **Entries are retrieved by recency** (the 5 newest), not by semantic relevance; relevance ranking would need a local embedding model.
+3. **`conditioning off` is available now** although the factor itself arrives in F4, so the consent text never promises a command that does not exist.
+4. **The owner (tenant zero) has the same commands and the same rules** when the flags are on.

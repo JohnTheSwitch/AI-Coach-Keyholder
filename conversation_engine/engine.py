@@ -94,7 +94,7 @@ class ConversationEngine:
     ) -> None:
         self._model = model
         # Phase F1: ask for the JSON shape of conversation_engine.structured_output when the model supports it. `structured_sink`
-        # (subject_key, StructuredReply, now) receives the validated side data; none is installed in F1, so it has no effect.
+        # (subject_key, StructuredReply, now, user_message) receives the validated side data (Phase F2: Coaching Memory).
         self._structured = bool(structured_output) and callable(getattr(model, "generate_structured", None))
         self._structured_sink = structured_sink
         self._working_memory_reader = working_memory_reader
@@ -172,7 +172,8 @@ class ConversationEngine:
                         request, subject_key=subject_key, now=now, user_message=current_user_message,
                     )
                 elif self._structured:
-                    raw_text = self._generate_structured(request, subject_key=subject_key, now=now, allow_side_data=allow_side_data)
+                    raw_text = self._generate_structured(request, subject_key=subject_key, now=now, allow_side_data=allow_side_data,
+                                                         user_message=current_user_message)
                 else:
                     raw_text = self._model.generate(request=request)
             except LLMGenerationError as exc:
@@ -211,7 +212,8 @@ class ConversationEngine:
                 self._commit_exchange(subject_key, current_user_message, response.text)
             return response
 
-    def _generate_structured(self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, allow_side_data: bool) -> str:
+    def _generate_structured(self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, allow_side_data: bool,
+                             user_message: str = "") -> str:
         """Phase F1 router. Only the reply can reach the user. Side data goes to the sink (none in F1) and only when allowed (never for an
         untrusted channel). Output without a usable reply is never shown: one plain generation is used instead."""
         structured_request = ModelGenerationRequest(
@@ -228,7 +230,7 @@ class ConversationEngine:
             logger.info("Structured side data dropped", extra={"error_code": "structured_side_dropped", "issues": list(parsed.issues)})
         if parsed.has_side_data and allow_side_data and self._structured_sink is not None:
             try:
-                self._structured_sink(subject_key, parsed, now)
+                self._structured_sink(subject_key, parsed, now, user_message)
             except Exception:
                 logger.exception("Structured side data could not be stored; the reply is unaffected.")
         return parsed.reply

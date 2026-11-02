@@ -92,6 +92,7 @@ class ApplicationService:
         chaster_token_manager: ChasterTokenManager | None = None,
         check_in_listener=None,
         channel_service=None,
+        coaching_memory=None, conditioning=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -101,6 +102,9 @@ class ApplicationService:
         self._check_in_listener = check_in_listener
         # Optional messaging.channel_service.ChannelPreferenceService: the user's choice between Discord and Chaster chat.
         self._channel_service = channel_service
+        # Phase F2: the user's own Coaching Memory (view / erase) and Progressive Conditioning switch.
+        self._coaching_memory = coaching_memory
+        self._conditioning = conditioning
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -192,6 +196,9 @@ class ApplicationService:
                 return result.reply
 
             context = RequestContext(user=user, now=incoming.received_at, external_message_id=incoming.external_message_id)
+            forget = self._forget_one(incoming.text, context)
+            if forget is not None:
+                return forget
             result = self.router.route(incoming.text, context)
             if result.matched:
                 return result.outgoing
@@ -310,6 +317,14 @@ class ApplicationService:
         self.router.register("chaster status", "Check your Chaster lock status", self._handle_chaster_status)
         self.router.register("chaster disconnect", "Remove your Chaster connection from this bot", self._handle_chaster_disconnect)
         self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
+
+        self.router.register("memory", "Show what the coach remembers about you (Coaching Memory)", self._handle_memory)
+        self.router.register("forget all", "Erase everything in your Coaching Memory", self._handle_forget_all)
+        self.router.register("conditioning status", "Show whether Progressive Conditioning is on for you", self._handle_conditioning_status)
+        self.router.register("conditioning off", "Stop Progressive Conditioning from increasing (it stays at its current level)",
+                             self._handle_conditioning_off)
+        self.router.register("conditioning on", "Let Progressive Conditioning continue", self._handle_conditioning_on)
+        self.router.register_family("conditioning", invalid_handler=self._handle_conditioning_status)
 
         self.router.register("channel status", "Show where the bot sends its messages (Discord or Chaster chat)", self._handle_channel_status)
         self.router.register("channel discord", "Send the bot's messages to Discord (the default)", self._handle_channel_discord)
@@ -865,6 +880,54 @@ class ApplicationService:
                 color="green",
             ),
         )
+
+    # Phase F2 -- Coaching Memory and Progressive Conditioning (the user's own control) ---------------------
+
+    def _handle_memory(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._coaching_memory is None:
+            return OutgoingMessage(text="Coaching Memory is not available on this bot.")
+        entries = self._coaching_memory.entries(ctx.user.id)
+        if not entries:
+            return OutgoingMessage(text="Your Coaching Memory is empty.")
+        lines = [f"`{e.short_id}` [{e.category}] {e.content}" for e in entries]
+        return OutgoingMessage(text="Your Coaching Memory:\n" + "\n".join(lines)
+                               + "\n\nErase one with `forget <id>` or everything with `forget all`.")
+
+    def _handle_forget_all(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._coaching_memory is None:
+            return OutgoingMessage(text="Coaching Memory is not available on this bot.")
+        count = self._coaching_memory.forget_all(ctx.user.id)
+        return OutgoingMessage(text=f"Erased {count} entr{'y' if count == 1 else 'ies'}. Your Coaching Memory is empty.")
+
+    def _forget_one(self, text: str, ctx: RequestContext) -> OutgoingMessage | None:
+        """`forget <id>` (the router only matches exact commands, so the argument is parsed here)."""
+        parts = (text or "").strip().split()
+        if len(parts) != 2 or parts[0].lower() != "forget" or parts[1].lower() == "all":
+            return None
+        if self._coaching_memory is None:
+            return OutgoingMessage(text="Coaching Memory is not available on this bot.")
+        if self._coaching_memory.forget(ctx.user.id, parts[1]):
+            return OutgoingMessage(text="Erased.")
+        return OutgoingMessage(text="No single entry matches that id. Use `memory` to see the ids.")
+
+    def _handle_conditioning_status(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._conditioning is None:
+            return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
+        on = self._conditioning.is_enabled(ctx.user.id)
+        return OutgoingMessage(text="Progressive Conditioning is " + ("on." if on else "off; it stays at its current level.")
+                               + " Use `conditioning on` or `conditioning off`.")
+
+    def _handle_conditioning_off(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._conditioning is None:
+            return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
+        self._conditioning.set_enabled(ctx.user.id, False, now=ctx.now)
+        return OutgoingMessage(text="Progressive Conditioning is off. It stays at its current level and will not increase.")
+
+    def _handle_conditioning_on(self, ctx: RequestContext) -> OutgoingMessage:
+        if self._conditioning is None:
+            return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
+        self._conditioning.set_enabled(ctx.user.id, True, now=ctx.now)
+        return OutgoingMessage(text="Progressive Conditioning is on again.")
 
     def _handle_channel_status(self, ctx: RequestContext) -> OutgoingMessage:
         if self._channel_service is None:

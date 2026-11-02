@@ -54,7 +54,7 @@ from tenancy.registry import TenantError, TenantRegistry, resolve_db_path
 
 logger = logging.getLogger("ai_coach_keyholder.system.tenant_factory")
 
-__all__ = ["SharedServices", "TenantRuntime", "TenantFactory", "tenant_config"]
+__all__ = ["SharedServices", "TenantRuntime", "TenantFactory", "tenant_config", "coaching_memory_parts"]
 
 
 @dataclass(frozen=True)
@@ -101,6 +101,22 @@ class TenantRuntime:
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
             release_task=w.release_task, check_ins=w.check_ins, daily=w.daily)
+
+
+def coaching_memory_parts(config, db_path, core):
+    """(memory service, conditioning preferences, context provider or None, structured sink or None) for ONE database. The service and the
+    preferences are always built, so a user can view and erase their memory and use `conditioning` even when the feature is switched off;
+    the provider (reading memory into prompts) and the sink (writing it) exist only with ENABLE_COACHING_MEMORY and structured output on."""
+    from conversation_engine.context_providers.coaching_memory_provider import CoachingMemoryContextProvider
+    from coaching_memory.service import CoachingMemoryService
+    from release_engine.conditioning import ConditioningPreferences
+
+    memory = CoachingMemoryService(db_path, core=core)
+    conditioning = ConditioningPreferences(db_path, core=core)
+    if not (getattr(config, "enable_coaching_memory", False) and getattr(config, "conversation_structured_output", False)):
+        return memory, conditioning, None, None
+    provider = CoachingMemoryContextProvider(get_entries=lambda user_id: [(e.category, e.content) for e in memory.recent(user_id)])
+    return memory, conditioning, provider, memory.sink
 
 
 def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str) -> Config:
@@ -180,15 +196,18 @@ class TenantFactory:
         process_id = str(uuid.uuid4())
         on_system_startup(core, process_id, s.clock, wiring.rules_engine, wiring.supervision, release_task=wiring.release_task)
 
+        coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(s.config, path, core)
+        if memory_provider is not None:
+            providers = providers + (memory_provider,)
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
                                     queue=SubjectConversationQueue(), providers=providers, tool_executor=None,
-                                    structured_output=s.config.conversation_structured_output)
+                                    structured_output=s.config.conversation_structured_output, structured_sink=memory_sink)
         chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
         service = ApplicationService(
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
-            channel_service=chat[0] if chat else None)
+            channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
         if chat:

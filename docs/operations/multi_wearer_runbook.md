@@ -100,3 +100,9 @@ All tenants use the one keyholder account. The bot counts every request made wit
 - Back up `platform.sqlite`, the main database and `data/tenants/` (including `archive/`) together; they are consistent with each other only as a set.
 - Never copy a live tenant database into another tenant's file name, and never edit `platform.sqlite` by hand: the registry's uniqueness rules (one Discord id, one lock, one Chaster account per live tenant) are what keep wearers apart.
 - The model never sees release times, and inbound Chaster chat is only conversation text in every tenant.
+
+## 9. Phase F (Coaching Memory and Progressive Conditioning)
+
+- Wearers (and the owner) can always run `memory`, `forget <id>`, `forget all`, `conditioning status|on|off` in their DM.
+- Coaching Memory is stored and used only with `CONVERSATION_STRUCTURED_OUTPUT=true` and `ENABLE_COACHING_MEMORY=true`; entries live in each tenant's own database.
+- For Qwen 2.5 32B set `OLLAMA_READ_TIMEOUT_SECONDS=120` and `OLLAMA_KEEP_ALIVE=30m`; check the model first with `python -m scripts.eval_structured_output`.

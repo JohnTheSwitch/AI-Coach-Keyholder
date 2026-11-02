@@ -86,6 +86,10 @@ def invitation_text(name: str) -> str:
     return (f"Hello {name}. The keyholder of this bot has invited you to let it act as a keyholder for your Chaster lock.\n"
             "If you accept: the bot keeps your own separate records (goals, check-ins, trust) and may lock or release your managed lock "
             "within its safety rules. You can stop every lock action at any moment with `halt`, and end everything with `leave`.\n"
+            "This system uses Progressive Conditioning: over time, earning a release becomes gradually harder. The exact amount stays hidden. "
+            "The bot also keeps a Coaching Memory of your goals, patterns and quotes, which you can view with `memory` and erase with `forget`, "
+            "and it may write private suggestions about your regime for your keyholder. You can switch Progressive Conditioning off at any time "
+            "with `conditioning off`; it then stays at its current level.\n"
             "Reply `accept` to join or `decline` to refuse. Nothing happens until you accept.")
 
 
