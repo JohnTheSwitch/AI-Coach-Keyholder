@@ -125,8 +125,13 @@ class TenantFactory:
             raise TenantError("tenant zero runs through the existing composition, not the factory")
         if not tenant.discord_id:
             raise TenantError("a tenant needs a Discord id")
+        if tenant.archived_at is not None:
+            raise TenantError("an archived tenant is never built again")
         s = self._shared
         path = resolve_db_path(tenant, self._dir)
+        # Hardening: a tenant database lives directly in the live tenant directory and is never the owner's database.
+        if path.resolve().parent != self._dir.resolve() or path.resolve() == Path(s.config.db_path).resolve():
+            raise TenantError("refusing a tenant database outside the tenant directory")
         path.parent.mkdir(parents=True, exist_ok=True)
         now = s.clock.now()
 

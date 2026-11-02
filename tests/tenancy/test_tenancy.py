@@ -51,7 +51,7 @@ class TestPlatformDatabase:
             tables = {r["name"] for r in tx.fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")}
             versions = [r["version"] for r in tx.fetch_all("SELECT version FROM schema_version")]
         assert {"tenants", "platform_halt", "tenant_events", "schema_version"} <= tables
-        assert versions == [1, 2, 3] and not any(t in tables for t in ("goals", "trust_domains", "chaster_connections", "token_ledger"))
+        assert versions == [1, 2, 3, 4] and not any(t in tables for t in ("goals", "trust_domains", "chaster_connections", "token_ledger"))
 
     def test_the_database_enforces_status_and_removal_invariants(self, platform) -> None:
         for sql in (

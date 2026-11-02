@@ -71,6 +71,7 @@ from system.tenant_loops import TenantLoopSupervisor
 from system.tenant_gateway import InvitationNotifier, TenantGateway
 from system.lock_pairing import LockPairingService, wearer_account_lookup
 from tenancy.admin import TenantAdmin
+from tenancy.archive import TenantArchiver
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
 from messaging.chaster_loop import run_chaster_chat_loop
@@ -523,7 +524,8 @@ def main() -> None:
             check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete)
         bot.tenant_supervisor = TenantLoopSupervisor(
             registry=platform.registry, factory=TenantFactory(registry=platform.registry, shared=shared, tenant_dir=platform.tenant_dir),
-            interval_seconds=config.chaster_execution_interval_seconds)
+            interval_seconds=config.chaster_execution_interval_seconds,
+            archiver=TenantArchiver(registry=platform.registry, tenant_dir=platform.tenant_dir, clock=clock))
     # Messaging layer (Phase B): the Discord adapter shares the bot's client; the router picks the channel from the stored
     # preference (Discord unless a user has a route). Chaster delivery arrives with phase C.
     bot.platform = platform

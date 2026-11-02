@@ -36,4 +36,5 @@ Phase E4 (`system/managed_lock_source.py`, `system/lock_pairing.py`): each tenan
 Phase E5: per-tenant Chaster chat (each tenant's own chat stack over its own database, identity = the confirmed pairing) and the shared keyholder
 request budget (`chaster/api_budget.py`, `CHASTER_API_BUDGET_PER_MINUTE`). See the proposal, section 15.
 
-Not built yet: E6 (isolation hardening, removal/archival flow, runbook).
+Phase E6: `archive.py` moves a removed tenant's database to `tenants/archive/` (read-only, after a 5-minute grace; platform migration 004), plus isolation
+hardening and an end-to-end isolation audit test. Operator runbook: `docs/operations/multi_wearer_runbook.md`. See the proposal, section 16.

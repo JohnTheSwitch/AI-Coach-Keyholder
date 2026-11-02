@@ -141,6 +141,9 @@ class TenantGateway:
         runtime = await self._supervisor.get_or_build(tenant.id)
         if runtime is None:
             return GatewayReply(TEXTS["unavailable"], log_db=log_db)
+        if runtime.tenant_id != tenant.id:                                   # hardening: never hand a message to another tenant's runtime
+            logger.error("Runtime mismatch for a routed message; refused.")
+            return GatewayReply(TEXTS["unavailable"])
         outgoing = await asyncio.to_thread(runtime.handle_message, incoming)
         return GatewayReply(outgoing.text, outgoing.embed, log_db)
 
@@ -189,6 +192,8 @@ class TenantGateway:
         runtime = self._supervisor.runtimes.get(tenant.id)
         if runtime is not None:
             return runtime.db_path, runtime.core
+        if tenant.archived_at is not None:
+            return None
         path = resolve_db_path(tenant, self._tenant_dir)
         return (path, CoreDatabase(path)) if path.exists() else None
 

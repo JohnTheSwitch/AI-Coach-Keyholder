@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
@@ -209,6 +209,23 @@ class TenantRegistry:
         tenant = self.get(tenant_id)
         return tenant is not None and tenant.is_managed
 
+    def pending_archives(self, *, now: datetime, grace: timedelta) -> list[Tenant]:
+        """Removed tenants whose database has not been archived yet and whose removal is older than `grace` (so no cycle can still be running)."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT * FROM tenants WHERE status = 'removed' AND archived_at IS NULL AND is_tenant_zero = 0 "
+                                "AND removed_at <= ? ORDER BY removed_at", (_iso(now - grace),))
+        return [_row_to_tenant(r) for r in rows]
+
+    def mark_archived(self, tenant_id: str, *, archive_file: str | None, now: datetime) -> bool:
+        def write(tx: Transaction, _s: object) -> bool:
+            cur = tx.execute("UPDATE tenants SET archived_at = ?, archive_file = ?, updated_at = ? WHERE id = ? AND status = 'removed' "
+                             "AND archived_at IS NULL", (_iso(now), archive_file, _iso(now), tenant_id))
+            if cur.rowcount:
+                self._audit(tx, tenant_id, "archived", "system", archive_file or "no database", now)
+            return cur.rowcount > 0
+
+        return bool(apply_transition(self._core, write=write))
+
     def pending_invitations(self) -> list[Tenant]:
         """Invited tenants whose invitation DM has not been delivered yet."""
         with self._core.transaction() as tx:
@@ -287,4 +304,6 @@ def _row_to_tenant(row) -> Tenant:
         removed_by=None if row["removed_by"] is None else RemovedBy(row["removed_by"]),
         created_at=_parse_iso(row["created_at"]), updated_at=_parse_iso(row["updated_at"]),
         pairing_confirmed_at=_opt(row["pairing_confirmed_at"]) if "pairing_confirmed_at" in row.keys() else None,
+        archived_at=_opt(row["archived_at"]) if "archived_at" in row.keys() else None,
+        archive_file=row["archive_file"] if "archive_file" in row.keys() else None,
     )

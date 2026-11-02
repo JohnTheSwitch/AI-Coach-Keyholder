@@ -6,7 +6,9 @@ for the principles every decision and every future change must satisfy,
 and [`docs/architecture/`](docs/architecture/) for the full
 architecture baseline (nine technical designs + an integration audit +
 implementation conventions -- all with status *Architecture baseline --
-approved for implementation*).
+approved for implementation*). Running the bot as keyholder for several
+wearers (v0.39 Phase E, off by default): see the operator runbook
+[`docs/operations/multi_wearer_runbook.md`](docs/operations/multi_wearer_runbook.md).
 
 ## Architecture at a glance
 
@@ -71,7 +73,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3259 passing tests** across the whole repository (`pytest`), including
+**3271 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms

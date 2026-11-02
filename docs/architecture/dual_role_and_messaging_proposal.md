@@ -356,3 +356,33 @@ Interpretations to confirm:
 2. **Lock actions are never refused by the budget**, only counted; protecting decided releases and freezes is more important than a strict cap.
 3. **Budget default 30 requests per minute** for the keyholder account (each tenant cycle uses about 1-2 background requests: an observation refresh when stale, plus one chat poll when opted in).
 4. **The budget is per process** (the bot); the CLI's occasional pairing and listing calls are not counted.
+
+## 16. Phase E6 result (archival, isolation hardening, runbook) and the Phase E summary
+
+Confirmed after E5: chat polled per tenant cycle; lock actions never refused by the budget, only counted; 30 requests per minute; the CLI is outside the budget.
+
+Built in E6:
+- **Archival** (`tenancy/archive.py`, platform migration 004 `archived_at`, `archive_file`): when a tenant is removed (keyholder removal, wearer `leave confirm`, invitee
+  `decline`), its loop and runtime stop at once; after a 5-minute grace the bot checkpoints the SQLite log and moves `tenant_<id>.sqlite` (with any side files) into
+  `tenants/archive/` under a time-stamped name, makes it read-only and records it with an audit event. Nothing is deleted. The factory refuses an archived tenant, the gateway never
+  opens one, a re-invite is a new tenant with a new file. A failed move is retried on the next pass. `python -m cli tenants archive` runs the pass on demand and `tenants list --all`
+  shows removed and archived tenants.
+- **Isolation hardening:** the factory refuses any tenant database outside the live tenant directory or equal to the owner's database; the gateway refuses to hand a message to a
+  runtime whose tenant id differs from the routed tenant; runtimes built for a message are dropped when the tenant stops being managed; archived tenants are invisible to every path.
+- **Isolation audit test:** two tenants used end to end (onboarding, private text, chat opt-in, chat messages including a stranger's post into one wearer's conversation, a cycle each);
+  then every text value of every table of each tenant database and of the owner's database is scanned: no identifying value of one tenant appears anywhere else, a stranger's chat
+  post reaches no model, and one wearer's words never appear in the other wearer's model calls.
+- **Runbook:** `docs/operations/multi_wearer_runbook.md` (setup, adding a wearer, stopping things, ending a membership and archives, the request budget, troubleshooting, backups).
+
+### Phase E summary
+| Phase | What it added |
+|---|---|
+| E1 | Platform database, tenant registry and lifecycle, router lookup, global halt, owner CLI, tenant zero registered unchanged |
+| E2 | Tenant factory (one isolated database and runtime per wearer), staggered per-tenant loops, platform halt in the composition |
+| E3 | Discord routing by author, invitation and acceptance with consent records, wearer `halt` / `resume` / `leave` |
+| E4 | Managed-lock observation through the keyholder search with the pairing check; owner pairing and wearer confirmation |
+| E5 | Per-tenant Chaster chat and the shared keyholder request budget |
+| E6 | Archival of removed tenants, isolation hardening and audit, operator runbook |
+
+Everything stays behind `ENABLE_MULTI_WEARER` (default off); with it off the bot behaves exactly as the single-wearer system. Still to do outside the code: the live test-lock
+verification and the first real invite, pair and confirm with a test wearer.

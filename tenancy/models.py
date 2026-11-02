@@ -47,6 +47,8 @@ class Tenant:
     created_at: datetime
     updated_at: datetime
     pairing_confirmed_at: datetime | None = None
+    archived_at: datetime | None = None
+    archive_file: str | None = None
 
     @property
     def is_managed(self) -> bool:

@@ -36,7 +36,7 @@ def stagger_offsets(count: int, interval_seconds: float) -> list[float]:
 
 class TenantLoopSupervisor:
     def __init__(self, *, registry: TenantRegistry, factory: TenantFactory, interval_seconds: float = 60.0,
-                 reconcile_seconds: float = 30.0) -> None:
+                 reconcile_seconds: float = 30.0, archiver=None) -> None:
         if interval_seconds <= 0 or reconcile_seconds <= 0:
             raise ValueError("intervals must be positive")
         self._registry = registry
@@ -47,6 +47,7 @@ class TenantLoopSupervisor:
         self.runtimes: dict[str, TenantRuntime] = {}
         self._retry_at: dict[str, float] = {}
         self._build_locks: dict[str, asyncio.Lock] = {}
+        self._archiver = archiver          # tenancy.archive.TenantArchiver (Phase E6)
 
     async def run(self) -> None:
         try:
@@ -67,6 +68,13 @@ class TenantLoopSupervisor:
         wanted_ids = {t.id for t in desired}
         for tenant_id in [i for i in self._tasks if i not in wanted_ids or self._tasks[i].done()]:
             await self._stop(tenant_id)
+        for tenant_id in [i for i in self.runtimes if i not in wanted_ids]:      # e.g. built for a message, then removed
+            self.runtimes.pop(tenant_id, None)
+        if self._archiver is not None:
+            try:
+                await asyncio.to_thread(self._archiver.archive_pending, is_running=lambda i: i in self._tasks or i in self.runtimes)
+            except Exception:
+                logger.exception("Archiving removed tenants failed; will retry.")
         new = [t for t in desired if t.id not in self._tasks]
         loop_time = asyncio.get_running_loop().time()
         offsets = stagger_offsets(len(new), self._interval)

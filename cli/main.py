@@ -231,10 +231,20 @@ def _tenant_execution(admin, services, args, now):
     return AdminResult(AdminOutcome.DONE, tenant)
 
 
+class _CliClock:
+    def __init__(self, now) -> None:
+        self._now = now
+
+    def now(self):
+        return self._now()
+
+
 def _render_tenants(tenants) -> str:
     rows = [(t.id, t.display_name, t.status.value, "yes" if t.is_tenant_zero else "-", t.discord_id or "-", t.lock_id or "-")
             for t in tenants]
     headers = ("TENANT", "NAME", "STATUS", "ZERO", "DISCORD ID", "LOCK ID")
+    rows = [r + (("archived" if t.archived_at else "-"),) for r, t in zip(rows, tenants)] if tenants else rows
+    headers = headers + ("ARCHIVE",)
     widths = [max([len(h)] + [len(r[i]) for r in rows]) for i, h in enumerate(headers)]
     lines = ["  ".join(h.ljust(w) for h, w in zip(headers, widths)), "  ".join("-" * w for w in widths)]
     return "\n".join(lines + ["  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in rows])
@@ -267,7 +277,9 @@ def main(argv: list[str], *, out: TextIO | None = None,
     freeze.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
-    tsub.add_parser("list", help="List tenants and the platform halt.")
+    lst = tsub.add_parser("list", help="List tenants and the platform halt.")
+    lst.add_argument("--all", action="store_true", help="also show removed and archived tenants")
+    tsub.add_parser("archive", help="Archive the database files of removed tenants now (normally the bot does it).")
     invite = tsub.add_parser("invite", help="Invite a person (they must accept in their own Discord DM).")
     invite.add_argument("--name", required=True)
     invite.add_argument("--discord-id", required=True)
@@ -303,7 +315,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
         admin, services = tenants_factory()
         cmd = args.tenant_command
         if cmd == "list":
-            print(_render_tenants(services.registry.list_tenants()), file=out)
+            print(_render_tenants(services.registry.list_tenants(include_removed=args.all)), file=out)
             print(f"\nPlatform halt: {'HALTED' if services.halt.is_halted() else 'clear'}", file=out)
             return 0
         if cmd == "invite":
@@ -314,6 +326,16 @@ def main(argv: list[str], *, out: TextIO | None = None,
             result = admin.resume(actor=args.owner_id, tenant_id=args.tenant_id)
         elif cmd == "remove":
             result = admin.remove(actor=args.owner_id, tenant_id=args.tenant_id, confirmed=args.yes)
+        elif cmd == "archive":
+            refusal = admin.authorize(args.owner_id, "archive")
+            if refusal is not None:
+                result = refusal
+            else:
+                from tenancy.archive import TenantArchiver
+                from tenancy.admin import AdminOutcome, AdminResult
+                done = TenantArchiver(registry=services.registry, tenant_dir=services.tenant_dir, clock=_CliClock(now)).archive_pending()
+                print(f"Archived {len(done)} tenant database(s).", file=out)
+                result = AdminResult(AdminOutcome.DONE)
         elif cmd in ("pair", "unpair"):
             refusal = admin.authorize(args.owner_id, cmd)
             if refusal is not None:
