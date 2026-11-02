@@ -100,7 +100,7 @@ class TestFactory:
         runtime = w.factory.build(t.id)
         assert runtime.db_path == w.platform.tenant_dir / f"{t.id}.sqlite" and runtime.db_path.exists()
         with runtime.core.transaction() as tx:
-            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 36
+            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 37
             identity = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = '2000002'")
         assert identity["user_account_id"] == runtime.wearer_user_id
 
@@ -437,4 +437,4 @@ class TestImportBoundaries:
         assert offenders == []
 
     def test_the_main_database_schema_is_unchanged_by_phase_e2(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 36
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 37

@@ -106,3 +106,4 @@ All tenants use the one keyholder account. The bot counts every request made wit
 - Wearers (and the owner) can always run `memory`, `forget <id>`, `forget all`, `conditioning status|on|off` in their DM.
 - Coaching Memory is stored and used only with `CONVERSATION_STRUCTURED_OUTPUT=true` and `ENABLE_COACHING_MEMORY=true`; entries live in each tenant's own database.
 - For Qwen 2.5 32B set `OLLAMA_READ_TIMEOUT_SECONDS=120` and `OLLAMA_KEEP_ALIVE=30m`; check the model first with `python -m scripts.eval_structured_output`.
+- Model suggestions for you (`ENABLE_AI_SUGGESTIONS=true`): `python -m cli ai-ideas list --owner-id <you>`, then `ai-ideas accept|reject|archive <tenant>:<id>`. Accepting changes nothing by itself.

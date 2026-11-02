@@ -239,6 +239,68 @@ class _CliClock:
         return self._now()
 
 
+def build_idea_sources():
+    """(owner id, [(label, database path)]): the owner's main database plus, with multi-wearer on, every live tenant database."""
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from tenancy.registry import resolve_db_path
+
+    config = Config.load()
+    sources = [("tenant_0", config.db_path)]
+    if config.enable_multi_wearer:
+        from infrastructure.clock import SystemClock
+        from tenancy.services import open_platform_services
+        services = open_platform_services(
+            platform_db_path=config.platform_db_path or (config.db_path.parent / "platform.sqlite"), main_db_path=config.db_path,
+            main_core=CoreDatabase(config.db_path), owner_user_id=config.owner_user_id, clock=SystemClock(), cap=config.tenant_cap)
+        for tenant in services.registry.list_tenants():
+            if not tenant.is_tenant_zero:
+                sources.append((tenant.id, resolve_db_path(tenant, services.tenant_dir)))
+    return config.owner_user_id, sources
+
+
+def _ai_ideas(args, out, ideas_factory, now) -> int:
+    """Owner-only review of the idea box across tenants. Read-only except the verdict on one suggestion; never shown to a model."""
+    import hmac
+
+    from infrastructure.database import Database as CoreDatabase
+    from idea_box.service import IdeaBox
+
+    owner, sources = ideas_factory()
+    if not owner or not hmac.compare_digest(str(args.owner_id).encode("utf-8"), str(owner).encode("utf-8")):
+        print("Refused: that identity is not the owner (or OWNER_USER_ID is not configured).", file=out)
+        return 3
+    if args.ideas_command == "list":
+        status = None if args.status == "all" else args.status
+        shown = 0
+        for label, path in sources:
+            if args.tenant and label != args.tenant:
+                continue
+            if not path.exists():
+                continue
+            try:
+                ideas = IdeaBox(path, core=CoreDatabase(path)).list(status=status)
+            except Exception:
+                print(f"[{label}] could not be read", file=out)
+                continue
+            for idea in ideas:
+                shown += 1
+                print(f"{label}:{idea.short_id}  [{idea.suggestion_type}] ({idea.status}) {idea.created_at:%Y-%m-%d}  {idea.content}", file=out)
+        print(f"{shown} suggestion(s).", file=out)
+        return 0
+    label, _, short = args.ref.partition(":")
+    path = dict(sources).get(label)
+    if path is None or not short or not path.exists():
+        print("No such tenant or suggestion.", file=out)
+        return 3
+    status = {"accept": "accepted", "reject": "rejected", "archive": "archived"}[args.ideas_command]
+    if not IdeaBox(path, core=CoreDatabase(path)).review(short, status=status, note=args.note, now=now()):
+        print("No single suggestion matches that id.", file=out)
+        return 3
+    print(f"Marked {status}. Nothing changes by itself: adopting an idea is a separate change that needs the wearer's consent.", file=out)
+    return 0
+
+
 def _render_tenants(tenants) -> str:
     rows = [(t.id, t.display_name, t.status.value, "yes" if t.is_tenant_zero else "-", t.discord_id or "-", t.lock_id or "-")
             for t in tenants]
@@ -261,11 +323,13 @@ def _state(value: str) -> bool:
 def main(argv: list[str], *, out: TextIO | None = None,
          directory_factory: Callable[[], tuple[LockDirectory, str | None, str | None]] = build_directory,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
-         tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None) -> int:
+         tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
+         ideas_factory: Callable[[], tuple] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
     pairing_factory = pairing_factory or build_pairing_service
+    ideas_factory = ideas_factory or build_idea_sources
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -277,6 +341,17 @@ def main(argv: list[str], *, out: TextIO | None = None,
     freeze.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
+    ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
+    isub = ideas.add_subparsers(dest="ideas_command", required=True)
+    il = isub.add_parser("list", help="List suggestions (default: new ones).")
+    il.add_argument("--status", choices=("new", "accepted", "rejected", "archived", "all"), default="new")
+    il.add_argument("--tenant", help="only this tenant id")
+    for verb in ("accept", "reject", "archive"):
+        ip = isub.add_parser(verb, help=f"Mark one suggestion {verb}ed (changes nothing else).")
+        ip.add_argument("ref", help="<tenant id>:<suggestion id prefix>, as shown by list")
+        ip.add_argument("--note", default=None)
+    for p in isub.choices.values():
+        p.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     lst = tsub.add_parser("list", help="List tenants and the platform halt.")
     lst.add_argument("--all", action="store_true", help="also show removed and archived tenants")
     tsub.add_parser("archive", help="Archive the database files of removed tenants now (normally the bot does it).")
@@ -311,6 +386,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         listing = directory.list_locks(wearer_user_id=wearer_id, keyholder_user_id=keyholder_id, now=now())
         print(render_listing(listing), file=out)
         return 0 if not listing.problems else 2
+    if args.command == "ai-ideas":
+        return _ai_ideas(args, out, ideas_factory, now)
     if args.command == "tenants":
         admin, services = tenants_factory()
         cmd = args.tenant_command

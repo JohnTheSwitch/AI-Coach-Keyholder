@@ -106,17 +106,35 @@ class TenantRuntime:
 def coaching_memory_parts(config, db_path, core):
     """(memory service, conditioning preferences, context provider or None, structured sink or None) for ONE database. The service and the
     preferences are always built, so a user can view and erase their memory and use `conditioning` even when the feature is switched off;
-    the provider (reading memory into prompts) and the sink (writing it) exist only with ENABLE_COACHING_MEMORY and structured output on."""
+    the provider (reading memory into prompts) and the memory sink exist only with ENABLE_COACHING_MEMORY and structured output on; the
+    idea-box sink (Phase F3, write-only) only with ENABLE_AI_SUGGESTIONS and structured output on."""
     from conversation_engine.context_providers.coaching_memory_provider import CoachingMemoryContextProvider
     from coaching_memory.service import CoachingMemoryService
     from release_engine.conditioning import ConditioningPreferences
 
     memory = CoachingMemoryService(db_path, core=core)
     conditioning = ConditioningPreferences(db_path, core=core)
-    if not (getattr(config, "enable_coaching_memory", False) and getattr(config, "conversation_structured_output", False)):
-        return memory, conditioning, None, None
-    provider = CoachingMemoryContextProvider(get_entries=lambda user_id: [(e.category, e.content) for e in memory.recent(user_id)])
-    return memory, conditioning, provider, memory.sink
+    structured = getattr(config, "conversation_structured_output", False)
+    sinks = []
+    provider = None
+    if structured and getattr(config, "enable_coaching_memory", False):
+        provider = CoachingMemoryContextProvider(get_entries=lambda user_id: [(e.category, e.content) for e in memory.recent(user_id)])
+        sinks.append(memory.sink)
+    if structured and getattr(config, "enable_ai_suggestions", False):
+        # Phase F3: the idea box is WRITE-ONLY from here; nothing that builds model context reads it.
+        from idea_box.service import IdeaBox
+        sinks.append(IdeaBox(db_path, core=core).sink)
+    if not sinks:
+        return memory, conditioning, provider, None
+
+    def sink(subject_key, parsed, now, user_message=None):
+        for one in sinks:
+            try:
+                one(subject_key, parsed, now, user_message)
+            except Exception:
+                logger.exception("A structured-output sink failed; the others and the reply are unaffected.")
+
+    return memory, conditioning, provider, sink
 
 
 def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str) -> Config:

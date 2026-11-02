@@ -205,3 +205,25 @@ Interpretations to confirm:
 2. **Entries are retrieved by recency** (the 5 newest), not by semantic relevance; relevance ranking would need a local embedding model.
 3. **`conditioning off` is available now** although the factor itself arrives in F4, so the consent text never promises a command that does not exist.
 4. **The owner (tenant zero) has the same commands and the same rules** when the flags are on.
+
+## 8. F3 result (the idea box)
+
+Confirmed after F2: broad filters; newest-first retrieval; `conditioning off` before F4; the same rules for the owner.
+
+Built in F3 (`ENABLE_AI_SUGGESTIONS`, default false; needs `CONVERSATION_STRUCTURED_OUTPUT=true`):
+- **Per-tenant storage** (migration 037): `ai_suggestions` in each database, types `rule_tweak | new_punishment | system_flaw` and the 500-character limit enforced by the schema, status
+  `new | accepted | rejected | archived` with an owner note and review time.
+- **Write path** (`idea_box/service.py`): only through the structured-output sink, only for trusted turns; health, medical, trauma, self-harm and distress content (in the suggestion or in the
+  user's message) is refused; 5 per user per day; duplicates suppressed. The engine's sink now combines Coaching Memory and the idea box, each behind its own flag; one failing sink never
+  stops the other or the reply.
+- **Never fed back:** a static guard fails the suite if anything outside `idea_box/`, the CLI and the write-side wiring imports the package or mentions the table, and no package on the model
+  context path (conversation engine, Coaching Memory, application, memory system) may mention it. An end-to-end test submits an idea, then asks about it: the marker never appears in any
+  later prompt or in the `memory` listing, while the Coaching Memory note does (so the test is not vacuous).
+- **Owner CLI:** `python -m cli ai-ideas list | accept | reject | archive` reads the owner's database and every live tenant database, labels each suggestion `<tenant>:<id>`, and records a
+  verdict on exactly one suggestion in its own database. Owner-only (`--owner-id` equal to `OWNER_USER_ID`), also for reading, because suggestions are derived from a wearer's conversation.
+  Accepting changes nothing by itself.
+
+Interpretations to confirm:
+1. **Reading is owner-only too**, not just reviewing.
+2. **Archived tenants are not read** (their database is in the read-only archive); live and suspended tenants are.
+3. **The same exclusion list as Coaching Memory** applies to suggestions, so sensitive details never reach the owner through this channel.
