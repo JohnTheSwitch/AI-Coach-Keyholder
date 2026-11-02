@@ -87,6 +87,8 @@ class RulesExecutionWiring:
     daily: DailyEvaluationTask | None = None
     check_ins: CheckInService | None = None
     release_user_id: str | None = None
+    telemetry: object | None = None                 # behavioral_telemetry.collector.TelemetryCollector (Phase G1, always built)
+    telemetry_store: object | None = None           # its store: the wearer's `telemetry` view and `forget all`
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -110,7 +112,7 @@ def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
     transport=None, clock: Clock | None = None, check_in_sender: CheckInSender | None = None,
     check_in_complete=None, keyholder_connections=None, keyholder_token_manager=None, halt_source=None,
-    observation_source=None,
+    observation_source=None, telemetry_consent_target: str | None = None,
 ) -> RulesExecutionWiring:
     """`transport` / `check_in_sender` / `check_in_complete` are injectable (tests; the bot supplies the real
     Discord sender and Ollama completion). Production passes transport=None and gets the real
@@ -118,8 +120,13 @@ def build_rules_and_execution(
 
     Multi-wearer (Phase E2): a tenant has its OWN wearer `connections` / `token_manager` (its database) but uses the platform's single
     keyholder connection, passed as `keyholder_connections` / `keyholder_token_manager` (default: the same objects, the single-wearer case).
-    `halt_source` (any object with is_halted()) is the platform-wide halt; execution stops when it OR the tenant's own halt is set."""
+    `halt_source` (any object with is_halted()) is the platform-wide halt; execution stops when it OR the tenant's own halt is set.
+    `telemetry_consent_target` (Phase G1): in a tenant database, the consent target of the accepted invitation; telemetry is recorded only when it disclosed it."""
     out = RulesExecutionWiring()
+    from behavioral_telemetry.collector import TelemetryCollector
+    from behavioral_telemetry.store import TelemetryStore
+    out.telemetry_store = TelemetryStore(config.db_path, core=core, consent_target=telemetry_consent_target)
+    out.telemetry = TelemetryCollector(out.telemetry_store)
     kh_connections = keyholder_connections if keyholder_connections is not None else connections
     kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)

@@ -4,7 +4,7 @@ system/periodic.py
 The periodic cycle (approved: every ~60 seconds), guarded by the same
 single-instance lease as startup so two processes never run it at once:
 
-    drain the outbox -> Rules Engine evaluates pending triggers -> executor pass
+    drain the outbox -> Rules Engine evaluates pending triggers -> executor pass -> behavioral telemetry (Phase G1)
 
 A failure in any step is logged and never raises out of the loop.
 """
@@ -33,7 +33,7 @@ CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
 def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
-                       release_task=None, check_ins=None, daily=None) -> bool:
+                       release_task=None, check_ins=None, daily=None, telemetry=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -62,6 +62,11 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
             release_task.sync(now)                   # reflect the execution result in the same cycle
     except Exception:
         logger.exception("Periodic cycle failed; will retry next interval.")
+    try:
+        if telemetry is not None:
+            telemetry.run(now)                       # last and on its own: derived records only, never affects the steps above
+    except Exception:
+        logger.exception("Behavioral telemetry collection failed; will retry next interval.")
     finally:
         release_system_startup_lease(core, lease)
     return True
@@ -69,12 +74,12 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
                         interval_seconds: int = 60, supervision=None,
-                        release_task=None, check_ins=None, daily=None) -> None:
+                        release_task=None, check_ins=None, daily=None, telemetry=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
-                supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily,
+                supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
             )
         except asyncio.CancelledError:
             raise

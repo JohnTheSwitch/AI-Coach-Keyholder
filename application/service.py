@@ -92,7 +92,7 @@ class ApplicationService:
         chaster_token_manager: ChasterTokenManager | None = None,
         check_in_listener=None,
         channel_service=None,
-        coaching_memory=None, conditioning=None,
+        coaching_memory=None, conditioning=None, telemetry=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -105,6 +105,8 @@ class ApplicationService:
         # Phase F2: the user's own Coaching Memory (view / erase) and Progressive Conditioning switch.
         self._coaching_memory = coaching_memory
         self._conditioning = conditioning
+        # Phase G1: the user's own Behavioral Telemetry (view counts / erase); behavioral_telemetry.store.TelemetryStore by injection.
+        self._telemetry = telemetry
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -319,7 +321,8 @@ class ApplicationService:
         self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
 
         self.router.register("memory", "Show what the coach remembers about you (Coaching Memory)", self._handle_memory)
-        self.router.register("forget all", "Erase everything in your Coaching Memory", self._handle_forget_all)
+        self.router.register("forget all", "Erase everything in your Coaching Memory and your behavioral telemetry", self._handle_forget_all)
+        self.router.register("telemetry", "Show what behavioral telemetry is recorded about you", self._handle_telemetry)
         self.router.register("conditioning status", "Show whether Progressive Conditioning is on for you", self._handle_conditioning_status)
         self.router.register("conditioning off", "Stop Progressive Conditioning from increasing (it stays at its current level)",
                              self._handle_conditioning_off)
@@ -894,10 +897,31 @@ class ApplicationService:
                                + "\n\nErase one with `forget <id>` or everything with `forget all`.")
 
     def _handle_forget_all(self, ctx: RequestContext) -> OutgoingMessage:
-        if self._coaching_memory is None:
+        if self._coaching_memory is None and self._telemetry is None:
             return OutgoingMessage(text="Coaching Memory is not available on this bot.")
-        count = self._coaching_memory.forget_all(ctx.user.id)
-        return OutgoingMessage(text=f"Erased {count} entr{'y' if count == 1 else 'ies'}. Your Coaching Memory is empty.")
+        parts = []
+        if self._coaching_memory is not None:
+            count = self._coaching_memory.forget_all(ctx.user.id)
+            parts.append(f"Erased {count} entr{'y' if count == 1 else 'ies'}. Your Coaching Memory is empty.")
+        if self._telemetry is not None:
+            erased = self._telemetry.forget_all(ctx.user.id)
+            parts.append(f"Erased {erased} behavioral telemetry record{'' if erased == 1 else 's'}.")
+        return OutgoingMessage(text=" ".join(parts))
+
+    def _handle_telemetry(self, ctx: RequestContext) -> OutgoingMessage:
+        """Categories and counts only, never a metric value (the conditioning factor stays hidden, philosophy 4.2)."""
+        if self._telemetry is None:
+            return OutgoingMessage(text="Behavioral telemetry is not available on this bot.")
+        summary = self._telemetry.summary(ctx.user.id)
+        head = ("Behavioral telemetry is recorded for you: numeric facts derived from your check-ins, token use and daily results, kept for 180 days "
+                "and never sent anywhere." if summary.recording else
+                "Behavioral telemetry is not recorded for you (the invitation you accepted did not include it).")
+        if not summary.counts:
+            body = "There are no records."
+        else:
+            body = "Records: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(summary.counts.items()))
+            body += f" (oldest {summary.oldest.date().isoformat()})." if summary.oldest else "."
+        return OutgoingMessage(text=f"{head}\n{body}\nErase it with `forget all` (this also erases your Coaching Memory).")
 
     def _forget_one(self, text: str, ctx: RequestContext) -> OutgoingMessage | None:
         """`forget <id>` (the router only matches exact commands, so the argument is parsed here)."""

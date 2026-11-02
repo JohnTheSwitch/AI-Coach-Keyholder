@@ -54,7 +54,10 @@ from tenancy.registry import TenantError, TenantRegistry, resolve_db_path
 
 logger = logging.getLogger("ai_coach_keyholder.system.tenant_factory")
 
-__all__ = ["SharedServices", "TenantRuntime", "TenantFactory", "tenant_config", "coaching_memory_parts"]
+__all__ = ["SharedServices", "TenantRuntime", "TenantFactory", "tenant_config", "coaching_memory_parts", "TENANT_CONSENT_TARGET"]
+
+# The consent_log target of an accepted invitation (= system.tenant_gateway.CONSENT_TARGET, which imports this module indirectly; a test keeps them equal).
+TENANT_CONSENT_TARGET = "multi_wearer_keyholder"
 
 
 @dataclass(frozen=True)
@@ -100,7 +103,7 @@ class TenantRuntime:
         w = self.wiring
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
-            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily)
+            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry)
 
 
 def coaching_memory_parts(config, db_path, core):
@@ -207,7 +210,7 @@ class TenantFactory:
             cfg, core, connections=connections, oauth_client=s.oauth_client, lock_client=s.lock_client, token_manager=tokens,
             clock=s.clock, check_in_sender=sender, check_in_complete=s.check_in_complete,
             keyholder_connections=s.keyholder_connections, keyholder_token_manager=s.keyholder_token_manager, halt_source=s.platform_halt,
-            observation_source=source)
+            observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET)
         if wiring.release_engine is not None:
             providers = providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
 
@@ -225,7 +228,8 @@ class TenantFactory:
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
-            channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning)
+            channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning,
+            telemetry=wiring.telemetry_store)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
         if chat:

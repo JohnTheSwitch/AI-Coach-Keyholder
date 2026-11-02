@@ -114,7 +114,7 @@ All of them are off by default and apply to every tenant (and to the owner's own
 
 Model settings for Qwen 2.5 32B: `OLLAMA_MODEL=<your qwen2.5 32b tag>`, `OLLAMA_READ_TIMEOUT_SECONDS=120`, `OLLAMA_KEEP_ALIVE=30m`.
 
-**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`.
+**Wearer commands** (in their DM, always available, never sent to the model): `memory`, `forget <id>`, `forget all`, `conditioning status|on|off`, `telemetry`.
 `conditioning off` freezes the factor at its current value; it never resets.
 
 **Owner commands:**
@@ -136,3 +136,15 @@ Turning `ENABLE_SLAVE_TRAINING` off returns every threshold to 1.0 (the stored f
 | No suggestions in `ai-ideas list` | `ENABLE_AI_SUGGESTIONS` off, filtered content, or the daily limit | check the flags |
 | The factor never rises | global flag, owner switch, wearer `conditioning off`, or no Chaster-confirmed token release yet | `tenants slave-training <id> --status`; the audit table `training_increments` records why each release did or did not count |
 | First reply after a pause takes a minute | the 32B model is loading | expected; keep `OLLAMA_KEEP_ALIVE=30m` |
+
+## 10. Phase G1: local Behavioral Telemetry
+
+Always on, no flag. The last step of every periodic cycle derives numeric records (check-in response delays, token spends, conditioning increments, daily
+summaries) from tables the system already writes, in each tenant's own database. Nothing is sent anywhere, and nothing reaches the model.
+
+- **Consent:** a tenant is recorded only after accepting an invitation that discloses it. Wearers who accepted an older invitation are not recorded (their
+  `telemetry` says so). There is no re-consent command yet.
+- **Wearer:** `telemetry` shows the categories, counts and oldest record (never the conditioning factor); `forget all` erases it together with the Coaching Memory.
+- **Retention:** 180 days, pruned once a day.
+- **If records stop appearing:** check the log for `Behavioral telemetry collection failed`; the periodic cycle only runs while at least one periodic feature
+  (rules engine, supervision, release engine, check-ins) is enabled. The table is `behavioral_telemetry`; the read positions are in `telemetry_watermarks`.
