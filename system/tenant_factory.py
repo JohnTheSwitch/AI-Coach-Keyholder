@@ -70,6 +70,11 @@ class SharedServices:
     platform_halt: object | None                            # anything with is_halted()
     check_in_sender_factory: Callable[[Path, CoreDatabase], object] | None = None   # Discord delivery bound to the TENANT's database
     check_in_complete: Callable[[str, str], str] | None = None                       # rubric classifier completion (stateless)
+    # Phase E5: the keyholder token manager for BACKGROUND traffic (observation, searches, chat), wrapped by the shared API budget; the plain
+    # `keyholder_token_manager` above is the execution plane's (essential lane). Chat is per tenant and needs ENABLE_CHASTER_MESSAGING.
+    keyholder_background_tokens: object | None = None
+    chat_enabled: bool = False
+    conversation_client: object | None = None
 
 
 @dataclass
@@ -83,6 +88,8 @@ class TenantRuntime:
     process_id: str
     clock: Clock
     notes: list[str] = field(default_factory=list)
+    chat_poller: object | None = None                 # messaging.chaster_poller.ChasterConversationPoller over THIS tenant's database
+    chat_adapter: object | None = None
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
         """The tenant's own application entry (the Discord routing of E3 calls it). It never sees another tenant's data."""
@@ -152,7 +159,7 @@ class TenantFactory:
         # The tenant's lock is observed through the keyholder search and only after the pairing check (Phase E4).
         source = ManagedLockObservationSource(
             path, core=core, get_tenant=lambda tid=tenant.id: self._registry.get(tid), wearer_user_id=wearer.id,
-            keyholder_user_id=s.config.chaster_execution_keyholder_user_id, keyholder_tokens=s.keyholder_token_manager,
+            keyholder_user_id=s.config.chaster_execution_keyholder_user_id, keyholder_tokens=s.keyholder_background_tokens or s.keyholder_token_manager,
             keyholder_connections=s.keyholder_connections, lock_client=s.lock_client, clock=s.clock,
             wearer_tokens=tokens, wearer_connections=connections)
         cfg = tenant_config(s.config, db_path=path, wearer_user_id=wearer.id)
@@ -170,11 +177,61 @@ class TenantFactory:
 
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
                                     queue=SubjectConversationQueue(), providers=providers, tool_executor=None)
+        chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
         service = ApplicationService(
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
-            check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None))
+            check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
+            channel_service=chat[0] if chat else None)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
+        if chat:
+            chat[3]["service"] = service
+            runtime.chat_adapter, runtime.chat_poller = chat[1], chat[2]
         logger.info("Tenant %s is ready (%d note(s)).", tenant.id, len(runtime.notes))
         return runtime
+
+    # ------------------------------------------------------------------ Phase E5: per-tenant Chaster chat
+
+    def _chat_stack(self, tenant_id: str, path: Path, core: CoreDatabase, wearer_id: str, wearer_connections):
+        """(channel service, adapter, poller, holder) over THIS tenant's database, or None when chat is off or the bot is not ready.
+        The wearer's Chaster account is the CONFIRMED pairing's account, or else the wearer's own connected account; the chat routes, polling
+        state and seen ids live in the tenant's own tables (migrations 032 / 033)."""
+        s = self._shared
+        bot_id = s.config.chaster_execution_keyholder_user_id
+        tokens = s.keyholder_background_tokens or s.keyholder_token_manager
+        if not s.chat_enabled or not bot_id or tokens is None or s.keyholder_connections is None:
+            return None
+        from chaster.conversation_client import ChasterConversationClient
+        from messaging.channel_service import ChannelPreferenceService
+        from messaging.chaster_adapter import ChasterMessagingAdapter
+        from messaging.chaster_poller import ChasterConversationPoller
+        from messaging.routes import MessageRouteRepository
+
+        registry = self._registry
+
+        def account_of(user_id: str) -> str | None:
+            if user_id != wearer_id:
+                return None                                       # only this tenant's wearer has a Chaster identity here
+            tenant = registry.get(tenant_id)
+            if tenant is not None and tenant.lock_ready:
+                return tenant.chaster_account_id
+            own = wearer_connections.get(user_id) if wearer_connections is not None else None
+            return None if own is None else own.chaster_account_id
+
+        holder: dict = {}
+
+        async def handler(unified):
+            import asyncio
+            out = await asyncio.to_thread(holder["service"].handle_conversation_only, unified.user_id, unified.content, s.clock.now())
+            return None if out is None else out.text
+
+        routes = MessageRouteRepository(path, core=core)
+        client = s.conversation_client or ChasterConversationClient()
+        channel = ChannelPreferenceService(routes=routes, connections=s.keyholder_connections, token_manager=tokens, client=client,
+                                           bot_user_id=bot_id, chaster_messaging_enabled=True, chaster_account_of=account_of)
+        adapter = ChasterMessagingAdapter(token_manager=tokens, client=client, connections=s.keyholder_connections, bot_user_id=bot_id,
+                                          clock=s.clock, handler=handler)
+        poller = ChasterConversationPoller(path, core=core, routes=routes, connections=s.keyholder_connections, token_manager=tokens,
+                                           client=client, adapter=adapter, bot_user_id=bot_id, clock=s.clock, chaster_account_of=account_of)
+        return channel, adapter, poller, holder

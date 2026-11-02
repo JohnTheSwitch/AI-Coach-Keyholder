@@ -123,7 +123,25 @@ class TenantLoopSupervisor:
                 raise
             except Exception:
                 logger.exception("A cycle of tenant %s failed; will retry next interval.", runtime.tenant_id)
+            await self._poll_chat(runtime)
             await asyncio.sleep(self._interval)
+
+    async def _poll_chat(self, runtime: TenantRuntime) -> None:
+        """Phase E5: the tenant's own Chaster chat, polled once per cycle (so it inherits the stagger). A failure stays in this tenant."""
+        poller = getattr(runtime, "chat_poller", None)
+        adapter = getattr(runtime, "chat_adapter", None)
+        if poller is None or adapter is None or not self._registry.is_managed(runtime.tenant_id):
+            return
+        try:
+            for message in await asyncio.to_thread(poller.poll_once):
+                try:
+                    await adapter.handle_incoming_message(message)
+                except Exception:
+                    logger.exception("Handling a Chaster chat message of tenant %s failed.", runtime.tenant_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Chaster chat polling of tenant %s failed.", runtime.tenant_id)
 
     async def _stop(self, tenant_id: str) -> None:
         task = self._tasks.pop(tenant_id, None)

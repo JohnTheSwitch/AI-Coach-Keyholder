@@ -63,6 +63,7 @@ from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from system.composition import build_rules_and_execution
+from chaster.api_budget import ApiBudget, BudgetedTokenManager, Lane
 from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
 from system.tenant_factory import SharedServices, TenantFactory
@@ -439,6 +440,17 @@ def main() -> None:
         platform.keyholder_token_manager = chaster_token_manager
         for note in platform.notes:
             logger.info(note)
+    # Phase E5: one shared request budget for the keyholder (bot) account. Background traffic (observation, searches, chat) waits for room;
+    # an already-decided lock action (essential lane) is never refused, only counted.
+    background_tokens = essential_tokens = None
+    if platform is not None and chaster_token_manager is not None:
+        api_budget = ApiBudget(requests_per_minute=config.chaster_api_budget_per_minute)
+        background_tokens = BudgetedTokenManager(chaster_token_manager, api_budget,
+                                                 account_user_id=config.chaster_execution_keyholder_user_id, lane=Lane.BACKGROUND)
+        essential_tokens = BudgetedTokenManager(chaster_token_manager, api_budget,
+                                                account_user_id=config.chaster_execution_keyholder_user_id, lane=Lane.ESSENTIAL)
+        logger.info("Shared Chaster request budget: %d per minute for the keyholder account.", api_budget.limit)
+    chat_tokens = background_tokens or chaster_token_manager
     check_in_sender = DiscordCheckInSender(config.db_path, core=core)
 
     def check_in_complete(system_prompt: str, user_message: str) -> str:
@@ -453,6 +465,7 @@ def main() -> None:
         config, core, connections=chaster_connections, oauth_client=chaster_oauth_client,
         lock_client=chaster_lock_client, token_manager=chaster_token_manager,
         check_in_sender=check_in_sender, check_in_complete=check_in_complete,
+        keyholder_token_manager=essential_tokens,
         halt_source=platform.halt if platform is not None else None,
     )
     if wiring.release_engine is not None:
@@ -482,7 +495,7 @@ def main() -> None:
         logger.warning("ENABLE_CHASTER_MESSAGING is true but Chaster chat is NOT active: it needs Chaster fully configured and "
                        "CHASTER_EXECUTION_KEYHOLDER_USER_ID (the bot account).")
     channel_service = ChannelPreferenceService(
-        routes=message_routes, connections=chaster_connections, token_manager=chaster_token_manager, client=chat_client,
+        routes=message_routes, connections=chaster_connections, token_manager=chat_tokens, client=chat_client,
         bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready)
 
     application_service = ApplicationService(
@@ -504,7 +517,9 @@ def main() -> None:
 
         shared = SharedServices(
             config=config, clock=clock, model=ollama_model, oauth_client=chaster_oauth_client, lock_client=chaster_lock_client,
-            keyholder_connections=chaster_connections, keyholder_token_manager=chaster_token_manager, platform_halt=platform.halt,
+            keyholder_connections=chaster_connections, keyholder_token_manager=essential_tokens or chaster_token_manager,
+            platform_halt=platform.halt, keyholder_background_tokens=background_tokens,
+            chat_enabled=config.enable_chaster_messaging, conversation_client=chat_client,
             check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete)
         bot.tenant_supervisor = TenantLoopSupervisor(
             registry=platform.registry, factory=TenantFactory(registry=platform.registry, shared=shared, tenant_dir=platform.tenant_dir),
@@ -522,12 +537,12 @@ def main() -> None:
             return None if out is None else out.text
 
         chaster_adapter = ChasterMessagingAdapter(
-            token_manager=chaster_token_manager, client=chat_client, connections=chaster_connections,
+            token_manager=chat_tokens, client=chat_client, connections=chaster_connections,
             bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock, handler=chaster_handler)
         adapters.append(chaster_adapter)
         bot.chaster_chat = (ChasterConversationPoller(
             config.db_path, core=core, routes=message_routes, connections=chaster_connections,
-            token_manager=chaster_token_manager, client=chat_client, adapter=chaster_adapter,
+            token_manager=chat_tokens, client=chat_client, adapter=chaster_adapter,
             bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock), chaster_adapter,
             config.chaster_chat_poll_seconds)
         logger.info("Chaster chat channel enabled (opt-in per user; inbound by polling).")

@@ -46,8 +46,10 @@ class ChasterConversationPoller:
     def __init__(
         self, db_path: str | Path, *, core: CoreDatabase | None = None, routes: MessageRouteRepository,
         connections: ChasterConnectionRepository, token_manager: ChasterTokenManager, client: ChasterConversationClient,
-        adapter: ChasterMessagingAdapter, bot_user_id: str, clock: Clock,
+        adapter: ChasterMessagingAdapter, bot_user_id: str, clock: Clock, chaster_account_of=None,
     ) -> None:
+        """`chaster_account_of(user_id)`: the Chaster account whose messages count as the user's own (default: the user's own connection in
+        `connections`; a tenant passes its confirmed pairing, Phase E5)."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._routes = routes
@@ -57,6 +59,7 @@ class ChasterConversationPoller:
         self._adapter = adapter
         self._bot_user_id = bot_user_id
         self._clock = clock
+        self._account_of = chaster_account_of or self._own_connection_account
 
     def poll_once(self) -> list[UnifiedMessage]:
         """Blocking (HTTP + SQLite): call it from a worker thread. Returns the new messages to handle, oldest first."""
@@ -73,10 +76,9 @@ class ChasterConversationPoller:
     # ------------------------------------------------------------------ internals
 
     def _poll_conversation(self, user_id: str, conversation_id: str, now: datetime) -> list[UnifiedMessage]:
-        wearer = self._connections.get(user_id)
-        if wearer is None:
+        wearer_chaster_id = self._account_of(user_id)
+        if not wearer_chaster_id:
             return []
-        wearer_chaster_id = wearer.chaster_account_id
         raw = self._tokens.call_with_token(
             self._bot_user_id, now=now,
             operation=lambda token: self._client.list_messages(access_token=token, conversation_id=conversation_id))
@@ -94,6 +96,10 @@ class ChasterConversationPoller:
             logger.warning("Dropped %d Chaster message(s) beyond the per-poll limit.", len(dropped))
         self._mark_seen(conversation_id, [m["_id"] for m in fresh], now)           # BEFORE handing anything on
         return [self._adapter.unify(user_id=user_id, conversation_id=conversation_id, message=m) for m in accepted]
+
+    def _own_connection_account(self, user_id: str) -> str | None:
+        connection = self._connections.get(user_id) if self._connections is not None else None
+        return None if connection is None else connection.chaster_account_id
 
     @staticmethod
     def _eligible(message: dict, wearer_chaster_id: str, armed_at: datetime, now: datetime) -> bool:

@@ -46,8 +46,11 @@ class OptInResult:
 class ChannelPreferenceService:
     def __init__(self, *, routes: MessageRouteRepository, connections: ChasterConnectionRepository | None,
                  token_manager: ChasterTokenManager | None, client: ChasterConversationClient, bot_user_id: str | None,
-                 chaster_messaging_enabled: bool) -> None:
+                 chaster_messaging_enabled: bool, chaster_account_of=None) -> None:
+        """`connections` holds the BOT's connection (scope check); `chaster_account_of(user_id)` gives the user's Chaster account id. By default
+        it is read from the user's own connection in `connections` (single-wearer); a tenant passes its confirmed pairing instead (Phase E5)."""
         self._routes = routes
+        self._account_of = chaster_account_of or self._own_connection_account
         self._connections = connections
         self._tokens = token_manager
         self._client = client
@@ -62,8 +65,8 @@ class ChannelPreferenceService:
             return OptInResult(OptInStatus.DISABLED_BY_OWNER)
         if self._connections is None or self._tokens is None or not self._bot_user_id:
             return OptInResult(OptInStatus.BOT_NOT_READY)
-        user_connection = self._connections.get(user_id)
-        if user_connection is None:
+        user_account = self._account_of(user_id)
+        if not user_account:
             return OptInResult(OptInStatus.NOT_CONNECTED)
         bot_connection = self._connections.get(self._bot_user_id)
         if bot_connection is None or MESSAGING_SCOPE not in bot_connection.granted_scopes:
@@ -72,7 +75,7 @@ class ChannelPreferenceService:
             conversation = self._tokens.call_with_token(
                 self._bot_user_id, now=now,
                 operation=lambda token: self._client.find_conversation_by_user(
-                    access_token=token, chaster_user_id=user_connection.chaster_account_id))
+                    access_token=token, chaster_user_id=user_account))
         except Exception as exc:
             logger.warning("Looking up the Chaster conversation failed (%s).", type(exc).__name__)
             return OptInResult(OptInStatus.UNAVAILABLE)
@@ -80,6 +83,10 @@ class ChannelPreferenceService:
             return OptInResult(OptInStatus.NO_CONVERSATION)
         self._routes.set_route(user_id=user_id, channel=ChannelType.CHASTER, chaster_conversation_id=conversation["_id"], now=now)
         return OptInResult(OptInStatus.ENABLED)
+
+    def _own_connection_account(self, user_id: str) -> str | None:
+        connection = self._connections.get(user_id) if self._connections is not None else None
+        return None if connection is None else connection.chaster_account_id
 
     def opt_out(self, user_id: str) -> bool:
         """Back to Discord. True when a Chaster route existed."""

@@ -33,4 +33,7 @@ Phase E4 (`system/managed_lock_source.py`, `system/lock_pairing.py`): each tenan
 (active tenant, confirmed pairing, the paired lock and wearer, the bot as keyholder, `locked`); the owner pairs with `tenants pair`, the wearer confirms with `confirm lock`
 (platform migration 003, main migration 035). See the proposal, section 14.
 
-Not built yet: E5 (per-tenant Chaster chat, global API budget) and E6 (isolation hardening, removal/archival flow, runbook).
+Phase E5: per-tenant Chaster chat (each tenant's own chat stack over its own database, identity = the confirmed pairing) and the shared keyholder
+request budget (`chaster/api_budget.py`, `CHASTER_API_BUDGET_PER_MINUTE`). See the proposal, section 15.
+
+Not built yet: E6 (isolation hardening, removal/archival flow, runbook).

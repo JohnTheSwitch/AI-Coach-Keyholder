@@ -328,3 +328,31 @@ Interpretations to confirm:
    locked again under the same pairing, execution can resume without anyone clearing a halt.
 3. **Penalties** reach Chaster only through executor decisions, so the same observation gate covers them; Penalty Windows themselves are tenant-internal records and are not blocked.
 4. **The fallback to the wearer's connection** is used only when the keyholder search fails, and passes the same pairing check (including the bot as keyholder).
+
+## 15. Phase E5 result (per-tenant Chaster chat and the shared API budget)
+
+Confirmed after E4: wearer confirmation of every pairing; an unlocked or missing lock is skipped, not halted; penalties reach Chaster only through the gated executor; the wearer's own
+connection is only a fallback when the keyholder search fails.
+
+Built in E5 (behind `ENABLE_MULTI_WEARER`; chat additionally needs `ENABLE_CHASTER_MESSAGING` and the bot connected with the `messaging` scope):
+- **Shared API budget** (`chaster/api_budget.py`): one sliding one-minute window (`CHASTER_API_BUDGET_PER_MINUTE`, default 30) for every request this process makes with the
+  KEYHOLDER account. Two lanes over the same counter: BACKGROUND (keyholder searches, observation refreshes, chat polling and sends) is refused when the window is full, with
+  `ApiBudgetExceeded` (a `ChasterLockApiError`, which every caller already treats as "Chaster unavailable": reads go stale, sends report not delivered, nothing is guessed);
+  ESSENTIAL (an already-decided lock action of the execution plane) is never refused but is counted, so background traffic backs off after it. `BudgetedTokenManager` wraps the
+  single keyholder token manager; other accounts (a wearer's own connection) pass through uncounted. Tenant zero's chat and execution use the same budget when multi-wearer is on.
+- **Per-tenant chat** (`TenantFactory._chat_stack`): each tenant gets its own channel service, Chaster adapter and poller over ITS OWN database (routes, polling state and seen ids in
+  that tenant's tables, migrations 032/033), all sending and reading with the shared, budgeted keyholder token. The wearer's Chaster identity is the CONFIRMED pairing's account (or
+  else the wearer's own connected account); without one the tenant cannot opt in and is not polled. The wearer opts in with `channel chaster` in their DM, as before. Inbound chat
+  text is conversation input only (`handle_conversation_only`), exactly as for the owner.
+- **Polling cadence:** a tenant's chat is polled once per tenant cycle, right after it, so it inherits the stagger and the stop-on-leave rule; a suspended, removed or departed tenant is not
+  polled.
+
+Tests: budget window and lanes, thread safety, the wrapper only charging the keyholder account, an exhausted budget leaving observation stale (not wrong), one budget shared by all
+tenants, each tenant polling only its own opted-in conversation, a message posted by one wearer into another wearer's conversation never reaching either tenant, seen ids stored only in
+the owning tenant's database, replies going back to the tenant's own conversation, opt-in using the confirmed pairing and staying inside the tenant.
+
+Interpretations to confirm:
+1. **Chat is polled per tenant cycle** (default every 60 s, staggered) rather than on the separate 30 s chat interval of tenant zero, to keep the request count proportional to the budget.
+2. **Lock actions are never refused by the budget**, only counted; protecting decided releases and freezes is more important than a strict cap.
+3. **Budget default 30 requests per minute** for the keyholder account (each tenant cycle uses about 1-2 background requests: an observation refresh when stale, plus one chat poll when opted in).
+4. **The budget is per process** (the bot); the CLI's occasional pairing and listing calls are not counted.

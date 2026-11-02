@@ -161,6 +161,7 @@ class Config:
     owner_user_id: str | None = None          # internal user id of the owner; the only identity `python -m cli freeze-lock` accepts
     enable_chaster_messaging: bool = False    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
     chaster_chat_poll_seconds: int = 30
+    chaster_api_budget_per_minute: int = 30   # shared request budget of the keyholder account (multi-wearer)
     daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
     check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
 
@@ -238,5 +239,6 @@ class Config:
             owner_user_id=get("OWNER_USER_ID"),
             enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
+            chaster_api_budget_per_minute=int(get("CHASTER_API_BUDGET_PER_MINUTE", "30") or "30"),
             daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",
         )
