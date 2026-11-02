@@ -1,6 +1,6 @@
 # Phase F: proactive psychology and behavioural training — review of the blueprint (PROPOSAL, no code)
 
-Status: review and gap analysis of the owner's Phase F blueprint (training inflation, wearer dossier, idea box, structured output). Nothing is
+Status: review, gap analysis and (section 5) the binding F0 specification; F1 is built (section 6). Earlier status: review and gap analysis of the owner's Phase F blueprint (training inflation, wearer dossier, idea box, structured output). Nothing is
 implemented. Each part below is checked against `philosophy.md` (the constitutional document), the existing architecture and the multi-wearer
 invariants of Phase E, then a phased plan and the decisions needed are given.
 
@@ -116,3 +116,66 @@ embedding model and is a separate decision.
 5. **Idea box storage:** in each tenant's database (recommended) rather than `platform.sqlite`; status workflow; adoption only with the wearer's consent.
 6. **Model:** which exact model and quantization, and an acceptable response latency with structured output.
 7. **Order:** start with F0 + F1 (no behaviour change), then F2/F3, and F4 last?
+
+## 5. F0 — binding specification (owner decisions of 2026-11-02)
+
+### 5.1 Consent (all Phase F features)
+There are no wearers yet, so no re-consent migration is needed. The invitation (Phase E3 `invitation_text`) and the consent record written on `accept` will carry this
+paragraph in addition to the current text (exact wording to be finalised with F2, before any Phase F feature that relies on it is switched on; anyone invited
+before that change would have to accept again):
+
+> "This system uses Progressive Conditioning: over time, earning a release becomes gradually harder. The exact amount stays hidden. The bot also keeps a
+> Coaching Memory of your goals, patterns and quotes, which you can view with `memory` and erase with `forget`, and it may write private suggestions about your
+> regime for your keyholder. You can switch Progressive Conditioning off at any time with `conditioning off`; it then stays at its current level."
+
+Accepting the invitation is consent to the existence and consequence of Progressive Conditioning (philosophy 4.5); the number itself stays hidden (4.2).
+
+### 5.2 Progressive Conditioning (F4)
+- **Where it acts:** the Token Progress Pool pays a token when the pool reaches the payout threshold `T = base_threshold * factor` (today `T = 1.0`).
+- **Advanced rule (new):** `base_threshold = 1.0` in Standard Mode (about 3.5 days per token at full performance) and `2.0` in Advanced Mode (about 7.0 days). Read
+  from the tenant's operating mode at each daily evaluation.
+- **Factor:** starts at `1.000`, `+0.025` after each release that was (a) funded by a token (`kind = token`) and (b) confirmed by Chaster (`provider_confirmed`); capped at
+  `1.50`. Never raised by the 72-hour backstop, an emergency unlock, a failed or ambiguous release, a manual `freeze-lock`, or merely earning a token.
+- **Revocation:** the wearer's `conditioning off` stops further increases; the factor freezes at its current value (it does not reset). `conditioning on` resumes increases.
+- **Owner control:** global `ENABLE_SLAVE_TRAINING` (default false) and `python -m cli tenants slave-training <id> --enable|--disable`. Both the owner switch and the
+  wearer's consent are required for any increase.
+- **Secrecy:** the factor never appears in prompts, model-visible context, events, logs or wearer-visible output; the owner CLI may show it.
+- **Untouched:** the 72-hour backstop, halts, `leave`, the emergency path, Penalty Window rules and the clean-day bonus.
+
+### 5.3 Honesty rule
+The model may withhold information and keep suspense (guardrail rule 6), but must never affirmatively state that the rules or the difficulty are unchanged. It never
+receives the factor, so it cannot reveal it.
+
+### 5.4 Coaching Memory (F2, reframed from "dossier")
+- Categories: `behavior_pattern`, `stated_goal`, `quote`. No "weakness" category.
+- Hard exclusions, enforced in code (not only by the prompt): health and medical matters, trauma, self-harm, distress, and any turn in which the safety-word / distress
+  detector fired; never anything about third parties.
+- Fenced injection: retrieved entries are placed inside a strict `<context>` … `</context>` data block, declared as data and never as instructions, after the protected
+  system boundaries (which stay byte-identical).
+- No writes from Chaster chat turns (already enforced in F1: `handle_conversation_only` passes `allow_side_data=False`).
+- Wearer rights: `memory` lists the entries, `forget <id>` and `forget all` erase them (actual deletion of the wearer's own memory, as the memory-system design requires).
+- Limits: at most 300 characters per entry, a daily write limit, duplicate suppression; retrieval of the 3-5 most recent entries per reply.
+
+### 5.5 Idea box (F3)
+Stored per tenant (`ai_suggestions` in `tenant_<id>.sqlite`), write-only from the model, never read into any prompt (guard test), statuses `new | accepted | rejected |
+archived`, owner CLI `ai-ideas list | accept | reject` iterating over the tenants. Adopting a suggestion that changes a wearer's rules still needs that wearer's consent.
+
+### 5.6 Model and latency
+Ollama with **Qwen 2.5 32B (Q4_K_M)**. Recommended settings: `OLLAMA_MODEL=qwen2.5:32b-instruct-q4_K_M` (or the local tag), `OLLAMA_KEEP_ALIVE=30m` so the model
+stays loaded during a conversation, and `OLLAMA_READ_TIMEOUT_SECONDS=120` so the first reply after a quiet period (model load, 30-60+ s) does not time out.
+
+## 6. F1 result (structured output router)
+
+Built (behind `CONVERSATION_STRUCTURED_OUTPUT`, default false):
+- `conversation_engine/structured_output.py`: the JSON schema (`reply_to_user`, `save_to_memory`, `submit_suggestion`), the format instructions (with the exclusions and the
+  rule that side fields are never mentioned to the user), and a strict parser: no usable reply means the output is not used; malformed side fields are dropped with an issue code,
+  never repaired; unknown keys, wrong types, unknown categories and over-long notes are rejected.
+- `OllamaConversationModel.generate_structured()` sends the schema as Ollama's `format`; `keep_alive` and the read timeout are configurable
+  (`OLLAMA_KEEP_ALIVE`, `OLLAMA_READ_TIMEOUT_SECONDS`).
+- `ConversationEngine` router: only `reply_to_user` reaches the user (then validated and stored in working memory exactly as before); side data goes to an optional sink, and **no
+  sink is installed in F1**, so it has no effect. An unusable output falls back to one plain generation; a model error gives the usual fallback reply. The read-only Chaster tool
+  path and the extra-context path keep their plain generation. Untrusted channels (`handle_conversation_only`) never pass side data on.
+- `scripts/eval_structured_output.py`: runs the real schema against the local model and reports usable-reply rate, side-data use and latency (first call / median / max),
+  including a health prompt and an injection attempt to check by hand.
+
+Next: run the evaluation on the RTX 5080 with Qwen 2.5 32B, then F2 (Coaching Memory) with the consent text change.
