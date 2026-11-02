@@ -159,6 +159,10 @@ class TestFrozenClockSet:
 # the pattern stays visible if (and when) it's needed again.
 KNOWN_PRE_CLOCK_VIOLATIONS: set[Path] = set()
 
+# Deliberate, documented exception (Phase G5): hive_mind_receiver/ is a STANDALONE service that shares no code with the bot (it cannot use
+# infrastructure/clock.py). Its single wall-clock reading lives in its own clock module; everything else in it takes an injected `now`.
+STANDALONE_SERVICE_CLOCKS: set[Path] = {PROJECT_ROOT / "hive_mind_receiver" / "clock.py"}
+
 # Directories that are never expected to contain application code.
 EXCLUDED_DIR_NAMES = {".git", ".venv", "venv", "__pycache__", "node_modules"}
 
@@ -205,7 +209,7 @@ def test_no_direct_datetime_now_calls_outside_clock_module() -> None:
     for path in _iter_project_python_files():
         if path in (clock_module, this_test_file):
             continue
-        if path in KNOWN_PRE_CLOCK_VIOLATIONS:
+        if path in KNOWN_PRE_CLOCK_VIOLATIONS or path in STANDALONE_SERVICE_CLOCKS:
             continue
         offending_lines = _calls_forbidden_datetime_function(path)
         if offending_lines:

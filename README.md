@@ -67,13 +67,16 @@ real architectural findings surfaced while building it:
 - [`system/README.md`](system/README.md) -- the startup orchestrator,
   the consumer/dispatch framework, and the composition-layer wiring
   between all of the above.
+- [`hive_mind_receiver/README.md`](hive_mind_receiver/README.md) -- the STANDALONE receiver for the
+  opt-in research telemetry (FastAPI + SQLite, own requirements, shares no code with the bot;
+  its own test suite runs separately).
 - [`infrastructure/README.md`](infrastructure/README.md) -- the shared
   `Clock`, `Database`/`Transaction`, and transactional outbox that
   every module above is built on.
 
 ## Project status
 
-**3587 passing tests** across the whole repository (`pytest`), including
+**3600 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms

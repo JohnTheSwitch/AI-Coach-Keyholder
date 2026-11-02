@@ -1,0 +1,4 @@
+-r requirements.txt
+# FastAPI's TestClient needs httpx (in process: no network). Tested with httpx 0.28.1.
+httpx>=0.27,<1.0
+pytest>=8.0

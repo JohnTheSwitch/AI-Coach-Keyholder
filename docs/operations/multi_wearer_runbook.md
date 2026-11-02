@@ -160,3 +160,6 @@ summaries) from tables the system already writes, in each tenant's own database.
   missing. Each wearer decides with `research on|off`; only records made after `research on` leave, pseudonymized. `research off` / `forget all` send an
   erase request (even with the flag off). An outage logs one warning (`Research telemetry link is down`) and one recovery line; nothing is lost meanwhile.
   Pending items: `research_erase_requests WHERE sent_at IS NULL`, `behavioral_telemetry WHERE synced_at IS NULL`.
+- **Running the receiver (G5):** see `hive_mind_receiver/README.md`: its own virtual environment outside the repository, one token per sending
+  instance in `TELEMETRY_TOKENS` (remove a token to revoke that sender), `python -m hive_mind_receiver`, and a Cloudflare tunnel to
+  `http://127.0.0.1:8787`. A 401 or 422 from the receiver shows in the bot's log as `Research telemetry link is down (HTTP 401)`.

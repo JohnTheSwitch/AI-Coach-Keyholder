@@ -1,6 +1,6 @@
 # Phase G: Behavioral Telemetry and the opt-in Hive-Mind
 
-Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer), G3 (owner analysis) and G4 (opt-in export) built. G5 and G6 are specified here and not built yet.
+Status: G0 specification (binding); G1 (local derived telemetry), G2 (runtime buffer), G3 (owner analysis), G4 (opt-in export) and G5 (receiver) built. G6 is specified here and not built yet.
 
 Owner decisions (2026-11-02): the three-layer consent model; the hidden factor is exported only as a 0.10 band; retention 180 days locally and 365 days at the
 receiver; `forget all` purges local telemetry; revoking `research on` or running `forget all` queues an erase at the receiver; `bot_mood` is derived from engine
@@ -115,9 +115,19 @@ Retention: rows whose `occurred_at` is older than 180 days are deleted (checked 
 - `POST <endpoint>/v1/erase`: `{"schema", "instance", "erase": {"id": <32 hex>, "subject": <64 hex>}}`. Answer 200 after deleting every record of that
   subject (and remembering the erase id, so a retry is harmless).
 
-**G5** `hive_mind_receiver/`: standalone FastAPI + SQLite, no imports from this codebase. Bearer tokens per sending instance (revocable), strict schema validation
-(unknown fields and types refused), request size and rate limits, `UNIQUE(id)` for idempotency, `DELETE` by subject HMAC, 365-day retention job, a README for the
-Cloudflare tunnel. Every sender is untrusted.
+**G5 (built)** `hive_mind_receiver/` (see its README): a standalone FastAPI + SQLite service with its own `requirements.txt`; it imports only the
+standard library, FastAPI/Pydantic/Starlette/Uvicorn and itself (guard test in the bot's suite).
+- Pure ASGI guard before any body is read: Bearer tokens (`TELEMETRY_TOKENS` / `TELEMETRY_TOKEN`, one per sending instance, constant-time comparison) or
+  401; a shared budget for failed authentications (429); a request budget per token (429 + Retry-After); JSON only (415); `Content-Length` required (411);
+  at most 512 KB declared or actually sent (413). The body is then read by the guard and replayed to the application.
+- Pydantic models with `extra="forbid"` plus `contract.check_metrics`: exactly the contract keys per event type, enum strings, finite numbers up to 1e12,
+  booleans or null; 422 without echoing the input; one bad record refuses the batch.
+- Records keyed by (sender, id): a retransmission is ignored, never overwritten. Erase deletes the subject's records of the SAME sender only and is
+  remembered by (sender, erase id). Senders are stored as a SHA-256 prefix of the token. 365-day retention for records and erase receipts.
+- No documentation endpoints, no server header, counts-only logs; binds 127.0.0.1:8787 by default for a Cloudflare tunnel.
+- Tests: the receiver's own suite (`hive_mind_receiver/tests`, FastAPI TestClient, in process; 60 tests) and, in the bot's suite, the isolation guard and
+  a contract test that runs real G4 `build_record` output through the receiver's validator and compares the allowlists key by key.
+- `hive_mind_receiver/clock.py` is the one documented exception to the repository's `datetime.now()` guard (a standalone service cannot use the bot's Clock).
 
 **G6** Hardening: cross-tenant isolation tests for telemetry, an injection test (wearer text never reaches a payload), an audit of the outbound payload against
 the allowlist, a runbook section.
