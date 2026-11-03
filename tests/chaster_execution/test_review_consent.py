@@ -150,9 +150,12 @@ class TestRevert:
         args = {"actor": OWNER, "lock_id": LOCK, "plan_id": None, "confirmed": True, "revert": True, **kw}
         assert w.service.apply(**args).outcome is outcome and w.transport.calls == []
 
-    def test_the_halt_blocks_the_revert_too(self, tmp_path) -> None:
-        w = World(tmp_path, halted=True, reader=FakeReader(on_target(raw_lock())))
-        assert w.service.apply(actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True, revert=True).outcome is O.HALTED
+    def test_the_halt_does_not_stop_a_revert_but_still_stops_the_forward_write(self, tmp_path) -> None:
+        w = World(tmp_path, halted=True, reader=FakeReader(on_target(raw_lock()), private(on_target(raw_lock()))))
+        assert w.service.apply(actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True, revert=True).outcome is O.APPLIED
+        assert w.service.preview(actor=OWNER, lock_id=LOCK, revert=True).blockers == ()
+        (tmp_path / "f").mkdir()
+        assert World(tmp_path / "f", halted=True).apply().outcome is O.HALTED
 
     def test_nothing_to_revert(self, tmp_path) -> None:
         w = World(tmp_path, reader=FakeReader(raw_lock()))
@@ -187,10 +190,20 @@ class TestDecideConsent:
         assert result.outcome is C.RECORDED and result.consent.state is not ConsentState.APPROVED
         assert result.revert.outcome is O.APPLIED and len(w.transport.calls) == 1
 
-    def test_while_halted_the_decision_is_recorded_but_the_revert_is_refused(self, tmp_path) -> None:
-        w = World(tmp_path, halted=True, reader=FakeReader(wearer(on_target(raw_lock()))))
+    def test_a_revocation_reverts_even_while_halted(self, tmp_path) -> None:
+        exposed = wearer(on_target(raw_lock()))
+        w = World(tmp_path, halted=True, reader=FakeReader(exposed, exposed, private(exposed)))
         result = w.service.decide_consent(actor=OWNER, lock_id=LOCK, decision=ConsentDecision.REVOKED, confirmed=True)
-        assert result.consent.state is ConsentState.REVOKED and result.revert.outcome is O.HALTED and w.transport.calls == []
+        assert result.consent.state is ConsentState.REVOKED and result.revert.outcome is O.APPLIED and len(w.transport.calls) == 1
+
+    def test_the_owner_may_attest_that_another_wearer_account_is_the_owners_own(self, tmp_path) -> None:
+        w = World(tmp_path, consent=False)                                         # role keyholder
+        result = w.service.decide_consent(actor=OWNER, lock_id=LOCK, decision=ConsentDecision.APPROVED, confirmed=True,
+                                          attest_own_account=True)
+        assert result.outcome is C.RECORDED and result.consent.approved
+        with w.core.transaction() as tx:
+            row = tx.fetch_one("SELECT user_comment FROM consent_log WHERE target_id = ?", (consent_target(LOCK),))
+        assert row["user_comment"] == "owner cli: approved; the owner attests the wearer account is the owner's own"
 
     def test_a_private_lock_is_not_written_on_decline(self, tmp_path) -> None:
         w = World(tmp_path, reader=FakeReader(wearer(raw_lock())))
@@ -240,10 +253,16 @@ class TestCli:
         code, text = self._run(w, "review-consent", LOCK, "--owner-id", OWNER, "--revoke", "--yes")
         assert code == 0 and "Automatic revert" in text and "Direction: REVERT" in text and "outcome=applied" in text
 
-    def test_a_revoke_while_halted_exits_4_and_says_so(self, tmp_path) -> None:
-        w = World(tmp_path, halted=True, reader=FakeReader(wearer(on_target(raw_lock()))))
+    def test_a_revoke_that_does_not_take_exits_4(self, tmp_path) -> None:
+        exposed = wearer(on_target(raw_lock()))
+        w = World(tmp_path, halted=True, reader=FakeReader(exposed))
         code, text = self._run(w, "review-consent", LOCK, "--owner-id", OWNER, "--revoke", "--yes")
-        assert code == 4 and "Consent: revoked" in text and "execution runtime is halted" in text
+        assert code == 4 and "Consent: revoked" in text and "outcome=applied_unverified" in text
+
+    def test_the_attestation_flag(self, tmp_path) -> None:
+        w = World(tmp_path, consent=False)
+        code, text = self._run(w, "review-consent", LOCK, "--owner-id", OWNER, "--accept", "--yes", "--wearer-is-my-account")
+        assert code == 0 and "Consent: approved" in text
 
     def test_extension_review_revert_dry_run_and_apply(self, tmp_path) -> None:
         w = World(tmp_path, consent=False, reader=FakeReader(on_target(raw_lock()), on_target(raw_lock()), private(on_target(raw_lock()))))

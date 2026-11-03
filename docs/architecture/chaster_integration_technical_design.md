@@ -1,5 +1,10 @@
 # Chaster Integration — Technical Design (v0.17)
 
+> **Update 2026-11-03 (owner decision): OAuth callbacks no longer use a tunnel.** Chaster redirects the user's browser, so the
+> single canonical redirect URI is `http://localhost:8420/oauth/chaster/callback`, reached directly by a browser on the bot's own
+> machine (the listener still binds `127.0.0.1:8420` only). The tunnel options and steps below (Option C, Milestone C) are
+> historical for OAuth; the emergency listener (8421) stays local as before.
+
 > **Status: Draft for review. HTTP callback architecture (Option C)
 > is approved at the architecture level as of v0.4. The
 > encryption/key-management architecture (Section 10) is recommended

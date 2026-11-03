@@ -98,7 +98,9 @@ them. That exposes the wearer to an audience they did not have before, so philos
 happens and why) apply. Removing the Chaster punishments is in the wearer's favour but is explained too: a rejected review no longer adds time on
 Chaster; it becomes at most an UNCONFIRMED Incident for the owner (2.10, 2.12), never an automatic penalty.
 
-The owner approved the proposed answers to decisions 2-4 ("approved 4-point design"); decision 1 (who wears `6aca95cd…`) is still open.
+The owner approved the proposed answers to decisions 2-4 ("approved 4-point design"). Decision 1: the wearer of `6aca95cd…` is the owner's own
+second account; the owner records consent for it with an explicit attestation (`--wearer-is-my-account`). Interpretation 1 below was decided
+the other way: a revert is NOT stopped by the runtime halt.
 
 | Piece | As built |
 |---|---|
@@ -106,18 +108,17 @@ The owner approved the proposed answers to decisions 2-4 ("approved 4-point desi
 | Consent record | `ReviewConsentLedger`, append-only rows in `consent_log`: `target_type = integration`, `target_id = community_photo_review:<lock_id>`, `target_version = <notice version>`, `explanation_shown = <the exact notice>`, `approved` / `rejected` / `revoked`. The latest row decides (`approved`, `stale`, `declined`, `revoked`, `none`). |
 | Gate on the forward write | `extension-review --apply` refuses with `no_consent` (audited, nothing sent) unless the state is `approved`; the dry run lists it as a blocker. This covers switching review ON as well (decision 4), because every forward plan ends at `all_members`. |
 | Revert | `extension-review --revert` (dry run) / `--revert --apply --yes`: `plan_review_revert` sets `visibility = keyholder` on each review extension that has `all_members`; peer verification and punishments stay as they are, so it can only reduce exposure. No consent and no plan id needed (a given one must match); owner, `--yes`, the runtime halt, `locked`, the edit permission and the audit apply as before; verified by a fresh read. |
-| Owner's own decisions | `python -m cli review-consent <lock> --owner-id <id>` shows the notice and state; `--accept`, `--decline` or `--revoke` with `--yes` records the decision ONLY when the connected account wears the lock. A lock worn by another account is refused (`wearer_is_another_account`): only that wearer can decide. |
-| Automatic revert (decisions 2 and 3) | A decline or revocation of a lock that currently has community review immediately runs the revert write. While the runtime is halted that write is refused; the decision stays recorded, `extension-config` warns, and `extension-review --revert --apply --yes` finishes it. |
+| Owner's own decisions | `python -m cli review-consent <lock> --owner-id <id>` shows the notice and state; `--accept`, `--decline` or `--revoke` with `--yes` records the decision when the connected account wears the lock. A lock worn by another account is refused (`wearer_is_another_account`) unless the owner adds `--wearer-is-my-account` (the wearer account is the owner's own); that attestation is stored in the record's comment. |
+| Automatic revert (decisions 2 and 3) | A decline or revocation of a lock that currently has community review immediately runs the revert write, also while the runtime is halted (owner decision 2026-11-03: a revert only reduces exposure). |
 | Status | `extension-config` prints the consent state and notice version per lock and `WARNING: community review is ON without the wearer's recorded consent` when they disagree. |
 
 **Interpretations to confirm.**
-1. **The runtime halt also blocks the automatic revert.** The halt is the owner's kill switch for every live write; a revoked consent therefore stays
-   pending (warned in `extension-config`) until the halt is cleared. The alternative, letting a revert pass the halt because it only reduces exposure, is a
-   one-line change but weakens "halted means nothing is sent".
-2. **Consent for another wearer's lock has no path yet.** The owner cannot record it, so `6aca95cd…` cannot get community review until decision 1 is
-   answered and that wearer's channel is built (a tenant DM command `community review accept|decline|revoke`, or the Chaster lock chat).
+1. **DECIDED: a revert passes the runtime halt.** The halt still stops every forward write and every other live action; only the switch back to
+   `keyholder` visibility, which can only reduce who sees the photos, is exempt.
+2. **Consent for a genuinely different wearer has no path yet** (a tenant DM command `community review accept|decline|revoke`, or the Chaster
+   lock chat). The owner's own second account is covered by the attestation flag.
 3. **No answer timeout yet.** Decision 2's "after how long" applies to remote wearers only; it comes with that channel. Without consent nothing is switched
    on, so silence already means "no".
 
-**Live order from here.** `6ae98ca…` (worn by the owner): `review-consent 6ae98ca410556a82f4b0d1aa --owner-id <id> --accept --yes`, a fresh dry run (the
-plan id is unchanged by consent), then the halt clear / apply / halt sequence. `6aca95cd…`: blocked by the gate until its wearer consents.
+**Live order from here.** Consent for `6ae98ca…` (`--accept --yes`) and `6aca95cd…` (`--accept --yes --wearer-is-my-account`), a fresh dry run
+(consent does not change the plan id), then the halt clear / apply / halt sequence.

@@ -23,12 +23,13 @@ A real attempt is audited FIRST as `attempting` (migration 042), then sent once 
 only when the review settings now match and the same extensions are still on the lock, otherwise `applied_unverified`.
 
 The REVERT direction (`revert=True`, Phase I3) sets visibility back to `keyholder` (chaster/extension_plan.py `plan_review_revert`). It only
-reduces who sees the photos, so it needs no consent and no plan id from a dry run (a given one must still match); every other check,
-the runtime halt included, is the same.
+reduces who sees the photos, so it needs no consent and no plan id from a dry run (a given one must still match), and (owner decision
+2026-11-03) it is NOT stopped by the runtime halt: a wearer's revocation takes effect at once. Every other check is the same.
 
 `decide_consent()` records the OWNER's own decision about a lock the owner wears (the connected account's role on it is `wearer`). A
-lock worn by another account is refused: that consent can only come from that wearer. A decline or a revocation immediately tries the
-revert write when the lock currently has community review; the runtime halt still applies to that write.
+lock worn by another account is refused (that consent can only come from that wearer) unless the owner explicitly attests that the
+wearer account is the owner's own second account (`attest_own_account`); the attestation is written into the consent record. A decline
+or a revocation immediately runs the revert write when the lock currently has community review.
 """
 
 from __future__ import annotations
@@ -181,7 +182,7 @@ class ExtensionReviewService:
         plan = plan_review_revert(config) if revert else plan_review_update(config)
         consent = self._consents.state(lock_id)
         blockers = [b for b, on in (
-            ("runtime halted (python -m scripts.execution_control clear \"reason\")", halted),
+            ("runtime halted (python -m scripts.execution_control clear \"reason\")", halted and not revert),
             (f"lock status is {config.status or 'unknown'}, not locked", config.status != "locked"),
             (f"the {config.role.value if config.role else 'unknown'} role may not edit extensions on this lock", not config.can_edit_extensions),
             (f"plan refused: {plan.refusal}", plan.refusal is not None),
@@ -211,7 +212,7 @@ class ExtensionReviewService:
         plan_ok = (plan_id is None and revert) or (isinstance(plan_id, str) and _PLAN_ID.match(plan_id))
         if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id) or not plan_ok:
             return refuse(ExtensionReviewOutcome.INVALID_INPUT)
-        if self._control.is_halted():
+        if not revert and self._control.is_halted():                  # a revert only reduces exposure: not stopped by the halt
             return refuse(ExtensionReviewOutcome.HALTED, halted=True)
         if self._account is None:
             return refuse(ExtensionReviewOutcome.ACCOUNT_NOT_CONFIGURED)
@@ -251,7 +252,8 @@ class ExtensionReviewService:
 
     # ------------------------------------------------------------------ consent (Phase I3)
 
-    def decide_consent(self, *, actor: str, lock_id: str, decision: ConsentDecision | None, confirmed: bool) -> ConsentResult:
+    def decide_consent(self, *, actor: str, lock_id: str, decision: ConsentDecision | None, confirmed: bool,
+                       attest_own_account: bool = False) -> ConsentResult:
         """Show the notice and the state (decision None), or record the owner's decision about a lock the owner wears."""
         identity = self._identity(actor)
         if identity is not None:
@@ -268,10 +270,12 @@ class ExtensionReviewService:
         exposed = community_exposed(config)
         if decision is None:
             return ConsentResult(outcome=ConsentOutcome.SHOWN, consent=self._consents.state(lock_id), config=config, exposed=exposed)
-        if config.role is None or config.role.value != "wearer":
+        worn_by_owner = config.role is not None and config.role.value == "wearer"
+        if not worn_by_owner and attest_own_account is not True:
             return ConsentResult(outcome=ConsentOutcome.WEARER_IS_ANOTHER_ACCOUNT, consent=self._consents.state(lock_id), config=config,
                                  exposed=exposed)
-        self._consents.record(lock_id=lock_id, decision=decision, comment=f"owner cli: {decision.value}", now=self._clock.now())
+        comment = f"owner cli: {decision.value}" + ("" if worn_by_owner else "; the owner attests the wearer account is the owner's own")
+        self._consents.record(lock_id=lock_id, decision=decision, comment=comment, now=self._clock.now())
         logger.info("Community review consent for lock %s recorded: %s.", lock_id, decision.value)
         reverted = None
         if decision is not ConsentDecision.APPROVED and exposed:

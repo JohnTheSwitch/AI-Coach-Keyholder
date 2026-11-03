@@ -141,11 +141,12 @@ time on a rejection, that a rejection here is at most an UNCONFIRMED incident fo
 
 - `extension-review --apply` refuses with `no_consent` unless the state is `approved`; the dry run lists the missing consent as a blocker.
 - `extension-review --revert` (dry run) and `--revert --apply --yes` set `visibility` back to `keyholder` on each review extension that has
-  `all_members` (`plan_review_revert`; peer verification and punishments untouched). It needs no consent and no plan id (a given one must match);
-  every other guard, the runtime halt included, applies.
+  `all_members` (`plan_review_revert`; peer verification and punishments untouched). It needs no consent and no plan id (a given one must match)
+  and is not stopped by the runtime halt (owner decision: it only reduces exposure); every other guard applies.
 - `python -m cli review-consent <lock_id> --owner-id <id>` prints the notice and the state; `--accept|--decline|--revoke --yes` records the OWNER's
-  decision, only for a lock the connected account wears (a lock worn by another account is refused: only that wearer can decide). A decline or
-  revocation of an exposed lock immediately runs the revert write (refused while halted; the decision stays recorded).
+  decision, only for a lock the connected account wears. A lock worn by another account is refused (only that wearer can decide) unless the
+  owner adds `--wearer-is-my-account`, attesting that the wearer account is the owner's own; the attestation is stored with the record. A
+  decline or revocation of an exposed lock immediately runs the revert write, also while halted.
 - `extension-config` shows the consent state per lock and warns when community review is on without approved consent.
 
 Only the CLI imports the service; the bot never records consent (guarded in tests). A Discord DM path for tenant wearers is not built yet.

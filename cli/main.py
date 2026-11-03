@@ -307,7 +307,8 @@ _CONSENT_TEXT = {
     "invalid_input": "Refused: not a valid lock id.",
     "account_not_configured": "Refused: CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set.",
     "read_failed": "Refused: the lock could not be read through the connected account.",
-    "wearer_is_another_account": "Refused: another account wears this lock; only that wearer can give or refuse consent. Nothing was recorded.",
+    "wearer_is_another_account": "Refused: another account wears this lock; only that wearer can give or refuse consent (or add "
+                                 "--wearer-is-my-account if that account is your own). Nothing was recorded.",
 }
 
 
@@ -663,6 +664,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
     for flag in ("accept", "decline", "revoke"):
         decision.add_argument(f"--{flag}", action="store_true")
     consent.add_argument("--yes", action="store_true", help="confirm the decision (a decline or revocation also reverts a live lock)")
+    consent.add_argument("--wearer-is-my-account", action="store_true",
+                         help="attest that the lock's wearer account is your own second account (recorded with the decision)")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -808,7 +811,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         from chaster_execution.review_consent import ConsentDecision
         decision = (ConsentDecision.APPROVED if args.accept else ConsentDecision.REJECTED if args.decline
                     else ConsentDecision.REVOKED if args.revoke else None)
-        result = review_factory().decide_consent(actor=args.owner_id, lock_id=args.lock_id, decision=decision, confirmed=args.yes)
+        result = review_factory().decide_consent(actor=args.owner_id, lock_id=args.lock_id, decision=decision, confirmed=args.yes,
+                                                 attest_own_account=args.wearer_is_my_account)
         print(render_consent(result, lock_id=args.lock_id, owner_id=args.owner_id), file=out)
         if not result.done:
             return 3

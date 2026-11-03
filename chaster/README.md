@@ -420,7 +420,11 @@ All new `.env` values are optional — the bot starts normally, and
 `chaster connect` replies that Chaster is "not configured," if any
 piece is missing:
 
-- `CHASTER_CLIENT_ID`, `CHASTER_REDIRECT_URI` (non-secret)
+- `CHASTER_CLIENT_ID`, `CHASTER_REDIRECT_URI` (non-secret). The canonical redirect URI is
+  `http://localhost:8420/oauth/chaster/callback` (register exactly this in the Chaster developer app). Chaster redirects the
+  user's browser, so on the machine running the bot `localhost` reaches the callback listener (`127.0.0.1:8420`) directly;
+  no Cloudflare tunnel is used for OAuth any more (since 2026-11-03). The tunnel notes below are historical. The account is
+  therefore connected from a browser on the bot's own machine.
 - `CHASTER_CALLBACK_BIND_HOST` (default `127.0.0.1`), `CHASTER_CALLBACK_BIND_PORT` (default `8420`) (non-secret)
 - `CHASTER_CLIENT_SECRET`, `CHASTER_TOKEN_ENCRYPTION_KEY` (secrets — generate the encryption key with
   `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`,
@@ -580,4 +584,4 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3858 tests repository-wide.
+logger contains `SECRET`. 3860 tests repository-wide.
