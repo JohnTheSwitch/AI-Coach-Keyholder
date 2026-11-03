@@ -80,13 +80,44 @@ Status: PROPOSAL (2026-11-03). J1 slices 1 and 2 BUILT (sections 3.1, 3.2); the 
   message (incidents, poll alerts, consent prompts, J2 consequences), so all of them share retry, quiet hours and the Chaster-chat channel
   preference.
 
-## 4. J2: execution layer and Penalty Engine (proposal)
+## 4. J2: execution layer and Penalty Engine (DESIGN, 2026-11-03; not built)
 
-- Today only `ENABLE_PEER_REVIEW_WATCH` is on: the periodic cycle does not run, the outbox is processed only at bot start, and a confirmed
-  Incident lowers Trust at once but reaches the Penalty Engine only at the next restart, with no Chaster effect.
-- J2 turns on the periodic cycle (`ENABLE_RULES_ENGINE=true`, outbox every cycle) and connects the Penalty Engine's decisions to the
-  existing guarded executor (freeze, add time) under the runtime halt, the limit pool and the audit trail. The DM button label "Confirm
-  Penalty" is only accurate once this exists; until then it should read "Confirm Incident" (decision 4).
+### 4.1 What exists today (read from the code)
+
+- `incident.confirmation_changed` -> `penalty_engine` consumer (`system/startup.py`) -> a Penalty Window and an `ExtensionDecision`
+  (`assigned_hours`), or only a warning for a first minor offense (`DynamicWindowPolicy`: `base_hours == 0`). It emits
+  `penalty_window.started` / `extension.decision_recorded`. Nothing turns these into a Chaster action.
+- The outbox is drained only at bot start and in `run_periodic_cycle`; the bot starts that cycle only when a Rules Engine, supervision,
+  release, check-in or daily task exists. Live, none does.
+- `ChasterExecutor` is the only caller of the transport. It consumes only `lock_decisions` rows, each tied by `trigger_id` to
+  `lock_decision_triggers` (goal assessments). The Rules Engine deliberately ignores incidents, so one incident is never punished twice.
+- The executor resolves "the lock" from ONE observation (`CHASTER_EXECUTION_WEARER_USER_ID`, unset live), requires a keyholder lock, not
+  frozen, and enforces the hard limits (1-hour unit, 6 h per action, 12 h added per 24 h, 2 actions per 24 h, 4 h between actions).
+- `POST /locks/{id}/update-time` uses an owner-supplied body that Chaster does not document; the first live use must be one 1-hour change on
+  a test lock, comparing the end date before and after.
+
+### 4.2 Proposed flow
+
+1. **Outbox:** start the periodic cycle whenever the peer review watch is on (its lease already guards against two instances); the 60 s
+   cycle is independent of the 10-minute watch loop, which keeps its own task.
+2. **New consumer of `extension.decision_recorded`:** when `eligible` and `assigned_hours > 0`, it writes a trigger plus a `lock_decisions`
+   row (`ADD_TIME`, whole hours, `rule_id = penalty_extension`, trigger id = the extension decision id, so `UNIQUE(trigger_id)` makes it
+   at-most-once per incident). It reuses the executor, its limits and its audit; no second path to Chaster. Migration: the trigger needs a
+   source and the target lock id (the incident's lock from `peer_reviews`), since the executor's single-lock lookup does not fit two locks.
+3. **Halt:** the executor expires a decision after 15 minutes, which would silently drop a penalty while halted. Requirement 3 needs penalty
+   decisions to stay `pending` (logged, not expired) while the runtime is halted and to re-check limits and the lock's state when it clears.
+4. **Testing order:** unit (consumer, idempotency, halt queueing), integration (confirm -> outbox -> decision -> fake transport), then the
+   1-hour live check.
+
+### 4.3 Open problems for the owner
+
+- **Which lock can be penalised?** `update-time` runs with the connected account. On `6aca95cd…` that is the keyholder; on `6ae98ca…` it is
+  the WEARER and another account holds the key, so the executor's keyholder check refuses it and a lock's own wearer adding time needs its
+  own decision.
+- **Amounts.** With LOW-evidence incidents the assessed severity decides `assigned_hours`; a first minor offense may be a warning with no
+  time at all. Confirm that, or set a fixed penalty per confirmed rejection.
+- **Tokens.** The token pool belongs to the release engine, which is off; "token adjustment" needs that engine or is out of J2.
+- **Button label.** "Confirm Penalty" stays inaccurate until this exists (decision 4).
 
 ## 5. J3: local Ollama coach (proposal)
 
