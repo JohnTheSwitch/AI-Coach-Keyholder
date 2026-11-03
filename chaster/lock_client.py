@@ -40,6 +40,7 @@ message.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -57,7 +58,8 @@ __all__ = [
 
 LOCKS_URL = "https://api.chaster.app/locks"
 KEYHOLDER_SEARCH_URL = "https://api.chaster.app/keyholder/locks/search"      # POST, scope `keyholder`
-KEYHOLDER_PAGE_SIZE = 50                                                       # the documented maximum
+_LOCK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+KEYHOLDER_PAGE_SIZE = 50                                                      # the documented maximum
 KEYHOLDER_MAX_PAGES = 20                                                       # safety bound (1000 locks)
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
@@ -126,6 +128,32 @@ class ChasterLockClient:
 
         if not isinstance(body, list):
             raise ChasterLockApiError("Chaster's locks endpoint returned an unexpected response shape (expected a list).")
+        return body
+
+    def get_lock(self, *, access_token: str, lock_id: str) -> dict:
+        """One lock as the connected account sees it (`GET /locks/{lockId}`, operationId LockController_findOne), for the wearer
+        and for the keyholder alike (confirmed live 2026-11-03). The body carries `role`, `permissions` and the full `extensions`
+        array with each extension's `config`. Returns the raw dict; raises ChasterLockApiError on any failure."""
+        if not access_token or not access_token.strip():
+            raise ValueError("access_token must be a non-empty string.")
+        if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id):
+            raise ValueError("lock_id must be 1-64 characters of letters, digits, '-' or '_'.")
+        try:
+            response = send_with_ordered_headers(
+                "GET", f"{LOCKS_URL}/{lock_id}",
+                headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT},
+                timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+            )
+        except requests.RequestException as exc:
+            raise ChasterLockApiError("Network error contacting Chaster's lock endpoint.") from exc
+        if response.status_code != 200:
+            raise ChasterLockApiError(f"Chaster's lock endpoint returned HTTP {response.status_code}.", status_code=response.status_code)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChasterLockApiError("Chaster's lock endpoint returned a response this application could not parse.") from exc
+        if not isinstance(body, dict):
+            raise ChasterLockApiError("Chaster's lock endpoint returned an unexpected response shape (expected an object).")
         return body
 
     def search_keyholder_locks(self, *, access_token: str, status: str = "locked") -> list[dict]:

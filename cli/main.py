@@ -5,6 +5,9 @@ cli/main.py
 clearly separated tables. It reads the project configuration and database; it never prints a token, a lock combination
 or provider text, and never changes anything. Network calls happen only when the command is invoked.
 
+`extension-config` (Phase I1) is READ-ONLY as well: it discovers every lock of the connected account in both roles and prints the
+review settings (peer verification, visibility, punishments) of the `tasks` and `verification-picture` extensions.
+
 `freeze-lock` is the one guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -19,7 +22,8 @@ from typing import Callable, TextIO
 from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
 from chaster.managed_locks import ManagedLock
 
-__all__ = ["main", "render_listing", "build_directory", "build_freeze_service", "describe"]
+__all__ = ["main", "render_listing", "render_configuration", "build_directory", "build_configuration_reader", "build_freeze_service",
+           "describe", "discovery_user_ids"]
 
 _HEADERS = ("LOCK ID", "TITLE", "WEARER", "WEARER ID", "STATUS", "isFrozen", "TEST")
 
@@ -54,9 +58,8 @@ def render_listing(listing: LockListing) -> str:
     return "\n".join(lines)
 
 
-def build_directory() -> tuple[LockDirectory, str | None, str | None]:
-    """The real wiring from the project configuration (tests inject their own directory instead)."""
-    from chaster.lock_client import ChasterLockClient
+def _chaster_wiring():
+    """The configuration, connection repository and token manager every Chaster CLI command shares."""
     from chaster.oauth_client import ChasterOAuthClient
     from chaster.repository import ChasterConnectionRepository
     from chaster.token_encryptor import TokenEncryptor
@@ -74,9 +77,58 @@ def build_directory() -> tuple[LockDirectory, str | None, str | None]:
     oauth = ChasterOAuthClient(client_id=config.chaster_client_id, client_secret=config.chaster_client_secret,
                                redirect_uri=config.chaster_redirect_uri,
                                scopes=tuple(config.chaster_oauth_scopes.split()) or ("locks",))
-    directory = LockDirectory(token_manager=ChasterTokenManager(connections=connections, oauth_client=oauth),
-                              lock_client=ChasterLockClient(), connections=connections)
-    return directory, config.chaster_execution_wearer_user_id, config.chaster_execution_keyholder_user_id
+    return config, connections, ChasterTokenManager(connections=connections, oauth_client=oauth)
+
+
+def discovery_user_ids(wearer_user_id: str | None, keyholder_user_id: str | None) -> tuple[str | None, str | None]:
+    """Role-agnostic default (Phase I1): without a separate CHASTER_EXECUTION_WEARER_USER_ID the one connected account is asked for
+    the locks it wears as well as the locks it holds the keys of."""
+    return wearer_user_id or keyholder_user_id, keyholder_user_id
+
+
+def build_directory() -> tuple[LockDirectory, str | None, str | None]:
+    """The real wiring from the project configuration (tests inject their own directory instead)."""
+    from chaster.lock_client import ChasterLockClient
+
+    config, connections, tokens = _chaster_wiring()
+    directory = LockDirectory(token_manager=tokens, lock_client=ChasterLockClient(), connections=connections)
+    return (directory, *discovery_user_ids(config.chaster_execution_wearer_user_id, config.chaster_execution_keyholder_user_id))
+
+
+def build_configuration_reader():
+    """(directory, reader, account user id) for `extension-config`; the account is the one holding the Chaster connection."""
+    from chaster.extension_config import LockConfigurationReader
+    from chaster.lock_client import ChasterLockClient
+
+    config, connections, tokens = _chaster_wiring()
+    client = ChasterLockClient()
+    return (LockDirectory(token_manager=tokens, lock_client=client, connections=connections),
+            LockConfigurationReader(token_manager=tokens, lock_client=client), config.chaster_execution_keyholder_user_id)
+
+
+def render_configuration(listing: LockListing, report) -> str:
+    """Read-only view of the review settings on every lock of the account (enum values only; no task text, no codes)."""
+    from chaster.extension_config import EXTENSIONS_EDIT_PERMISSION, REVIEW_EXTENSIONS, describe_review, review_gaps
+
+    lines = [f"ACCOUNT LOCKS: {len(listing.wearer_locks)} worn, {len(listing.keyholder_locks)} held as keyholder"]
+    for c in report.configurations:
+        lines += ["", f"LOCK {c.lock_id}  role {c.role.value if c.role else 'unknown'}  status {_cell(c.status)}  test lock {_cell(c.is_test_lock)}",
+                  f"  extensions: {', '.join(e.slug for e in c.extensions) or 'none'}",
+                  f"  may edit extensions: {'yes' if c.can_edit_extensions else 'NO'} "
+                  f"({EXTENSIONS_EDIT_PERMISSION} granted to: {', '.join(sorted(c.edit_subjects)) or 'nobody'})"]
+        width = max(len(s) for s in REVIEW_EXTENSIONS)
+        lines += [f"  {slug.ljust(width)}  {describe_review(c.extension(slug))}" for slug in REVIEW_EXTENSIONS]
+        gaps = review_gaps(c)
+        if c.status != "locked":
+            lines.append(f"  status {_cell(c.status)}: out of scope, no changes planned")
+        elif gaps:
+            lines += ["  to change:"] + [f"    - {g}" for g in gaps]
+        else:
+            lines.append("  matches the target (community review, no Chaster punishments)")
+    problems = listing.problems + report.problems
+    if problems:
+        lines += ["", "PROBLEMS"] + [f"  {p}" for p in problems]
+    return "\n".join(lines)
 
 
 _DESCRIPTIONS = {
@@ -431,17 +483,20 @@ def main(argv: list[str], *, out: TextIO | None = None,
          directory_factory: Callable[[], tuple[LockDirectory, str | None, str | None]] = build_directory,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
-         ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None) -> int:
+         ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
+         config_factory: Callable[[], tuple] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
     pairing_factory = pairing_factory or build_pairing_service
     ideas_factory = ideas_factory or build_idea_sources
     research_model_factory = research_model_factory or build_research_model
+    config_factory = config_factory or build_configuration_reader
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list-locks", help="List self-locks (wearer) and managed locks (keyholder).")
+    sub.add_parser("extension-config", help="READ-ONLY: review settings (peer verification, visibility, punishments) of every lock of the account.")
     freeze = sub.add_parser("freeze-lock", help="LIVE: freeze or unfreeze a managed lock (owner only, audited).")
     freeze.add_argument("lock_id")
     freeze.add_argument("--state", type=_state, required=True, help="true = freeze, false = unfreeze")
@@ -509,6 +564,15 @@ def main(argv: list[str], *, out: TextIO | None = None,
         listing = directory.list_locks(wearer_user_id=wearer_id, keyholder_user_id=keyholder_id, now=now())
         print(render_listing(listing), file=out)
         return 0 if not listing.problems else 2
+    if args.command == "extension-config":
+        directory, reader, user_id = config_factory()
+        if not user_id:
+            print("CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set: no connected Chaster account to read.", file=out)
+            return 2
+        listing = directory.list_account_locks(user_id=user_id, now=now())
+        report = reader.read(user_id=user_id, lock_ids=[l.lock_id for l in listing.wearer_locks + listing.keyholder_locks], now=now())
+        print(render_configuration(listing, report), file=out)
+        return 0 if not (listing.problems or report.problems) else 2
     if args.command == "ai-ideas":
         return _ai_ideas(args, out, ideas_factory, now)
     if args.command == "research":

@@ -546,7 +546,7 @@ v0.34: the Czech status prompt carries the same direct-wording rule for explaini
 `mentions_lock_topic()` (broad word-prefix check, diacritics-insensitive) or an active connection makes `ApplicationService` load the lock data for the normal conversation path via `build_chaster_chat_context`. Any failure yields no context (chat continues). With context present the model-chosen `get_chaster_status` tool is not offered (the data is already there); explicit status questions still use the status path. 2122 tests repository-wide. The Czech status prompt also requires the infinitive after helper verbs (`můžeš zkusit`, not `můžeš zkus`).
 
 
-v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3682 tests repository-wide.
+v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3737 tests repository-wide.
 
 ## v0.39 dual-role discovery (Phase A, read-only)
 
@@ -554,3 +554,14 @@ v0.37: the whole Chaster context is English. `english_text.format_time_english(s
 (`POST /keyholder/locks/search`, scope `keyholder`), `lock_directory.py` (merges self-locks and managed locks, per-side problem codes) and the CLI
 `python -m cli list-locks`. `CHASTER_OAUTH_SCOPES` sets what `chaster connect` requests (default `locks`; the keyholder account needs `locks keyholder`).
 See `docs/architecture/dual_role_and_messaging_proposal.md` section 6 for the verified endpoints.
+
+## v0.39 Phase I1: role-agnostic discovery and extension configuration (read-only)
+
+`LockDirectory.list_account_locks(user_id)` asks ONE connected account for the locks it wears and the locks it holds the keys of (the role is a
+property of the lock, not of the account); `python -m cli list-locks` uses the connected account for both sides unless
+`CHASTER_EXECUTION_WEARER_USER_ID` names a separate wearer connection. `ChasterLockClient.get_lock()` (`GET /locks/{lockId}`, both roles) feeds
+`extension_config.py`: `parse_lock_configuration()` (role, `lock.extensions.edit` subjects, every extension with a deep copy of its config, the
+`peerVerification` settings `enabled` / `visibility` / `punishments`), `review_gaps()` against the Phase I target (`all_members`, no punishments)
+and `LockConfigurationReader` (per-lock problem codes, INFO logs with enum values only). `python -m cli extension-config` prints the report.
+Never copied: the combination, `offerToken`, `sharedLinkToken`, extension `userData`; task texts stay out of `repr` and logs. Specification and
+live result: `docs/architecture/phase_i_proposal.md`.

@@ -6,6 +6,9 @@ LockDirectory (v0.39 dual-role, Phase A): READ-ONLY discovery of every lock the 
 - WEARER locks: `GET /locks?status=active` with the wearer connection (scope `locks`); unchanged behaviour.
 - KEYHOLDER locks: `POST /keyholder/locks/search` with the keyholder connection (scope `keyholder`).
 
+`list_account_locks(user_id)` (Phase I1) runs both sides with ONE account's connection: the role is a property of each lock, not
+of the account, so the same account can wear one lock and hold the keys of another.
+
 The two sides are independent: a failure on one side is reported as a short problem code and never hides the other
 side (partial results are explicit). Problem codes carry no tokens and no provider text. Nothing here writes anything.
 """
@@ -54,6 +57,11 @@ class LockDirectory:
             "keyholder", keyholder_user_id, KEYHOLDER_SCOPE, LockRole.KEYHOLDER, now, listing.problems,
             lambda token: self._client.search_keyholder_locks(access_token=token, status="locked"))
         return listing
+
+    def list_account_locks(self, *, user_id: str | None, now: datetime) -> LockListing:
+        """Role-agnostic discovery for ONE connected account (v0.39 Phase I1): the locks it wears AND the locks it holds the keys
+        of, both through that account's own connection. The two sides keep their own problem codes."""
+        return self.list_locks(wearer_user_id=user_id, keyholder_user_id=user_id, now=now)
 
     # ------------------------------------------------------------------ internals
 
