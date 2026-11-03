@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3919 passing tests** across the whole repository (`pytest`), including
+**3943 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -497,6 +497,16 @@ py -m bot.discord_bot
 :: Windows, robust alternative -- recommended if the above doesn't work
 .\windows\run_bot.ps1
 ```
+
+```bat
+:: Windows autostart (Task Scheduler or the shell:startup folder): a launcher with ABSOLUTE paths for this machine.
+:: Generate it once (it records the interpreter that runs the generator), then point the task / shortcut at it.
+python -m scripts.make_start_script
+scripts\start_bot.bat
+```
+
+Only one bot instance may run at a time: with a scheduled task in place (`windows/install_task.ps1`), do not also start the bot by hand
+(both would answer DMs).
 
 On first run, `data/coach_keyholder.db` is created automatically,
 migrations are applied, and `on_system_startup()` runs (Trust Manager/

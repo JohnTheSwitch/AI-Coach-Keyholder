@@ -15,6 +15,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Callable
 
 from chaster.lock_directory import LockDirectory
 from chaster.peer_reviews import PeerReviewReader
@@ -110,16 +111,19 @@ def build_peer_review_decisions(config, core: CoreDatabase) -> PeerReviewDecisio
 
 
 async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_seconds: float, send=None, owner_target: str | None = None,
-                           initial_delay_seconds: float = 30.0) -> None:
+                           initial_delay_seconds: float = 30.0, view_for: Callable[[str], object] | None = None) -> None:
     """Poll, then deliver the pending notices to the owner (`send(target, text) -> bool`, e.g. the Discord adapter); a notice is marked
-    delivered only when the channel accepted it. Never raises out of an iteration."""
+    delivered only when the channel accepted it. With `view_for(incident_id)` the notice carries the decision buttons
+    (`send(target, text, view=...)`). Never raises out of an iteration."""
     await asyncio.sleep(initial_delay_seconds)          # let the Discord client become ready first
     while True:
         try:
             await asyncio.to_thread(watch.poll, clock.now())
             if send is not None and owner_target:
                 for notice in await asyncio.to_thread(watch.pending_notifications):
-                    if await send(owner_target, notice.text):
+                    sent = (await send(owner_target, notice.text, view=view_for(notice.incident_id)) if view_for is not None
+                            else await send(owner_target, notice.text))
+                    if sent:
                         await asyncio.to_thread(watch.mark_notified, notice.incident_id, clock.now())
         except asyncio.CancelledError:
             raise

@@ -65,7 +65,8 @@ def incident_description(*, lock_id: str, source: str, review_id: str, verified,
 def notice_text(*, lock_id: str, source: str, incident_id: str, verified, rejected) -> str:
     return (f"Community review rejected a {_SOURCE_TEXT.get(source, source)} on lock {lock_id} ({_votes(verified, rejected)}).\n"
             f"An UNCONFIRMED incident was recorded for your review (id {incident_id}). Nothing was deducted and no time was added.\n"
-            f"Decide on the bot's machine: python -m cli peer-reviews confirm|dismiss {incident_id} --owner-id <your id> --yes")
+            f"Decide with the buttons below, or on the bot's machine: "
+            f"python -m cli peer-reviews confirm|dismiss {incident_id} --owner-id <your id> --yes")
 
 
 @dataclass

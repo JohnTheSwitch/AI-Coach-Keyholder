@@ -207,3 +207,10 @@ needed. `run_bot.ps1` also sets an unlimited execution time limit
 (`ExecutionTimeLimit`) — Task Scheduler's own default is 3 days, which
 would otherwise silently kill a long-running bot process that Task
 Scheduler assumes is a stuck batch job.
+
+## Plain batch launcher (`scripts/start_bot.bat`)
+
+For Task Scheduler setups that prefer a `.bat`, or a shortcut in the `shell:startup` folder: `python -m scripts.make_start_script`
+generates `scripts/start_bot.bat` with ABSOLUTE paths (`cd /d` into the repository, then the interpreter that ran the generator with
+`-m bot.discord_bot`). Regenerate it after moving the repository or changing the Python installation. Use either this or the scheduled
+task from `install_task.ps1`, never both at once.

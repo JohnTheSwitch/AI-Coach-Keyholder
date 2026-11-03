@@ -4,8 +4,9 @@ messaging/discord_adapter.py
 DiscordMessagingAdapter (Phase B): the Discord side of the messaging layer. It wraps the delivery the bot already did with
 `user.send(...)` and the normalisation of an incoming direct message, behind the channel-neutral interface.
 
-- `send_message(target_id, content)`: target_id is a Discord user id as text; long text is split into Discord-sized chunks;
-  returns False (never raises) when the client is missing/not ready, the id is malformed, DMs are closed or Discord fails.
+- `send_message(target_id, content, view=None)`: target_id is a Discord user id as text; long text is split into Discord-sized
+  chunks; an optional discord.ui.View (buttons) is attached to the LAST chunk; returns False (never raises) when the client is
+  missing/not ready, the id is malformed, DMs are closed or Discord fails.
 - `unify(message, user_id)`: builds a `UnifiedMessage` from a discord.Message (ids only in `raw_payload`).
 - `handle_incoming_message(unified)`: hands the message to the injected handler (the application pipeline) and sends the text
   it returns back through `unified.reply()`. A failing handler is logged and answered with a fixed neutral text.
@@ -56,7 +57,7 @@ class DiscordMessagingAdapter(BaseMessagingAdapter):
     def client(self):
         return self._client
 
-    async def send_message(self, target_id: str, content: str) -> bool:
+    async def send_message(self, target_id: str, content: str, *, view=None) -> bool:
         client = self._client
         if client is None or not client.is_ready() or not isinstance(content, str) or not content.strip():
             return False
@@ -66,8 +67,12 @@ class DiscordMessagingAdapter(BaseMessagingAdapter):
             return False
         try:
             user = await client.fetch_user(discord_id)
-            for chunk in split_message(content):
-                await user.send(chunk)
+            chunks = split_message(content)
+            for i, chunk in enumerate(chunks):
+                if view is not None and i == len(chunks) - 1:
+                    await user.send(chunk, view=view)
+                else:
+                    await user.send(chunk)
             return True
         except Exception as exc:       # Forbidden (DMs closed), NotFound, HTTP failures: all simply "not delivered"
             logger.warning("Discord delivery failed (%s).", type(exc).__name__)

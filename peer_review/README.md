@@ -28,7 +28,15 @@ CONFIRMED ones only. Tests assert this (no consumer of `incident.reported`, no c
 cannot reach any confirm call). The watch does not stop for the execution runtime halt: it only reads Chaster and writes local,
 unconfirmed records.
 
-## The keyholder's decision (CLI)
+## The keyholder's decision: Discord buttons
+
+The owner's DM about a rejection carries two buttons, **Confirm Penalty** and **Dismiss Incident** (`discord_buttons.py`). They call the
+same `PeerReviewDecisions.decide()` as the CLI. Only the owner's verified Discord account can use them (anyone else gets an ephemeral
+refusal); a click is the explicit confirmation; afterwards the buttons are removed and the outcome is appended to the message. They are
+persistent (`discord.ui.DynamicItem`, custom id `peer_review:<confirm|dismiss>:<incident id>`), so buttons on older notices still work
+after a restart. Confirming makes the Incident CONFIRMED (source `keyholder_review`); dismissing leaves it UNCONFIRMED for good.
+
+## The keyholder's decision (CLI fallback)
 
 ```
 python -m cli peer-reviews list --owner-id <id> [--all]

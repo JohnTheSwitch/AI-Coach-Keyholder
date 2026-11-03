@@ -127,6 +127,7 @@ class CoachKeyholderBot(discord.Client):
         self.research_export = None              # Phase G4: the export coroutine (system.composition.research_export_loop_for) when configured
         self._research_task: asyncio.Task | None = None
         self.peer_reviews = None                 # Phase I4: the peer_review.wiring.peer_review_loop coroutine when the watch is active
+        self.peer_review_buttons = None          # Phase I4: peer_review.discord_buttons.PeerReviewButtonHandler (owner's one-click decisions)
         self._peer_review_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
@@ -154,6 +155,9 @@ class CoachKeyholderBot(discord.Client):
             self._research_task = asyncio.create_task(self.research_export, name="research-export")
         if self.peer_reviews is not None:
             self._peer_review_task = asyncio.create_task(self.peer_reviews, name="peer-review-watch")
+        if self.peer_review_buttons is not None:
+            from peer_review.discord_buttons import PeerReviewDecisionButton
+            self.add_dynamic_items(PeerReviewDecisionButton)    # persistent: buttons on older notices keep working after a restart
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -599,8 +603,12 @@ def main() -> None:
     for note in peer.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if peer.watch is not None:
+        from peer_review.discord_buttons import PeerReviewButtonHandler, decision_view
+        from peer_review.wiring import build_peer_review_decisions
+        bot.peer_review_buttons = PeerReviewButtonHandler(build_peer_review_decisions(config, core), owner_user_id=config.owner_user_id,
+                                                          owner_discord_id=peer.owner_target, now=clock.now)
         bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds, send=discord_adapter.send_message,
-                                            owner_target=peer.owner_target)
+                                            owner_target=peer.owner_target, view_for=decision_view)
     if bot.research_export is not None:
         logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
