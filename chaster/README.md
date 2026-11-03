@@ -588,4 +588,4 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3908 tests repository-wide.
+logger contains `SECRET`. 3919 tests repository-wide.

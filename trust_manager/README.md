@@ -147,3 +147,7 @@ via Goals; there is no direct Task -> Trust route).
 v0.39 Phase I4: `register_incident_report()` accepts an optional `incident_id`, so a caller that claims the id in its own ledger first
 (`peer_review/`) can retry a registration idempotently: a second insert of the same id fails on the primary key instead of creating a
 duplicate Incident. Every new Incident still starts UNCONFIRMED.
+
+`domain_admin.py` (`TrustDomainAdmin`, CLI `python -m cli trust-domain list|create`): the owner's guarded creation of a Trust domain
+(owner, `--yes`, plain id, name and description). The consent record (`consent_log`, target `trust_algorithm` / `trust_domain:<id>`, the
+exact text shown) is written first and its id becomes `created_via_consent_id` (TI1). Only the CLI uses it.

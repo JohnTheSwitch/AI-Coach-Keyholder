@@ -17,6 +17,8 @@ it only reduces who sees the photos). `review-consent` shows the notice and reco
 `peer-reviews` (Phase I4) lists the community review results the bot recorded and the UNCONFIRMED Incidents a rejection created;
 `confirm` / `dismiss` is the keyholder's manual decision on one of them (owner only, --yes). Nothing here talks to Chaster.
 
+`trust-domain` lists the Trust domains or creates one (owner only, --yes); the creation writes its consent record first (TI1).
+
 `freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -32,7 +34,8 @@ from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
 from chaster.managed_locks import ManagedLock
 
 __all__ = ["main", "render_listing", "render_configuration", "render_review", "render_consent", "build_directory", "build_configuration_reader",
-           "build_extension_review_service", "build_freeze_service", "build_peer_review_decisions_cli", "describe", "discovery_user_ids",
+           "build_extension_review_service", "build_freeze_service", "build_peer_review_decisions_cli", "build_trust_domain_admin", "describe",
+           "discovery_user_ids",
            "render_peer_reviews"]
 
 _HEADERS = ("LOCK ID", "TITLE", "WEARER", "WEARER ID", "STATUS", "isFrozen", "TEST")
@@ -346,6 +349,24 @@ def build_peer_review_decisions_cli():
 
     config = Config.load()
     return build_peer_review_decisions(config, CoreDatabase(config.db_path))
+
+
+def build_trust_domain_admin():
+    from core.config import Config
+    from trust_manager.domain_admin import TrustDomainAdmin
+
+    config = Config.load()
+    return TrustDomainAdmin(config.db_path, owner_user_id=config.owner_user_id)
+
+
+_DOMAIN_TEXT = {
+    "created": "Created.",
+    "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
+    "not_owner": "Refused: that identity is not the owner.",
+    "not_confirmed": "Refused: add --yes to create the domain (the text above is what you consent to).",
+    "invalid_input": "Refused: a domain id is 2-32 characters of a-z, 0-9 and '_' starting with a letter; name and description 1-200 characters.",
+    "already_exists": "Nothing to do: that Trust domain already exists.",
+}
 
 
 _PEER_TEXT = {
@@ -675,7 +696,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
          config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None,
-         peer_factory: Callable[[], object] | None = None) -> int:
+         peer_factory: Callable[[], object] | None = None, domain_factory: Callable[[], object] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -685,6 +706,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     config_factory = config_factory or build_configuration_reader
     review_factory = review_factory or build_extension_review_service
     peer_factory = peer_factory or build_peer_review_decisions_cli
+    domain_factory = domain_factory or build_trust_domain_admin
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -724,6 +746,16 @@ def main(argv: list[str], *, out: TextIO | None = None,
         pd.add_argument("--yes", action="store_true")
     for pp in psub.choices.values():
         pp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    domains = sub.add_parser("trust-domain", help="List the Trust domains or create one with recorded consent (owner only).")
+    dsub = domains.add_subparsers(dest="domain_command", required=True)
+    dsub.add_parser("list", help="Read-only.")
+    dc = dsub.add_parser("create", help="Create a Trust domain; writes the consent record first.")
+    dc.add_argument("domain_id")
+    dc.add_argument("--name", required=True)
+    dc.add_argument("--description", required=True)
+    dc.add_argument("--yes", action="store_true")
+    for dp in dsub.choices.values():
+        dp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -875,6 +907,23 @@ def main(argv: list[str], *, out: TextIO | None = None,
         if not result.done:
             return 3
         return 0 if result.revert is None or result.revert.outcome.value in ("applied", "nothing_to_revert") else 4
+    if args.command == "trust-domain":
+        from trust_manager.domain_admin import domain_explanation
+        admin = domain_factory()
+        refusal = admin.authorize(args.owner_id)
+        if refusal is not None:
+            print(_DOMAIN_TEXT[refusal.value], file=out)
+            return 3
+        if args.domain_command == "list":
+            rows = admin.list_domains()
+            print("\n".join(f"{r['domain_id']}  {r['display_name']}  active {'yes' if r['is_active'] else 'no'}  score {r['score']}  "
+                            f"confidence {r['confidence']}  created {r['created_at']}" for r in rows) or "No Trust domains.", file=out)
+            return 0
+        print(domain_explanation(args.domain_id, args.name, args.description), file=out)
+        outcome = admin.create(actor=args.owner_id, domain_id=args.domain_id, display_name=args.name, description=args.description,
+                               confirmed=args.yes, now=now())
+        print(f"{_DOMAIN_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
+        return 0 if outcome.value == "created" else 3
     if args.command == "peer-reviews":
         decisions = peer_factory()
         if args.peer_command == "list":

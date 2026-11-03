@@ -130,7 +130,7 @@ accepts the body as read, and a wearer-side edit on a `full_trust` lock is appli
 **Live order (as run).** Consent for `6ae98ca…` (`--accept --yes`) and `6aca95cd…` (`--accept --yes --wearer-is-my-account`), a fresh dry run
 (consent does not change the plan id), then the halt clear / apply / halt sequence.
 
-## 7. I4 as built: community review results -> UNCONFIRMED Incidents (2026-11-04)
+## 7. I4 as built: community review results -> UNCONFIRMED Incidents (2026-11-03)
 
 **Goal (owner).** Read the community votes on task photos and verification pictures; a rejection creates strictly an UNCONFIRMED Incident
 for the keyholder's decision; no automatic token deduction or time added (no double jeopardy); every polled status transition recorded so
@@ -158,3 +158,8 @@ one rejected review can never create a second Incident.
 2. **A `rejected` review that later turns `verified`** (should Chaster ever reverse it) is recorded as a transition; the Incident stays for the
    keyholder to dismiss.
 3. **Locks that are not `locked`** are not polled.
+
+**Live (2026-11-03).** The owner's database had no Trust domain; the owner approved creating `routine` through the new guarded
+`python -m cli trust-domain create` (consent record first, TI1; score 0.6, confidence 0.15). With `ENABLE_PEER_REVIEW_WATCH=true` the bot
+applied migration 043, logged "Community review watch enabled: every 600 s", found the owner's Discord id for notices, and the first poll
+recorded the baseline: `6aca95cd…` one task review already `verified` (no Incident), `6ae98ca…` one task review `ongoing` (followed).

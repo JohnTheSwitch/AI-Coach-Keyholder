@@ -429,9 +429,9 @@ class TestWiring:
             clock = SimpleNamespace(now=lambda: NOW + timedelta(minutes=5))
             loop_task = asyncio.create_task(peer_review_loop(w.watch, clock, interval_seconds=3600, send=send, owner_target="123",
                                                              initial_delay_seconds=0))
-            for _ in range(200):
+            for _ in range(1000):                                     # up to 10 s: the poll runs in a worker thread
                 await asyncio.sleep(0.01)
-                if sent:
+                if sent and not w.watch.pending_notifications():
                     break
             loop_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -445,24 +445,26 @@ class TestWiring:
         w.watch.poll(NOW)
         w.set(tasks=[task("pv1", "rejected")])
 
+        attempts = []
+
         async def refuse(target, text):
+            attempts.append(text)
             return False
 
         async def run():
             clock = SimpleNamespace(now=lambda: NOW + timedelta(minutes=5))
             loop_task = asyncio.create_task(peer_review_loop(w.watch, clock, interval_seconds=3600, send=refuse, owner_target="123",
                                                              initial_delay_seconds=0))
-            for _ in range(200):
+            for _ in range(1000):
                 await asyncio.sleep(0.01)
-                if w.incidents():
+                if attempts:
                     break
-            await asyncio.sleep(0.05)
             loop_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await loop_task
 
         asyncio.run(run())
-        assert len(w.watch.pending_notifications()) == 1
+        assert len(attempts) == 1 and len(w.watch.pending_notifications()) == 1
 
     def test_the_bot_starts_and_stops_the_loop(self) -> None:
         text = (ROOT / "bot" / "discord_bot.py").read_text(encoding="utf-8")
