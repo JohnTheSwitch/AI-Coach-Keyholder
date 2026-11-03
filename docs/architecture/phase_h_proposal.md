@@ -1,8 +1,12 @@
 # Phase H: the Zero-Trace Visual Proof Engine
 
-Status: H0 (specification, binding) and H1 (the vision core, `vision/`, section 11) built. Nothing polls Chaster yet. Sections 2 and 3 record what the Chaster API actually allows, verified against the live OpenAPI
-document (fetched 2026-11-03 from `api.chaster.app/api-json`, Chaster API version 0.35.0, 181 paths). Live behaviour still to be confirmed with a read-only
-probe once the keyholder token has the `keyholder` scope is listed in section 9.
+Status: **DISCONTINUED (owner decision, 2026-11-03).** Photo validation is left to Chaster's own Peer Verification; the bot will only read the
+resulting status. See section 12 for the decision, the read-only probe results that preceded it and what remains in the repository. H0 and H1 below
+are kept as the historical record; H2 to H4 will not be built.
+
+Original status: H0 (specification, binding) and H1 (the vision core, `vision/`, section 11) built. Sections 2 and 3 record what the Chaster API
+actually allows, verified against the live OpenAPI document (fetched 2026-11-03 from `api.chaster.app/api-json`, Chaster API version 0.35.0, 181
+paths).
 
 ## 1. Owner decisions (2026-11-03)
 
@@ -119,9 +123,9 @@ The probe prints field names, statuses and the URL host only, never the URL or t
 |---|---|---|
 | H0 | this specification | none |
 | H1 | vision core: in-memory fetcher, `VisionAdapter`, strict parser with the code check, disk-ban guards (static and runtime), local-host rule, `VISION_OLLAMA_MODEL` (off when empty); an evaluation script that reads owner-provided sample images into memory only | none |
-| H2 | the read-only probe of section 9, then the poller in its own task with `ApiBudget`, the verdict table (migration 042), the wearer opt-in and consent text; shadow mode: verdicts recorded and sent to the owner only | reads only |
-| H3 | consequences of section 7 inside the engine, neutral wearer messages | engine only |
-| H4 | hardening: injection images, numeric telemetry (verdict and latency only), cross-tenant audit, runbook (crash dumps, `OLLAMA_DEBUG`, Chaster visibility settings) | none |
+| H2 | CANCELLED (section 12). Was: the read-only probe of section 9, then the poller in its own task with `ApiBudget`, the verdict table (migration 042), the wearer opt-in and consent text; shadow mode: verdicts recorded and sent to the owner only | reads only |
+| H3 | CANCELLED (section 12). Was: consequences of section 7 inside the engine, neutral wearer messages | engine only |
+| H4 | CANCELLED (section 12). Was: hardening: injection images, numeric telemetry (verdict and latency only), cross-tenant audit, runbook (crash dumps, `OLLAMA_DEBUG`, Chaster visibility settings) | none |
 | later | Chaster write-back through a registered Partner Extension (separate decision) | live |
 
 ## 11. H1 as built (2026-11-03)
@@ -139,3 +143,43 @@ The probe prints field names, statuses and the URL host only, never the URL or t
 - Live smoke test on this machine with a synthetic gray image: `qwen3-vl:8b-instruct` accepted the image and the schema and answered `unclear` /
   `image_unclear` for both a device check and a task proof (about 80 s including loading the model, about 8 s warm).
 
+
+## 12. Discontinued: verification through Chaster Peer Verification (2026-11-03)
+
+**Decision (owner).** The local vision pipeline is dropped. Tasks and verification pictures are set to Chaster's Peer Verification (community voting)
+on the lock, and the bot only reads the final status (`verified` / `rejected`) in its normal polling. No image is ever fetched or processed by this
+project, no vision model runs, and the GPU stays free for the conversation model. H2, H3 and H4 of section 10 are cancelled.
+
+**Read-only probe (2026-11-03, before the decision; temporary scripts, deleted).** Run with the owner's connected account, which is the wearer of
+one test lock (`full_trust` preset) and the keyholder of another (`trusted_keyholder` preset), after the `tasks` and `verification-picture`
+extensions were added to both:
+
+- Reads behave the same for both roles: `GET /locks/{id}`, `GET /locks/{id}/verification-pictures` and `GET /extensions/tasks/{id}/history` return
+  200 for wearer and keyholder alike. Without the extension on the lock they return 403 (`Forbidden`, verification pictures) and 404 (`Tasks
+  extension not found`).
+- A task waiting for review has `status: pending_verification` and a `peerVerification` object: `status` (`ongoing` / `verified` / `rejected`),
+  vote counts, `rejectionReasons`, `checkResults`, `assignedUsers`, `endsAt` and `checks` (`name`, `task`, `code`). **This is everything the
+  replacement needs**: the verdict is a status field, read without any image.
+- No image key for a task photo appears in the task history, the lock history (`POST /locks/{id}/history`, entries `tasks_task_assigned` /
+  `tasks_task_completed` carry the task and its `code`) or the verification-picture list. The H0 `task_proof` path therefore had no photo to fetch
+  through the public API; this supports the decision.
+- The verification-picture extension exposes `userData.nbVerificationPictures`, `requestedAt`, `verificationCodeRequired` and
+  `currentVerificationCode`; its config has `visibility` and `peerVerification` (`enabled`, `punishments`, `visibility`). The tasks extension config
+  has the same `peerVerification` object (`visibility: keyholder` routes a check to the keyholder instead of the community).
+- Extension configuration is editable through `POST /locks/{lockId}/extensions` (scope `locks`; the body is the COMPLETE list of the lock's
+  extensions, each `slug`, `config`, `mode`, `regularity`), gated by the lock's permission contract (`lock.extensions.edit`, returned per subject in
+  `permissions.grants`). `GET /locks/{id}/extensions/{extensionId}` returns exactly `_id`, `slug`, `config`, `mode`, `regularity`. No write was made.
+
+**Consequences to carry into the replacement (not decided here).**
+
+1. Privacy changes direction: with community verification, other Chaster users see the wearer's photos (the extension's `visibility` setting
+   controls who). The zero-trace promise of section 4 no longer applies; the wearer must be told who sees the photos (philosophy 2.5, 2.6).
+2. Chaster's own `punishments` on a rejected check (for example `add_time`) act on Chaster's side regardless of this engine. A `rejected` status read
+   by the bot is a community vote, a single signal: it may at most open an unconfirmed Incident for the owner (2.10, 2.12), never a penalty by
+   itself.
+3. Polling the status reuses the `ApiBudget` background lane and the managed-lock discovery; reading works for both roles, so a role-agnostic lock
+   list (locks the account wears as well as locks it keyholds) is needed.
+
+**What stays in the repository.** The H1 package `vision/`, `scripts/eval_vision.py`, `tests/vision/` and the `VISION_OLLAMA_MODEL` /
+`VISION_READ_TIMEOUT_SECONDS` settings remain as dormant code: nothing outside them imports the package, and the feature is off while
+`VISION_OLLAMA_MODEL` is empty. They can be removed in a separate cleanup commit if the owner wants them gone.

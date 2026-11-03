@@ -67,8 +67,9 @@ real architectural findings surfaced while building it:
 - [`system/README.md`](system/README.md) -- the startup orchestrator,
   the consumer/dispatch framework, and the composition-layer wiring
   between all of the above.
-- [`vision/README.md`](vision/README.md) -- the Zero-Trace vision core (Phase H1): in-memory image
-  fetch, the local vision model and a strict verdict parser; nothing is ever written to disk.
+- [`vision/README.md`](vision/README.md) -- **discontinued, dormant**: the Zero-Trace vision core
+  (Phase H1). Photo validation is handled natively by Chaster Peer Verification; the bot will only
+  read the resulting status (`docs/architecture/phase_h_proposal.md`, section 12).
 - [`hive_mind_receiver/README.md`](hive_mind_receiver/README.md) -- the STANDALONE receiver for the
   opt-in research telemetry (FastAPI + SQLite, own requirements, shares no code with the bot;
   its own test suite runs separately).

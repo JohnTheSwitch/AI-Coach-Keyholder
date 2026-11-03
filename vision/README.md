@@ -1,7 +1,10 @@
 # vision
 
-v0.39 Phase H1, the core of the Zero-Trace Visual Proof Engine. Specification: [`docs/architecture/phase_h_proposal.md`](../docs/architecture/phase_h_proposal.md).
-Nothing here polls Chaster or changes any state yet; that is H2 and H3.
+**Discontinued (2026-11-03): dormant code.** Photo validation is handled natively by Chaster Peer Verification; the bot only reads the resulting status.
+Nothing outside this package, `scripts/eval_vision.py` and `tests/vision/` imports it, and it stays off while `VISION_OLLAMA_MODEL` is empty. The decision and
+the probe results behind it: [`docs/architecture/phase_h_proposal.md`](../docs/architecture/phase_h_proposal.md), section 12.
+
+v0.39 Phase H1, the core of the Zero-Trace Visual Proof Engine. Nothing here polls Chaster or changes any state; H2 to H4 will not be built.
 
 | Module | Role |
 |---|---|
