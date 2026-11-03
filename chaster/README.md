@@ -588,4 +588,13 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3943 tests repository-wide.
+logger contains `SECRET`. 3907 tests repository-wide.
+
+## Emergency unlock: lock fields confirmed (2026-11-03)
+
+The `LockForWearer` fields are confirmed from Chaster's OpenAPI document (0.35.0). `emergency_unlock_provider.py`'s
+`lock_for_wearer_eligibility` replaces `unconfirmed_lock_field_extractor` (mentions of it above are historical): a lock is eligible only when
+it has a valid `_id`, `status` is `locked`, `role` is `wearer`, `emergencyUnlocked` is not true and `emergencyUnlock.enabled` is true;
+anything missing or malformed makes it ineligible with a reason, never an exception. Only locks whose `status` is `locked` are unlock
+candidates (an unlocked or deserted lock in the wearer's active list is ignored); zero or several candidates still fail closed, and
+Chaster's own 400 answer stays the final authority. The local emergency-unlock server can therefore succeed for an eligible lock.

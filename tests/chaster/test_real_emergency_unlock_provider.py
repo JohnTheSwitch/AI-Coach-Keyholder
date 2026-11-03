@@ -13,10 +13,9 @@ import pytest
 
 from chaster.emergency_unlock_provider import (
     LockEligibility,
-    LockFieldsUnconfirmedError,
     ProviderUnlockOutcome,
     RealChasterEmergencyUnlockProvider,
-    unconfirmed_lock_field_extractor,
+    lock_for_wearer_eligibility,
 )
 from chaster.lock_client import (
     ChasterLockApiError,
@@ -119,22 +118,80 @@ class TestEligibility:
         assert result.outcome is ProviderUnlockOutcome.FAILED
         client.emergency_unlock.assert_not_called()
 
-    def test_unconfirmed_schema_fields_rejected_safely_without_calling_unlock(self) -> None:
-        """The production default -- this project has not confirmed
-        LockForWearer's exact fields, so eligibility can never be
-        established today, and the provider must fail safely rather
-        than guess."""
+    def test_the_default_extractor_reads_the_confirmed_fields_and_unlocks_an_eligible_lock(self) -> None:
         client = _mock_client()
-        client.list_active_locks.return_value = [{"_id": "lock1"}]
-        provider = RealChasterEmergencyUnlockProvider(lock_client=client)  # default extractor
-        result = provider.attempt_unlock(access_token="at")
-        assert result.outcome is ProviderUnlockOutcome.FAILED
-        assert "schema has not been confirmed" in result.detail
+        client.list_active_locks.return_value = [_wearer_lock()]
+        client.emergency_unlock.return_value = EmergencyUnlockHttpResult(outcome=EmergencyUnlockHttpOutcome.SUCCEEDED, http_status=204)
+        result = RealChasterEmergencyUnlockProvider(lock_client=client).attempt_unlock(access_token="at")   # default extractor
+        assert result.outcome is ProviderUnlockOutcome.SUCCEEDED
+        client.emergency_unlock.assert_called_once_with(access_token="at", lock_id="6ae98ca410556a82f4b0d1aa")
+
+    def test_the_default_extractor_refuses_a_lock_without_the_safety_feature(self) -> None:
+        client = _mock_client()
+        client.list_active_locks.return_value = [_wearer_lock(emergencyUnlock={"enabled": False, "phrase": "x"})]
+        result = RealChasterEmergencyUnlockProvider(lock_client=client).attempt_unlock(access_token="at")
+        assert result.outcome is ProviderUnlockOutcome.FAILED and "no emergency-unlock safety feature" in result.detail
         client.emergency_unlock.assert_not_called()
 
-    def test_default_extractor_always_raises(self) -> None:
-        with pytest.raises(LockFieldsUnconfirmedError):
-            unconfirmed_lock_field_extractor({"_id": "anything"})
+    def test_an_extractor_that_raises_fails_closed(self) -> None:
+        client = _mock_client()
+        client.list_active_locks.return_value = [{"_id": "lock1"}]
+        def boom(raw):
+            raise KeyError("x")
+        result = RealChasterEmergencyUnlockProvider(lock_client=client, lock_field_extractor=boom).attempt_unlock(access_token="at")
+        assert result.outcome is ProviderUnlockOutcome.FAILED
+        client.emergency_unlock.assert_not_called()
+
+
+def _wearer_lock(**overrides) -> dict:
+    lock = {"_id": "6ae98ca410556a82f4b0d1aa", "status": "locked", "role": "wearer", "lockType": "chastity", "emergencyUnlocked": False,
+            "emergencyUnlock": {"enabled": True, "phrase": "SECRET PHRASE"}, "combination": "SECRET"}
+    lock.update(overrides)
+    return lock
+
+
+class TestLockForWearerEligibility:
+    def test_eligible(self) -> None:
+        result = lock_for_wearer_eligibility(_wearer_lock(lockType="bondage"))
+        assert result == LockEligibility(lock_id="6ae98ca410556a82f4b0d1aa", eligible=True,
+                                         reason="locked bondage lock with the emergency-unlock safety feature enabled")
+        assert "SECRET" not in repr(result)
+
+    @pytest.mark.parametrize("overrides, reason", [
+        ({"_id": None}, "no valid id"), ({"_id": "../x"}, "no valid id"),
+        ({"status": "unlocked"}, "not locked"), ({"status": None}, "not locked"),
+        ({"role": "keyholder"}, "only the wearer"), ({"emergencyUnlocked": True}, "already emergency-unlocked"),
+        ({"emergencyUnlock": None}, "no emergency-unlock safety feature"), ({"emergencyUnlock": {"enabled": "yes"}}, "no emergency-unlock safety feature"),
+    ])
+    def test_every_missing_or_wrong_field_is_ineligible_never_an_error(self, overrides, reason) -> None:
+        result = lock_for_wearer_eligibility(_wearer_lock(**overrides))
+        assert result.eligible is False and reason in result.reason
+
+    def test_a_non_dict_is_ineligible(self) -> None:
+        assert lock_for_wearer_eligibility(None).eligible is False
+
+
+class TestCandidateFiltering:
+    def test_unlocked_locks_in_the_active_list_are_never_candidates(self) -> None:
+        client = _mock_client()
+        client.list_active_locks.return_value = [_wearer_lock(_id="oldlock", status="unlocked"), _wearer_lock()]
+        client.emergency_unlock.return_value = EmergencyUnlockHttpResult(outcome=EmergencyUnlockHttpOutcome.SUCCEEDED, http_status=204)
+        result = RealChasterEmergencyUnlockProvider(lock_client=client).attempt_unlock(access_token="at")
+        assert result.outcome is ProviderUnlockOutcome.SUCCEEDED
+        client.emergency_unlock.assert_called_once_with(access_token="at", lock_id="6ae98ca410556a82f4b0d1aa")
+
+    def test_two_locked_locks_still_fail_closed(self) -> None:
+        client = _mock_client()
+        client.list_active_locks.return_value = [_wearer_lock(), _wearer_lock(_id="second")]
+        result = RealChasterEmergencyUnlockProvider(lock_client=client).attempt_unlock(access_token="at")
+        assert result.outcome is ProviderUnlockOutcome.FAILED and "2 active Chaster locks" in result.detail
+        client.emergency_unlock.assert_not_called()
+
+    def test_only_unlocked_locks_means_no_target(self) -> None:
+        client = _mock_client()
+        client.list_active_locks.return_value = [_wearer_lock(status="unlocked"), _wearer_lock(_id="b", status="deserted")]
+        result = RealChasterEmergencyUnlockProvider(lock_client=client).attempt_unlock(access_token="at")
+        assert result.outcome is ProviderUnlockOutcome.FAILED and "No active Chaster lock" in result.detail
 
 
 class TestUnlockCallCorrectness:

@@ -150,6 +150,7 @@ one rejected review can never create a second Incident.
 | No double jeopardy | `incident.reported` has no consumer; the Penalty Engine reacts only to `incident.confirmation_changed`; the daily evaluation and the plugin SDK count CONFIRMED Incidents only; the poll class has no path to any confirmation and the package imports nothing from execution, penalty, release or rules. Chaster's own punishments were removed in I2. |
 | Owner notice | One Discord DM per Incident to the owner (id from the owner's identity row), retried each poll until Discord accepts it. |
 | Decision | Discord buttons on the notice, **Confirm Penalty** / **Dismiss Incident** (persistent, owner's Discord account only, one click, buttons removed afterwards), or the CLI fallback `python -m cli peer-reviews list|confirm|dismiss` (owner, `--yes`): `confirm` = CONFIRMED with source `keyholder_review` (from then on it counts like any confirmed Incident), `dismiss` = stays UNCONFIRMED for good. |
+| Failure alert | `PollHealth`: 3 consecutive failed polls (network, Chaster 4xx/5xx, rate limit, expired connection) -> one alert DM to the keyholder; one recovery note when polling works again. |
 | Runtime | Its own bot task (`peer_review_loop`, first poll 30 s after start, then every `PEER_REVIEW_POLL_SECONDS`, default 600, minimum 120), independent of the Rules Engine cycle (off in this deployment). Behind `ENABLE_PEER_REVIEW_WATCH` (default false). Not stopped by the execution runtime halt: it only reads Chaster and writes local unconfirmed records. |
 
 **Interpretations to confirm.**

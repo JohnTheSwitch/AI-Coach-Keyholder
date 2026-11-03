@@ -67,9 +67,9 @@ real architectural findings surfaced while building it:
 - [`system/README.md`](system/README.md) -- the startup orchestrator,
   the consumer/dispatch framework, and the composition-layer wiring
   between all of the above.
-- [`vision/README.md`](vision/README.md) -- **discontinued, dormant**: the Zero-Trace vision core
-  (Phase H1). Photo validation is handled natively by Chaster Peer Verification; the bot will only
-  read the resulting status (`docs/architecture/phase_h_proposal.md`, section 12).
+- [`peer_review/README.md`](peer_review/README.md) -- Phase I4: Chaster community review results become UNCONFIRMED
+  Incidents for the keyholder (Discord buttons or CLI). The earlier local vision engine (Phase H) was discontinued and its
+  code removed on 2026-11-03 (`docs/architecture/phase_h_proposal.md`, section 12).
 - [`hive_mind_receiver/README.md`](hive_mind_receiver/README.md) -- the STANDALONE receiver for the
   opt-in research telemetry (FastAPI + SQLite, own requirements, shares no code with the bot;
   its own test suite runs separately).
@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3943 passing tests** across the whole repository (`pytest`), including
+**3907 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -205,6 +205,14 @@ all been confirmed there.
 
 ### Roadmap — three explicitly separate tiers
 
+**Current status (2026-11-03).** The Chaster integration is BUILT and live, far beyond the original CHASTER-01 draft: OAuth connection
+(canonical redirect `http://localhost:8420/oauth/chaster/callback`, no tunnel), read-only status and observations, role-agnostic lock
+discovery, the guarded execution plane (runtime halt, audited manual freeze), Chaster chat, multi-wearer tenancy (flag, off), the local
+emergency unlock (LockForWearer fields confirmed from OpenAPI 0.35.0) and **Phase I (Autonomous Extension Management) COMPLETE**: I1
+read-only configuration, I2 guarded extension overwrite (applied live), I3 wearer consent, I4 community review results -> UNCONFIRMED
+Incidents with one-click Discord decisions (`docs/architecture/phase_i_proposal.md`). Phase H (local vision) was discontinued and its code
+removed. The tiers below are the historical record of how each slice was approved.
+
 Reflecting a real correction: an earlier revision of this README listed
 `memory_system_technical_design.md` under "approved" despite that
 document's own header saying the opposite, and undercounted the
@@ -230,19 +238,11 @@ been built; item 19 above).
 
 **3. Drafts awaiting their own separate approval — not a queue of
 what gets built next:**
-- **Chaster integration — `planned / research` only, NOT implemented.**
-  Full research findings, epistemic model, credential/security model,
-  and the proposed first slice (**CHASTER-01**: OAuth connection +
-  read-only, on-demand provider state) are written up in
+- **Chaster integration — superseded: BUILT** (see "Current status" above and
+  [`chaster/README.md`](chaster/README.md)). The original research draft
   [`docs/architecture/chaster_integration_technical_design.md`](docs/architecture/chaster_integration_technical_design.md)
-  — **draft, not approved for implementation**, same status
-  convention as every other document in this section. `core/config.py`'s
-  existing `chaster_api_token` field remains exactly what it always
-  was: an unread, scaffolded placeholder (`# Phase 7`), not an active
-  integration. CHASTER-01 remains **proposed / awaiting approval** —
-  several explicit decisions (encryption library, exact schema DDL,
-  Cloudflare Tunnel's exact free-tier domain requirement) are still
-  open, listed in the document's own closing sections.
+  is kept as the design record; its tunnel-based OAuth set-up is historical. `core/config.py`'s
+  `chaster_api_token` is still an unread placeholder; the integration uses per-user OAuth tokens.
 - [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
   (v1.5) — **draft architectural proposal, NOT approved for
   implementation as a whole** (the document's own header: *"No code

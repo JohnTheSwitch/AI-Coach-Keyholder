@@ -180,6 +180,6 @@ extensions were added to both:
 3. Polling the status reuses the `ApiBudget` background lane and the managed-lock discovery; reading works for both roles, so a role-agnostic lock
    list (locks the account wears as well as locks it keyholds) is needed.
 
-**What stays in the repository.** The H1 package `vision/`, `scripts/eval_vision.py`, `tests/vision/` and the `VISION_OLLAMA_MODEL` /
-`VISION_READ_TIMEOUT_SECONDS` settings remain as dormant code: nothing outside them imports the package, and the feature is off while
-`VISION_OLLAMA_MODEL` is empty. They can be removed in a separate cleanup commit if the owner wants them gone.
+**Removed (2026-11-03, owner decision).** The H1 package `vision/`, `scripts/eval_vision.py`, `tests/vision/` and the
+`VISION_OLLAMA_MODEL` / `VISION_READ_TIMEOUT_SECONDS` settings were deleted; they remain in the git history (commit `25968e3`). A leftover
+`VISION_*` line in a local `.env` is simply ignored.

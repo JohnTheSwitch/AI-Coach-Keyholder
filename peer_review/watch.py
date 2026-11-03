@@ -46,9 +46,10 @@ from infrastructure.time_format import iso as _iso
 logger = logging.getLogger("ai_coach_keyholder.peer_review.watch")
 
 __all__ = ["RULE_GROUP", "PeerReviewWatch", "PollResult", "PendingNotice", "PeerReviewDecisions", "DecisionOutcome", "ReviewRow",
-           "incident_description", "notice_text"]
+           "PollHealth", "FAILURE_THRESHOLD", "incident_description", "notice_text"]
 
 RULE_GROUP = "peer_review_rejection"
+FAILURE_THRESHOLD = 3                   # consecutive failed polls before the keyholder is alerted
 _ENDED = (ReviewStatus.VERIFIED.value, ReviewStatus.REJECTED.value)
 _SOURCE_TEXT = {ReviewSource.TASKS.value: "task photo", ReviewSource.VERIFICATION_PICTURE.value: "verification picture"}
 
@@ -237,6 +238,44 @@ class PeerReviewWatch:
             tx.execute("UPDATE peer_reviews SET notified_at = ? WHERE incident_id = ? AND notified_at IS NULL", (_iso(now), incident_id))
 
         apply_transition(self._core, write=write)
+
+
+# ---------------------------------------------------------------------- poll health (alerting)
+
+class PollHealth:
+    """Counts CONSECUTIVE failed polls. A poll fails when it raised or reported any problem (network error, Chaster 4xx/5xx, rate limit,
+    expired or missing connection). At the threshold ONE alert is queued for the keyholder; the first clean poll after an alert queues
+    one recovery note. Undelivered messages stay queued (`pending`) and are retried with the next poll; if the watch recovers before the
+    alert was delivered, both are dropped. In memory only: a restart starts a fresh count."""
+
+    def __init__(self, threshold: int = FAILURE_THRESHOLD) -> None:
+        self.threshold = threshold
+        self.failures = 0
+        self.alerted = False
+        self.pending: str | None = None
+        self._pending_is_alert = False
+
+    def observe(self, *, failed: bool, detail: str = "") -> None:
+        if failed:
+            self.failures += 1
+            if self.failures >= self.threshold and not self.alerted:
+                self.alerted, self._pending_is_alert = True, True
+                self.pending = (f"Community review watch: the last {self.failures} polls failed ({detail[:300] or 'see the bot log'}). "
+                                f"Rejected photos are NOT being seen until this is fixed. For 'reauthorization_required' or "
+                                f"'not_connected', reconnect Chaster with `chaster connect`; other errors usually clear by themselves.")
+                logger.warning("Community review watch: %d consecutive failed polls; alerting the keyholder.", self.failures)
+            return
+        if self.alerted:
+            if self._pending_is_alert and self.pending is not None:
+                self.pending = None                                   # recovered before the alert went out: say nothing
+            else:
+                self.pending = f"Community review watch: polling works again after {self.failures} failed attempts."
+            self._pending_is_alert = False
+            logger.info("Community review watch recovered after %d failed polls.", self.failures)
+        self.failures, self.alerted = 0, False
+
+    def delivered(self) -> None:
+        self.pending, self._pending_is_alert = None, False
 
 
 # ---------------------------------------------------------------------- the owner's manual decision

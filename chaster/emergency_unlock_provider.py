@@ -16,27 +16,19 @@ token, never a lock ID -- target selection happens entirely INSIDE
 response, so no caller (including the local HTTP listener) can ever
 supply or influence which lock is targeted.
 
-**One genuine, confirmed research gap remains, isolated here rather
-than guessed**: this project has not confirmed `LockForWearer`'s
-exact field-level JSON schema (its id/type/bondage-config field
-names) from any authoritative first-party Chaster source -- two
-raw-OpenAPI-JSON fetches, the Swagger UI (a client-side-rendered
-shell, unreachable by this project's tools), and a targeted search
-(surfacing only third-party SDKs, explicitly excluded as evidence)
-all failed to reach it. `unconfirmed_lock_field_extractor` is the
-ONLY place this gap is isolated -- it always raises
-`LockFieldsUnconfirmedError`, exactly mirroring
-`chaster/callback_service.py`'s own `unconfirmed_identity_resolver`
-precedent for the same category of gap. Everything else in
-`RealChasterEmergencyUnlockProvider` -- calling the confirmed
-`GET /locks` endpoint, enforcing "exactly one active lock, fail
-closed otherwise," and calling the confirmed
-`POST /locks/{lockId}/emergency-unlock` endpoint -- is real,
-implemented, and tested.
+**Lock fields (resolved 2026-11-03).** The field-level `LockForWearer` schema is now confirmed from Chaster's official OpenAPI
+document (version 0.35.0): `_id`, `status` (LockStatusEnum locked / unlocked / deserted), `role`, `lockType` (chastity / bondage),
+`emergencyUnlocked` and `emergencyUnlock` (EmergencyUnlockConfig `{enabled, phrase}`). `lock_for_wearer_eligibility` reads exactly
+those fields and never guesses: a missing or malformed field makes the lock INELIGIBLE with a reason, it never raises. The endpoint's
+own 400 ("No emergency-unlock safety feature is enabled, or the lock cannot be released") stays the final authority.
+
+Target discovery: only locks whose `status` is `locked` are candidates (an unlocked or deserted lock in the wearer's active list can
+never be the target); zero or several candidates still fail closed, so the provider never chooses arbitrarily.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -51,8 +43,7 @@ __all__ = [
     "UnwiredEmergencyUnlockProvider",
     "RealChasterEmergencyUnlockProvider",
     "LockEligibility",
-    "LockFieldsUnconfirmedError",
-    "unconfirmed_lock_field_extractor",
+    "lock_for_wearer_eligibility",
 ]
 
 
@@ -99,36 +90,39 @@ class UnwiredEmergencyUnlockProvider:
         )
 
 
-class LockFieldsUnconfirmedError(RuntimeError):
-    """Raised by `unconfirmed_lock_field_extractor` -- see this
-    module's own header docstring. Never includes the raw lock dict
-    (which could, in principle, carry lock-session content) in its
-    message."""
-
-
 @dataclass(frozen=True, kw_only=True)
 class LockEligibility:
     """The result of examining ONE active lock's raw dict for
-    emergency-unlock eligibility (bondage type + an enabled safety
-    feature, per the confirmed endpoint's own documented
-    prerequisites)."""
+    emergency-unlock eligibility (see `lock_for_wearer_eligibility`)."""
     lock_id: str
     eligible: bool
     reason: str
 
 
-def unconfirmed_lock_field_extractor(raw_lock: dict) -> LockEligibility:
-    """The production placeholder for the one remaining, genuinely
-    unconfirmed piece -- always raises. See this module's own header
-    docstring for the full reasoning. Deliberately NOT a guessed
-    `raw_lock["_id"]`/`raw_lock["type"]`/etc. access -- that would be
-    exactly the kind of schema guess this project's research
-    discipline forbids for safety-critical code."""
-    raise LockFieldsUnconfirmedError(
-        "Chaster's LockForWearer response schema has not been confirmed from an "
-        "authoritative first-party source -- this application cannot safely determine "
-        "a lock's id, type, or bondage-safety configuration from the raw API response."
-    )
+_LOCK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def lock_for_wearer_eligibility(raw_lock: dict) -> LockEligibility:
+    """Emergency-unlock eligibility from the confirmed LockForWearer fields (OpenAPI 0.35.0). Eligible only when ALL hold: a valid
+    `_id`, `status` == `locked`, `role` == `wearer` (the endpoint answers 403 to anyone else), `emergencyUnlocked` is not true, and
+    `emergencyUnlock.enabled` is true. Anything missing or malformed is ineligible with a reason; nothing here raises."""
+    lock_id = raw_lock.get("_id") if isinstance(raw_lock, dict) else None
+    if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id):
+        return LockEligibility(lock_id="", eligible=False, reason="the lock has no valid id")
+    status = raw_lock.get("status")
+    if status != "locked":
+        return LockEligibility(lock_id=lock_id, eligible=False, reason=f"the lock is not locked (status {status!r})")
+    role = raw_lock.get("role")
+    if role != "wearer":
+        return LockEligibility(lock_id=lock_id, eligible=False, reason=f"only the wearer can emergency-unlock (role {role!r})")
+    if raw_lock.get("emergencyUnlocked") is True:
+        return LockEligibility(lock_id=lock_id, eligible=False, reason="the lock was already emergency-unlocked")
+    config = raw_lock.get("emergencyUnlock")
+    if not isinstance(config, dict) or config.get("enabled") is not True:
+        return LockEligibility(lock_id=lock_id, eligible=False, reason="the lock has no emergency-unlock safety feature enabled")
+    lock_type = raw_lock.get("lockType")
+    kind = f"{lock_type} lock" if isinstance(lock_type, str) else "lock"
+    return LockEligibility(lock_id=lock_id, eligible=True, reason=f"locked {kind} with the emergency-unlock safety feature enabled")
 
 
 class RealChasterEmergencyUnlockProvider:
@@ -143,16 +137,18 @@ class RealChasterEmergencyUnlockProvider:
 
     def __init__(
         self, *, lock_client: ChasterLockClient | None = None,
-        lock_field_extractor: Callable[[dict], LockEligibility] = unconfirmed_lock_field_extractor,
+        lock_field_extractor: Callable[[dict], LockEligibility] = lock_for_wearer_eligibility,
     ) -> None:
         self._lock_client = lock_client if lock_client is not None else ChasterLockClient()
         self._lock_field_extractor = lock_field_extractor
 
     def attempt_unlock(self, *, access_token: str) -> ProviderUnlockResult:
         try:
-            active_locks = self._lock_client.list_active_locks(access_token=access_token)
+            listed = self._lock_client.list_active_locks(access_token=access_token)
         except ChasterLockApiError as exc:
             return ProviderUnlockResult(outcome=ProviderUnlockOutcome.FAILED, detail=f"Could not retrieve active locks: {exc}")
+        # An unlocked or deserted lock can never be the target; a lock without a status string stays a candidate (fail closed).
+        active_locks = [l for l in listed if not (isinstance(l, dict) and isinstance(l.get("status"), str) and l["status"] != "locked")]
 
         if len(active_locks) == 0:
             return ProviderUnlockResult(outcome=ProviderUnlockOutcome.FAILED, detail="No active Chaster lock found.")
@@ -165,10 +161,10 @@ class RealChasterEmergencyUnlockProvider:
         raw_lock = active_locks[0]
         try:
             eligibility = self._lock_field_extractor(raw_lock)
-        except LockFieldsUnconfirmedError as exc:
+        except Exception:
             return ProviderUnlockResult(
                 outcome=ProviderUnlockOutcome.FAILED,
-                detail=f"Could not determine emergency-unlock eligibility for the active lock: {exc}",
+                detail="Could not determine emergency-unlock eligibility for the active lock.",
             )
 
         if not eligibility.eligible:

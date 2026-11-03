@@ -26,13 +26,11 @@ own research):
   no safety feature enabled / not locked), 401, 403 (non-wearer),
   404. Scope: locks.
 
-NOT confirmed from any authoritative first-party source (see
-chaster/emergency_unlock_provider.py's own header docstring): the
-exact field-level JSON schema of a `LockForWearer` object (its id
-field, lock-type field, bondage-config field, and their exact names).
-This client therefore returns each lock as a raw, unparsed `dict` --
-it does not guess field names. See `unconfirmed_lock_field_extractor`
-in emergency_unlock_provider.py for where that gap is isolated.
+The field-level `LockForWearer` schema is confirmed from the official
+OpenAPI document (0.35.0, 2026-11-03); this client still returns each
+lock as a raw `dict`, and the fields the emergency unlock needs are read
+in exactly one place: `lock_for_wearer_eligibility` in
+emergency_unlock_provider.py.
 
 Never logs the access token; never includes it in an exception
 message.

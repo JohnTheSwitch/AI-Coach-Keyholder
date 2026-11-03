@@ -21,7 +21,7 @@ from chaster.lock_directory import LockDirectory
 from chaster.peer_reviews import PeerReviewReader
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
-from peer_review.watch import RULE_GROUP, PeerReviewDecisions, PeerReviewWatch
+from peer_review.watch import RULE_GROUP, PeerReviewDecisions, PeerReviewWatch, PollHealth
 from trust_manager.models import (
     BreachDirectness,
     ConfirmationSource,
@@ -111,14 +111,26 @@ def build_peer_review_decisions(config, core: CoreDatabase) -> PeerReviewDecisio
 
 
 async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_seconds: float, send=None, owner_target: str | None = None,
-                           initial_delay_seconds: float = 30.0, view_for: Callable[[str], object] | None = None) -> None:
+                           initial_delay_seconds: float = 30.0, view_for: Callable[[str], object] | None = None,
+                           health: PollHealth | None = None) -> None:
     """Poll, then deliver the pending notices to the owner (`send(target, text) -> bool`, e.g. the Discord adapter); a notice is marked
     delivered only when the channel accepted it. With `view_for(incident_id)` the notice carries the decision buttons
-    (`send(target, text, view=...)`). Never raises out of an iteration."""
+    (`send(target, text, view=...)`). `health` counts consecutive failed polls and queues one alert DM at the threshold (and one
+    recovery note). Never raises out of an iteration."""
+    health = health if health is not None else PollHealth()
     await asyncio.sleep(initial_delay_seconds)          # let the Discord client become ready first
     while True:
         try:
-            await asyncio.to_thread(watch.poll, clock.now())
+            result = await asyncio.to_thread(watch.poll, clock.now())
+            health.observe(failed=bool(result.problems), detail="; ".join(result.problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Community review poll failed; will retry next interval.")
+            health.observe(failed=True, detail="the poll itself failed, see the bot log")
+        try:
+            if send is not None and owner_target and health.pending and await send(owner_target, health.pending):
+                health.delivered()
             if send is not None and owner_target:
                 for notice in await asyncio.to_thread(watch.pending_notifications):
                     sent = (await send(owner_target, notice.text, view=view_for(notice.incident_id)) if view_for is not None
@@ -128,5 +140,5 @@ async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_sec
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Community review poll failed; will retry next interval.")
+            logger.exception("Delivering community review messages failed; will retry next interval.")
         await asyncio.sleep(interval_seconds)

@@ -11,9 +11,9 @@ listener, or Cloudflare.
 Purpose: make read-only Chaster API calls -- GET /auth/profile and
 GET /locks?status=active -- using a Chaster developer token you
 provide interactively, so the real response shapes can be inspected
-to resolve this project's two remaining schema blockers
-(`chaster/callback_service.py::unconfirmed_identity_resolver`,
-`chaster/emergency_unlock_provider.py::unconfirmed_lock_field_extractor`).
+to resolve this project's schema blockers (historical: the identity
+resolver and, since 2026-11-03, the LockForWearer fields are both
+confirmed -- see `chaster/emergency_unlock_provider.py`).
 This script does NOT modify either of those -- it only prints what
 the real API actually returns, for a human to read and decide from.
 

@@ -28,6 +28,13 @@ CONFIRMED ones only. Tests assert this (no consumer of `incident.reported`, no c
 cannot reach any confirm call). The watch does not stop for the execution runtime halt: it only reads Chaster and writes local,
 unconfirmed records.
 
+## Failure alert
+
+`PollHealth` counts consecutive failed polls (a poll that raised or reported any problem: network error, Chaster 4xx/5xx, rate limit,
+expired or missing connection). After 3 in a row the keyholder gets ONE Discord DM naming the problems (with the hint to run
+`chaster connect` for `reauthorization_required` / `not_connected`); the first clean poll afterwards sends one recovery note. An
+undelivered message is retried with the next poll; if the watch recovers before the alert went out, neither is sent.
+
 ## The keyholder's decision: Discord buttons
 
 The owner's DM about a rejection carries two buttons, **Confirm Penalty** and **Dismiss Incident** (`discord_buttons.py`). They call the
