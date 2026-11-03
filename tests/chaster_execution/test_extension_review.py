@@ -20,6 +20,7 @@ from chaster_execution.control import ExecutionControl
 from chaster_execution.extension_review import ExtensionReviewOutcome as O
 from chaster_execution.extension_review import ExtensionReviewService
 from chaster_execution.models import TransportOutcome, TransportResult
+from chaster_execution.review_consent import ConsentDecision, ReviewConsentLedger
 from chaster_execution.transport import ChasterHttpTransport
 from cli.main import main, render_review
 from infrastructure.clock import FrozenClock
@@ -229,7 +230,7 @@ class FakeTransport:
 
 
 class World:
-    def __init__(self, tmp_path: Path, *, reader=None, transport=None, owner=OWNER, account="acct", halted=False) -> None:
+    def __init__(self, tmp_path: Path, *, reader=None, transport=None, owner=OWNER, account="acct", halted=False, consent=True) -> None:
         self.core = CoreDatabase(tmp_path / "t.db")
         with self.core.raw_connection() as conn:
             for path in sorted((ROOT / "database" / "migrations").glob("*.sql")):
@@ -240,6 +241,9 @@ class World:
         self.transport = transport or FakeTransport()
         self.service = ExtensionReviewService(self.core.db_path, core=self.core, control=self.control, reader=self.reader,
                                               transport=self.transport, owner_user_id=owner, account_user_id=account, clock=FrozenClock(NOW))
+        self.ledger = ReviewConsentLedger(self.core.db_path, core=self.core)
+        if consent:
+            self.ledger.record(lock_id=LOCK, decision=ConsentDecision.APPROVED, comment="test", now=NOW)
 
     def apply(self, *, actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True):
         return self.service.apply(actor=actor, lock_id=lock_id, plan_id=plan_for().plan_id if plan_id is None else plan_id, confirmed=confirmed)
@@ -265,9 +269,10 @@ class TestPreview:
     def test_it_lists_every_blocker(self, tmp_path) -> None:
         raw = raw_lock(status="unlocked", role="wearer")
         raw["extensions"][0]["isPartner"] = True
-        result = World(tmp_path, reader=FakeReader(raw)).service.preview(actor=OWNER, lock_id=LOCK)
+        result = World(tmp_path, reader=FakeReader(raw), consent=False).service.preview(actor=OWNER, lock_id=LOCK)
         assert result.blockers == ("lock status is unlocked, not locked", "the wearer role may not edit extensions on this lock",
-                                   "plan refused: partner_extension:pillory")
+                                   "plan refused: partner_extension:pillory",
+                                   f"the wearer's consent to community review is none (python -m cli review-consent {LOCK} ...)")
 
     def test_a_lock_on_target(self, tmp_path) -> None:
         result = World(tmp_path, reader=FakeReader(on_target(raw_lock()))).service.preview(actor=OWNER, lock_id=LOCK)

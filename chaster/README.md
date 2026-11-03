@@ -567,6 +567,10 @@ and `LockConfigurationReader` (per-lock problem codes, INFO logs with enum value
 Never copied: the combination, `offerToken`, `sharedLinkToken`, extension `userData`; task texts stay out of `repr` and logs. Specification and
 live result: `docs/architecture/phase_i_proposal.md`.
 
+Phase I3 adds `community_exposed()` (a review extension with peer verification on and `all_members`) and `PRIVATE_VISIBILITY`; `extension_plan.py`
+gained `plan_review_revert()` (visibility back to `keyholder` where it is `all_members`, nothing else). The consent ledger and gate are in
+`chaster_execution/README.md`.
+
 ## Access logging: no query strings, no headers
 
 aiohttp's default access logger (`aiohttp.access`, INFO) prints the whole request line plus `Referer` and `User-Agent`. On a live
@@ -576,4 +580,4 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3815 tests repository-wide.
+logger contains `SECRET`. 3858 tests repository-wide.

@@ -11,6 +11,9 @@ review settings (peer verification, visibility, punishments) of the `tasks` and 
 `extension-review` (Phase I2) is a DRY RUN unless `--apply --plan <id> --yes` is given; the live write is guarded like `freeze-lock`
 (owner, runtime halt, audit) and sends exactly the plan the dry run printed.
 
+Phase I3: the forward write also needs the wearer's recorded consent; `--revert` sets visibility back to `keyholder` (no consent needed,
+it only reduces who sees the photos). `review-consent` shows the notice and records the owner's own decision about a lock the owner wears.
+
 `freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -25,7 +28,7 @@ from typing import Callable, TextIO
 from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
 from chaster.managed_locks import ManagedLock
 
-__all__ = ["main", "render_listing", "render_configuration", "render_review", "build_directory", "build_configuration_reader",
+__all__ = ["main", "render_listing", "render_configuration", "render_review", "render_consent", "build_directory", "build_configuration_reader",
            "build_extension_review_service", "build_freeze_service", "describe", "discovery_user_ids"]
 
 _HEADERS = ("LOCK ID", "TITLE", "WEARER", "WEARER ID", "STATUS", "isFrozen", "TEST")
@@ -99,19 +102,23 @@ def build_directory() -> tuple[LockDirectory, str | None, str | None]:
 
 
 def build_configuration_reader():
-    """(directory, reader, account user id) for `extension-config`; the account is the one holding the Chaster connection."""
+    """(directory, reader, account user id, consent lookup) for `extension-config`; the account is the one holding the Chaster connection.
+    The consent lookup only reads `consent_log` (Phase I3)."""
     from chaster.extension_config import LockConfigurationReader
     from chaster.lock_client import ChasterLockClient
+    from chaster_execution.review_consent import ReviewConsentLedger
 
     config, connections, tokens = _chaster_wiring()
     client = ChasterLockClient()
+    ledger = ReviewConsentLedger(config.db_path)
     return (LockDirectory(token_manager=tokens, lock_client=client, connections=connections),
-            LockConfigurationReader(token_manager=tokens, lock_client=client), config.chaster_execution_keyholder_user_id)
+            LockConfigurationReader(token_manager=tokens, lock_client=client), config.chaster_execution_keyholder_user_id,
+            lambda lock_ids: {lock_id: ledger.state(lock_id) for lock_id in lock_ids})
 
 
-def render_configuration(listing: LockListing, report) -> str:
+def render_configuration(listing: LockListing, report, consents: dict | None = None) -> str:
     """Read-only view of the review settings on every lock of the account (enum values only; no task text, no codes)."""
-    from chaster.extension_config import EXTENSIONS_EDIT_PERMISSION, REVIEW_EXTENSIONS, describe_review, review_gaps
+    from chaster.extension_config import EXTENSIONS_EDIT_PERMISSION, REVIEW_EXTENSIONS, community_exposed, describe_review, review_gaps
 
     lines = [f"ACCOUNT LOCKS: {len(listing.wearer_locks)} worn, {len(listing.keyholder_locks)} held as keyholder"]
     for c in report.configurations:
@@ -121,6 +128,13 @@ def render_configuration(listing: LockListing, report) -> str:
                   f"({EXTENSIONS_EDIT_PERMISSION} granted to: {', '.join(sorted(c.edit_subjects)) or 'nobody'})"]
         width = max(len(s) for s in REVIEW_EXTENSIONS)
         lines += [f"  {slug.ljust(width)}  {describe_review(c.extension(slug))}" for slug in REVIEW_EXTENSIONS]
+        consent = (consents or {}).get(c.lock_id)
+        if consent is not None:
+            lines.append(f"  wearer consent to community review: {consent.state.value}"
+                         + (f" (notice {consent.notice_version}, {consent.decided_at})" if consent.decided_at else ""))
+            if community_exposed(c) and not consent.approved:
+                lines.append("  WARNING: community review is ON without the wearer's recorded consent "
+                             f"(python -m cli extension-review {c.lock_id} --owner-id <id> --revert)")
         gaps = review_gaps(c)
         if c.status != "locked":
             lines.append(f"  status {_cell(c.status)}: out of scope, no changes planned")
@@ -218,6 +232,8 @@ def build_extension_review_service():
 _REVIEW_TEXT = {
     "planned": "DRY RUN: nothing was sent.",
     "already_on_target": "Nothing to do: the review settings already match (community review, no Chaster punishments).",
+    "nothing_to_revert": "Nothing to do: no review extension has community review.",
+    "no_consent": "Refused: the wearer has not approved community review for this lock (python -m cli review-consent LOCK_ID ...).",
     "applied": "Done: Chaster accepted the update and a fresh read shows community review with the same extensions.",
     "applied_unverified": "CHECK THE LOCK ON CHASTER: the update was accepted, but a fresh read does not confirm it.",
     "attempting": "UNKNOWN: the attempt was not completed.",
@@ -253,6 +269,10 @@ def render_review(result, *, lock_id: str, owner_id: str) -> str:
                      f"may edit extensions: {'yes' if c.can_edit_extensions else 'NO'}")
     if result.halted is not None:
         lines.append(f"Runtime halt: {'HALTED' if result.halted else 'clear'}")
+    if result.consent is not None and not result.revert:
+        lines.append(f"Wearer consent to community review: {result.consent.state.value}")
+    if result.revert:
+        lines.append("Direction: REVERT (visibility back to keyholder; peer verification and punishments untouched)")
     if plan is not None:
         lines.append(f"Payload: POST /locks/{plan.lock_id}/extensions with ALL {len(plan.body['extensions'])} extensions "
                      f"({', '.join(e['slug'] for e in plan.body['extensions'])}); none added, none removed.")
@@ -273,7 +293,43 @@ def render_review(result, *, lock_id: str, owner_id: str) -> str:
     if result.remaining_gaps:
         lines += ["The re-read still shows:"] + [f"  - {g}" for g in result.remaining_gaps]
     if result.outcome.value == "planned" and plan is not None and plan.refusal is None:
-        lines.append(f"To apply exactly this plan: python -m cli extension-review {lock_id} --owner-id {owner_id} --apply --plan {plan.plan_id} --yes")
+        flag = " --revert" if result.revert else ""
+        lines.append(f"To apply exactly this plan: python -m cli extension-review {lock_id} --owner-id {owner_id}{flag} --apply --plan {plan.plan_id} --yes")
+    return "\n".join(lines)
+
+
+_CONSENT_TEXT = {
+    "shown": "Community review consent (nothing was changed).",
+    "recorded": "Recorded.",
+    "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
+    "not_owner": "Refused: that identity is not the owner.",
+    "not_confirmed": "Refused: add --yes to record this decision.",
+    "invalid_input": "Refused: not a valid lock id.",
+    "account_not_configured": "Refused: CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set.",
+    "read_failed": "Refused: the lock could not be read through the connected account.",
+    "wearer_is_another_account": "Refused: another account wears this lock; only that wearer can give or refuse consent. Nothing was recorded.",
+}
+
+
+def render_consent(result, *, lock_id: str, owner_id: str) -> str:
+    """The `review-consent` report: the exact notice, the consent state, and the automatic revert after a decline or revocation."""
+    from chaster_execution.review_consent import NOTICE_TEXT, NOTICE_VERSION
+
+    lines = [f"{_CONSENT_TEXT.get(result.outcome.value, result.outcome.value)}  [outcome={result.outcome.value}]"]
+    if result.detail:
+        lines.append(f"  detail: {result.detail}")
+    if result.config is not None:
+        c = result.config
+        lines.append(f"Lock {c.lock_id}: role {c.role.value if c.role else 'unknown'}, status {_cell(c.status)}, "
+                     f"community review now: {'ON' if result.exposed else 'off'}")
+    if result.consent is not None:
+        lines.append(f"Consent: {result.consent.state.value}" + (f" (notice {result.consent.notice_version}, {result.consent.decided_at})"
+                                                                 if result.consent.decided_at else ""))
+    if result.outcome.value == "shown":
+        lines += ["", f"--- notice {NOTICE_VERSION} ---", NOTICE_TEXT, "---", "",
+                  f"Decide: python -m cli review-consent {lock_id} --owner-id {owner_id} --accept|--decline|--revoke --yes"]
+    if result.revert is not None:
+        lines += ["", "Automatic revert (consent not given):", render_review(result.revert, lock_id=lock_id, owner_id=owner_id)]
     return "\n".join(lines)
 
 
@@ -598,6 +654,15 @@ def main(argv: list[str], *, out: TextIO | None = None,
     review.add_argument("--apply", action="store_true", help="LIVE: send the plan (needs --plan and --yes, and a cleared runtime halt)")
     review.add_argument("--plan", default=None, help="the plan id printed by the dry run")
     review.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
+    review.add_argument("--revert", action="store_true", help="the other direction: visibility back to keyholder (no consent needed)")
+    consent = sub.add_parser("review-consent", help="Phase I3: show the community review notice, or record the owner's own decision for a "
+                                                    "lock the owner wears.")
+    consent.add_argument("lock_id")
+    consent.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    decision = consent.add_mutually_exclusive_group()
+    for flag in ("accept", "decline", "revoke"):
+        decision.add_argument(f"--{flag}", action="store_true")
+    consent.add_argument("--yes", action="store_true", help="confirm the decision (a decline or revocation also reverts a live lock)")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -661,13 +726,16 @@ def main(argv: list[str], *, out: TextIO | None = None,
         print(render_listing(listing), file=out)
         return 0 if not listing.problems else 2
     if args.command == "extension-config":
-        directory, reader, user_id = config_factory()
+        parts = config_factory()
+        directory, reader, user_id = parts[:3]
+        consent_lookup = parts[3] if len(parts) > 3 else None
         if not user_id:
             print("CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set: no connected Chaster account to read.", file=out)
             return 2
         listing = directory.list_account_locks(user_id=user_id, now=now())
         report = reader.read(user_id=user_id, lock_ids=[l.lock_id for l in listing.wearer_locks + listing.keyholder_locks], now=now())
-        print(render_configuration(listing, report), file=out)
+        consents = consent_lookup([c.lock_id for c in report.configurations]) if consent_lookup else None
+        print(render_configuration(listing, report, consents), file=out)
         return 0 if not (listing.problems or report.problems) else 2
     if args.command == "ai-ideas":
         return _ai_ideas(args, out, ideas_factory, now)
@@ -729,13 +797,22 @@ def main(argv: list[str], *, out: TextIO | None = None,
     if args.command == "extension-review":
         service = review_factory()
         if args.apply:
-            result = service.apply(actor=args.owner_id, lock_id=args.lock_id, plan_id=args.plan, confirmed=args.yes)
+            result = service.apply(actor=args.owner_id, lock_id=args.lock_id, plan_id=args.plan, confirmed=args.yes, revert=args.revert)
         else:
-            result = service.preview(actor=args.owner_id, lock_id=args.lock_id)
+            result = service.preview(actor=args.owner_id, lock_id=args.lock_id, revert=args.revert)
         print(render_review(result, lock_id=args.lock_id, owner_id=args.owner_id), file=out)
-        if result.outcome.value in ("planned", "already_on_target", "applied"):
+        if result.outcome.value in ("planned", "already_on_target", "nothing_to_revert", "applied"):
             return 0
         return 3 if result.refused else 4
+    if args.command == "review-consent":
+        from chaster_execution.review_consent import ConsentDecision
+        decision = (ConsentDecision.APPROVED if args.accept else ConsentDecision.REJECTED if args.decline
+                    else ConsentDecision.REVOKED if args.revoke else None)
+        result = review_factory().decide_consent(actor=args.owner_id, lock_id=args.lock_id, decision=decision, confirmed=args.yes)
+        print(render_consent(result, lock_id=args.lock_id, owner_id=args.owner_id), file=out)
+        if not result.done:
+            return 3
+        return 0 if result.revert is None or result.revert.outcome.value in ("applied", "nothing_to_revert") else 4
     if args.command == "freeze-lock":
         service = freeze_factory()
         result = service.run(actor=args.owner_id, lock_id=args.lock_id, frozen=args.state, confirmed=args.yes)

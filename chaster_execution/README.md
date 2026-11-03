@@ -129,3 +129,23 @@ readable, `locked`, and the account's role holds `lock.extensions.edit`, the bod
 fresh read equals the dry run's (a lock that changed in between is refused). One `manual_extension_actions` row per `--apply` invocation (refusals included; the
 attempt first as `attempting`); sent once, never retried; a fresh read afterwards decides `applied` or `applied_unverified`. Exit codes: 0 planned, nothing to do
 or applied, 3 refused, 4 failed, ambiguous or unverified. Only the CLI imports it (guarded in tests).
+
+## v0.39 Phase I3: the wearer's consent to community review (`review_consent.py`)
+
+Community review (`all_members`) lets any logged-in Chaster member see a lock's verification photos and vote on them, so the forward write now
+needs the wearer's consent (philosophy 2.5, 2.6). `review_consent.py` holds one fixed English notice (who sees the photos, that Chaster adds no
+time on a rejection, that a rejection here is at most an UNCONFIRMED incident for the owner, that consent covers one lock and is revocable) and
+`ReviewConsentLedger`: append-only rows in `consent_log` (`target_type` `integration`, `target_id` `community_photo_review:<lock id>`,
+`target_version` = the first 12 hex characters of the notice's SHA-256, `explanation_shown` = the exact notice). The latest row decides:
+`approved`, `stale` (approved an older notice), `declined`, `revoked` or `none`.
+
+- `extension-review --apply` refuses with `no_consent` unless the state is `approved`; the dry run lists the missing consent as a blocker.
+- `extension-review --revert` (dry run) and `--revert --apply --yes` set `visibility` back to `keyholder` on each review extension that has
+  `all_members` (`plan_review_revert`; peer verification and punishments untouched). It needs no consent and no plan id (a given one must match);
+  every other guard, the runtime halt included, applies.
+- `python -m cli review-consent <lock_id> --owner-id <id>` prints the notice and the state; `--accept|--decline|--revoke --yes` records the OWNER's
+  decision, only for a lock the connected account wears (a lock worn by another account is refused: only that wearer can decide). A decline or
+  revocation of an exposed lock immediately runs the revert write (refused while halted; the decision stays recorded).
+- `extension-config` shows the consent state per lock and warns when community review is on without approved consent.
+
+Only the CLI imports the service; the bot never records consent (guarded in tests). A Discord DM path for tenant wearers is not built yet.

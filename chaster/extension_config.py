@@ -39,15 +39,16 @@ from chaster.token_manager import (
 logger = logging.getLogger("ai_coach_keyholder.chaster.extension_config")
 
 __all__ = [
-    "REVIEW_EXTENSIONS", "EXTENSIONS_EDIT_PERMISSION", "TARGET_VISIBILITY", "VISIBILITY_VALUES",
+    "REVIEW_EXTENSIONS", "EXTENSIONS_EDIT_PERMISSION", "TARGET_VISIBILITY", "PRIVATE_VISIBILITY", "VISIBILITY_VALUES",
     "Punishment", "PeerVerificationSettings", "ExtensionSnapshot", "LockConfiguration", "ConfigurationReport",
-    "parse_lock_configuration", "review_gaps", "describe_review", "LockConfigurationReader",
+    "parse_lock_configuration", "review_gaps", "community_exposed", "describe_review", "LockConfigurationReader",
 ]
 
 REVIEW_EXTENSIONS = ("tasks", "verification-picture")
 EXTENSIONS_EDIT_PERMISSION = "lock.extensions.edit"
 VISIBILITY_VALUES = ("all_members", "keyholder")            # PeerVerificationVisibilityEnum; there is no value named "community"
 TARGET_VISIBILITY = "all_members"                         # community review: every Chaster member may vote
+PRIVATE_VISIBILITY = "keyholder"                          # only the keyholder reviews (Phase I3 revert target)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -177,6 +178,16 @@ def review_gaps(config: LockConfiguration) -> tuple[str, ...]:
         if pv is not None and pv.punishments:
             gaps.append(f"{slug}: punishments {', '.join(p.label() for p in pv.punishments)} (target none)")
     return tuple(gaps)
+
+
+def community_exposed(config: LockConfiguration) -> bool:
+    """True when any review extension has peer verification on with visibility `all_members`, i.e. community members see the photos."""
+    for slug in REVIEW_EXTENSIONS:
+        ext = config.extension(slug)
+        pv = ext.peer_verification if ext else None
+        if pv is not None and pv.enabled is True and pv.visibility == TARGET_VISIBILITY:
+            return True
+    return False
 
 
 def describe_review(ext: ExtensionSnapshot | None) -> str:

@@ -15,6 +15,9 @@ The plan refuses (and nothing may be sent) when the body could not be rebuilt fa
 `regularity`, a partner extension (its `partnerConfigurationToken` is not readable), or a missing review extension (I2 never adds
 extensions).
 
+`plan_review_revert()` (Phase I3) builds the same complete body but only sets `visibility` = `keyholder` where it is `all_members`:
+used when the wearer declines or revokes consent to community review.
+
 `plan_id` is the first 16 hex characters of the SHA-256 of the canonical body. The write path recomputes it from a fresh read and only
 sends when it equals the id the owner saw in the dry run, so what was reviewed is exactly what is sent, and a lock that changed in between
 is refused.
@@ -27,9 +30,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from chaster.extension_config import REVIEW_EXTENSIONS, TARGET_VISIBILITY, LockConfiguration, Punishment, _peer_verification
+from chaster.extension_config import (PRIVATE_VISIBILITY, REVIEW_EXTENSIONS, TARGET_VISIBILITY, LockConfiguration, Punishment,
+                                      _peer_verification)
 
-__all__ = ["EXTENSION_MODES", "FieldChange", "ReviewPlan", "plan_review_update", "canonical_digest"]
+__all__ = ["EXTENSION_MODES", "FieldChange", "ReviewPlan", "plan_review_update", "plan_review_revert", "canonical_digest"]
 
 EXTENSION_MODES = ("cumulative", "non_cumulative", "turn", "unlimited")      # LockExtensionConfigDto.mode
 PLAN_ID_LENGTH = 16
@@ -71,6 +75,18 @@ def _enabled_text(value: bool | None) -> str:
 
 
 def plan_review_update(config: LockConfiguration) -> ReviewPlan:
+    """Community review: peer verification on, visibility `all_members`, no Chaster punishments."""
+    return _plan(config, {"enabled": True, "visibility": TARGET_VISIBILITY, "punishments": []}, applies=lambda _pv: True)
+
+
+def plan_review_revert(config: LockConfiguration) -> ReviewPlan:
+    """Phase I3 (a declined or revoked consent): visibility back to `keyholder` on each review extension that has `all_members`. Nothing
+    else changes; peer verification stays as it is and no punishment is restored, so the revert can only reduce who sees the photos."""
+    return _plan(config, {"visibility": PRIVATE_VISIBILITY},
+                 applies=lambda pv: isinstance(pv, dict) and pv.get("visibility") == TARGET_VISIBILITY)
+
+
+def _plan(config: LockConfiguration, fields: dict, *, applies) -> ReviewPlan:
     entries: list[dict] = []
     changes: list[FieldChange] = []
     unchanged: list[str] = []
@@ -85,15 +101,15 @@ def plan_review_update(config: LockConfiguration) -> ReviewPlan:
         if refusal is None and (ext.mode not in EXTENSION_MODES or ext.regularity is None or ext.regularity < 0):
             refusal = f"incomplete_extension:{ext.slug}"
         cfg = copy.deepcopy(ext.config)
-        if ext.slug in REVIEW_EXTENSIONS:
+        if ext.slug in REVIEW_EXTENSIONS and applies(cfg.get("peerVerification")):
             before = ext.peer_verification
             pv = dict(cfg.get("peerVerification")) if isinstance(cfg.get("peerVerification"), dict) else {}
-            pv.update({"enabled": True, "visibility": TARGET_VISIBILITY, "punishments": []})
+            pv.update(copy.deepcopy(fields))
             cfg["peerVerification"] = pv
             after = _peer_verification(pv)
             for name, old, new in (
                     ("peerVerification.enabled", _enabled_text(before.enabled if before else None), _enabled_text(after.enabled)),
-                    ("peerVerification.visibility", (before.visibility if before else None) or "unset", after.visibility),
+                    ("peerVerification.visibility", (before.visibility if before else None) or "unset", after.visibility or "unset"),
                     ("peerVerification.punishments", _punishments_text(before.punishments if before else ()), _punishments_text(after.punishments))):
                 if old != new:
                     changes.append(FieldChange(slug=ext.slug, field=name, before=old, after=new))
