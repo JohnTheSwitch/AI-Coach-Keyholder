@@ -279,10 +279,13 @@ def render_review(result, *, lock_id: str, owner_id: str) -> str:
     if result.consent is not None and not result.revert:
         lines.append(f"Wearer consent to community review: {result.consent.state.value}")
     if result.revert:
-        lines.append("Direction: REVERT (visibility back to keyholder; peer verification and punishments untouched)")
+        lines.append("Direction: REVERT (Chaster stops asking for photos: verification-picture removed, task and temporary-opening "
+                     "photo requirements and peer verification off; every other extension as read)")
     if plan is not None:
         lines.append(f"Payload: POST /locks/{plan.lock_id}/extensions with ALL {len(plan.body['extensions'])} extensions "
-                     f"({', '.join(e['slug'] for e in plan.body['extensions'])}); none added, none removed.")
+                     f"({', '.join(e['slug'] for e in plan.body['extensions'])}); none added, "
+                     + (f"removed: {', '.join(sorted(removed))}." if (removed := {ch.slug for ch in plan.changes if ch.field == 'extension'})
+                        else "none removed."))
         if plan.changes:
             width = max(len(f"{ch.slug} {ch.field}") for ch in plan.changes)
             lines.append("Changes:")
@@ -724,7 +727,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     review.add_argument("--apply", action="store_true", help="LIVE: send the plan (needs --plan and --yes, and a cleared runtime halt)")
     review.add_argument("--plan", default=None, help="the plan id printed by the dry run")
     review.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
-    review.add_argument("--revert", action="store_true", help="the other direction: visibility back to keyholder (no consent needed)")
+    review.add_argument("--revert", action="store_true", help="the other direction: Chaster stops asking for photos (no consent needed)")
     consent = sub.add_parser("review-consent", help="Phase I3: show the community review notice, or record the owner's own decision for a "
                                                     "lock the owner wears.")
     consent.add_argument("lock_id")

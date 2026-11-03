@@ -10,7 +10,7 @@ from datetime import timedelta
 import pytest
 
 from chaster.extension_config import community_exposed, parse_lock_configuration
-from chaster.extension_plan import plan_review_revert
+from chaster.extension_plan import plan_review_revert, plan_review_update
 from chaster_execution.extension_review import ConsentOutcome as C
 from chaster_execution.extension_review import ExtensionReviewOutcome as O
 from chaster_execution.review_consent import (NOTICE_TEXT, NOTICE_VERSION, ConsentDecision, ConsentState, ReviewConsentLedger,
@@ -28,12 +28,36 @@ def wearer(lock):
     return lock
 
 
-def private(lock):
-    """`on_target` but with visibility back to keyholder (what a revert produces)."""
+def with_photos(lock):
+    """The lock with every photo requirement the revert knows about switched on: a task needing a photo + code, a temporary opening
+    needing pictures before and after, and a picture history visible to all."""
     lock = copy.deepcopy(lock)
+    by_slug = {e["slug"]: e for e in lock["extensions"]}
+    by_slug["tasks"]["config"]["tasks"].append({"task": "SECOND SECRET TASK", "points": 2, "verificationRequired": True,
+                                                "codeRequired": True, "duration": 600})
+    by_slug["verification-picture"]["config"]["visibility"] = "all"
+    lock["extensions"].insert(1, {"_id": "id-temporary-opening", "slug": "temporary-opening", "mode": "non_cumulative",
+                                  "regularity": 172800, "isPartner": False, "userData": {},
+                                  "config": {"openingTime": 900, "penaltyTime": 43200, "allowOnlyKeyholderToOpen": False,
+                                             "requireVerificationPictureBefore": True, "requireVerificationPictureAfter": True,
+                                             "freezeLockWhileOpen": False}})
+    return lock
+
+
+def private(lock):
+    """What a successful revert leaves on Chaster: no verification-picture extension, every photo requirement off, task peer
+    verification off with keyholder visibility. Everything else as it was."""
+    lock = copy.deepcopy(lock)
+    lock["extensions"] = [e for e in lock["extensions"] if e["slug"] != "verification-picture"]
     for e in lock["extensions"]:
-        if e["slug"] in ("tasks", "verification-picture"):
-            e["config"]["peerVerification"]["visibility"] = "keyholder"
+        cfg = e["config"]
+        if e["slug"] == "tasks":
+            if isinstance(cfg.get("peerVerification"), dict):
+                cfg["peerVerification"].update(enabled=False, visibility="keyholder")
+            for t in cfg["tasks"]:
+                t.update({k: False for k in ("verificationRequired", "codeRequired") if t.get(k) is True})
+        if e["slug"] == "temporary-opening":
+            cfg.update(requireVerificationPictureBefore=False, requireVerificationPictureAfter=False)
     return lock
 
 
@@ -70,7 +94,7 @@ class TestLedger:
 
     def test_the_notice_says_what_matters(self) -> None:
         for phrase in ("Any logged-in Chaster member", "no longer adds time", "UNCONFIRMED incident", "revoke it at any time",
-                       "this lock only"):
+                       "this lock only", "stops asking for photos", "verification picture extension is removed"):
             assert phrase in NOTICE_TEXT
         assert len(NOTICE_VERSION) == 12
 
@@ -78,25 +102,61 @@ class TestLedger:
 # ---------------------------------------------------------------------------------------------------------------- the revert plan
 
 class TestRevertPlan:
-    def test_only_visibility_changes_back_to_keyholder(self) -> None:
-        raw = on_target(raw_lock())
+    def test_chaster_stops_asking_for_photos_and_nothing_else_changes(self) -> None:
+        raw = with_photos(on_target(raw_lock()))
         plan = plan_review_revert(parse_lock_configuration(raw))
         assert [(c.slug, c.field, c.before, c.after) for c in plan.changes] == [
+            ("temporary-opening", "requireVerificationPictureBefore", "on", "off"),
+            ("temporary-opening", "requireVerificationPictureAfter", "on", "off"),
+            ("tasks", "peerVerification.enabled", "on", "off"),
             ("tasks", "peerVerification.visibility", "all_members", "keyholder"),
-            ("verification-picture", "peerVerification.visibility", "all_members", "keyholder")]
+            ("tasks", "tasks[].verificationRequired", "on for 1 of 2 tasks", "off"),
+            ("tasks", "tasks[].codeRequired", "on for 1 of 2 tasks", "off"),
+            ("verification-picture", "extension", "present", "removed")]
+        assert plan.refusal is None and plan.unchanged == ("pillory",)
         sent = {e["slug"]: e for e in plan.body["extensions"]}
-        assert sent["tasks"]["config"]["peerVerification"] == {"enabled": True, "visibility": "keyholder", "punishments": [],
-                                                               "futureField": "kept"}
-        assert sent["tasks"]["config"]["tasks"][0]["task"] == "SECRET TASK TEXT" and plan.refusal is None
+        assert [e["slug"] for e in plan.body["extensions"]] == ["pillory", "temporary-opening", "tasks"]     # read order, picture removed
+        read = {e["slug"]: e for e in raw["extensions"]}
+        assert sent["pillory"]["config"] == read["pillory"]["config"]                                        # untouched extension
+        assert {k: v for k, v in sent["temporary-opening"]["config"].items() if not k.startswith("requireVerificationPicture")} == \
+               {k: v for k, v in read["temporary-opening"]["config"].items() if not k.startswith("requireVerificationPicture")}
+        tasks_sent, tasks_read = sent["tasks"]["config"], read["tasks"]["config"]
+        assert {k: v for k, v in tasks_sent.items() if k not in ("tasks", "peerVerification")} == \
+               {k: v for k, v in tasks_read.items() if k not in ("tasks", "peerVerification")}
+        assert tasks_sent["peerVerification"] == {"enabled": False, "visibility": "keyholder", "punishments": [], "futureField": "kept"}
+        assert [(t["task"], t["points"], t.get("duration")) for t in tasks_sent["tasks"]] == \
+               [(t["task"], t["points"], t.get("duration")) for t in tasks_read["tasks"]]                     # texts, points, durations
+        assert [(t.get("verificationRequired"), t.get("codeRequired")) for t in tasks_sent["tasks"]] == [(None, None), (False, False)]
+        assert all(set(e) == {"slug", "config", "mode", "regularity"} for e in plan.body["extensions"])
+        assert all(sent[x]["mode"] == read[x]["mode"] and sent[x]["regularity"] == read[x]["regularity"] for x in sent)
 
-    def test_a_private_lock_has_nothing_to_revert(self) -> None:
-        assert not plan_review_revert(parse_lock_configuration(private(on_target(raw_lock())))).has_changes
+    def test_the_read_configuration_is_never_mutated(self) -> None:
+        config = parse_lock_configuration(with_photos(on_target(raw_lock())))
+        plan_review_revert(config)
+        assert config.extension("tasks").config["tasks"][1]["verificationRequired"] is True
+        assert config.extension("temporary-opening").config["requireVerificationPictureBefore"] is True
+
+    def test_a_photo_free_lock_has_nothing_to_revert(self) -> None:
+        assert not plan_review_revert(parse_lock_configuration(private(with_photos(on_target(raw_lock()))))).has_changes
+
+    def test_a_lock_without_the_picture_extension_is_not_refused(self) -> None:
+        raw = raw_lock()
+        raw["extensions"] = [e for e in raw["extensions"] if e["slug"] != "verification-picture"]
+        plan = plan_review_revert(parse_lock_configuration(raw))
+        assert plan.refusal is None and [c.field for c in plan.changes] == ["peerVerification.enabled"]
+        assert plan_review_update(parse_lock_configuration(raw)).refusal == "missing_extension:verification-picture"   # forward still refuses
 
     def test_a_missing_peer_verification_object_is_not_created(self) -> None:
         raw = on_target(raw_lock())
-        del raw["extensions"][2]["config"]["peerVerification"]
+        del raw["extensions"][1]["config"]["peerVerification"]                                                # tasks
         plan = plan_review_revert(parse_lock_configuration(raw))
-        assert "peerVerification" not in plan.body["extensions"][2]["config"] and [c.slug for c in plan.changes] == ["tasks"]
+        assert "peerVerification" not in plan.body["extensions"][1]["config"]
+        assert [(c.slug, c.field) for c in plan.changes] == [("verification-picture", "extension")]
+
+    def test_the_forward_plan_is_unchanged_by_the_new_revert(self) -> None:
+        plan = plan_review_update(parse_lock_configuration(with_photos(raw_lock())))
+        assert "verification-picture" in [e["slug"] for e in plan.body["extensions"]]
+        assert {c.field for c in plan.changes} <= {"peerVerification.enabled", "peerVerification.visibility", "peerVerification.punishments"}
 
     def test_exposure(self) -> None:
         assert community_exposed(parse_lock_configuration(on_target(raw_lock())))
@@ -133,15 +193,16 @@ class TestRevert:
         result = w.service.apply(actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True, revert=True)
         assert result.outcome is O.APPLIED and result.revert and len(w.transport.calls) == 1
         body = w.transport.calls[0][1]
-        assert {e["slug"]: e["config"].get("peerVerification", {}).get("visibility") for e in body["extensions"]} == \
-               {"pillory": None, "tasks": "keyholder", "verification-picture": "keyholder"}
+        assert [e["slug"] for e in body["extensions"]] == ["pillory", "tasks"]
+        assert body["extensions"][1]["config"]["peerVerification"]["enabled"] is False
         row, = w.audit()
         assert row["outcome"] == "applied" and row["plan_id"] == plan_review_revert(parse_lock_configuration(on_target(raw_lock()))).plan_id
 
     def test_a_revert_that_does_not_take_is_unverified(self, tmp_path) -> None:
         w = World(tmp_path, reader=FakeReader(on_target(raw_lock()), on_target(raw_lock())))
         result = w.service.apply(actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True, revert=True)
-        assert result.outcome is O.APPLIED_UNVERIFIED and result.remaining_gaps == ("community review is still on",)
+        assert result.outcome is O.APPLIED_UNVERIFIED
+        assert "tasks peerVerification.enabled still on" in result.remaining_gaps and "the set of extensions changed" in result.remaining_gaps
 
     @pytest.mark.parametrize("kw, outcome", [({"confirmed": False}, O.NOT_CONFIRMED), ({"actor": "x"}, O.NOT_OWNER),
                                              ({"plan_id": "0" * 16}, O.PLAN_MISMATCH), ({"plan_id": "zz"}, O.INVALID_INPUT)])
@@ -158,7 +219,7 @@ class TestRevert:
         assert World(tmp_path / "f", halted=True).apply().outcome is O.HALTED
 
     def test_nothing_to_revert(self, tmp_path) -> None:
-        w = World(tmp_path, reader=FakeReader(raw_lock()))
+        w = World(tmp_path, reader=FakeReader(private(raw_lock())))
         assert w.service.apply(actor=OWNER, lock_id=LOCK, plan_id=None, confirmed=True, revert=True).outcome is O.NOTHING_TO_REVERT
         assert w.service.preview(actor=OWNER, lock_id=LOCK, revert=True).outcome is O.NOTHING_TO_REVERT
 
@@ -205,10 +266,23 @@ class TestDecideConsent:
             row = tx.fetch_one("SELECT user_comment FROM consent_log WHERE target_id = ?", (consent_target(LOCK),))
         assert row["user_comment"] == "owner cli: approved; the owner attests the wearer account is the owner's own"
 
-    def test_a_private_lock_is_not_written_on_decline(self, tmp_path) -> None:
-        w = World(tmp_path, reader=FakeReader(wearer(raw_lock())))
+    def test_a_decline_without_community_review_never_strips_the_keyholders_photo_checks(self, tmp_path) -> None:
+        w = World(tmp_path, reader=FakeReader(wearer(with_photos(raw_lock()))))         # photo checks on, community review off
         result = w.service.decide_consent(actor=OWNER, lock_id=LOCK, decision=ConsentDecision.REJECTED, confirmed=True)
         assert result.revert is None and w.transport.calls == [] and w.audit() == []
+
+    def test_a_revocation_switches_every_photo_requirement_off_even_without_community_review(self, tmp_path) -> None:
+        lock = wearer(with_photos(raw_lock()))
+        w = World(tmp_path, reader=FakeReader(lock, lock, private(lock)))
+        result = w.service.decide_consent(actor=OWNER, lock_id=LOCK, decision=ConsentDecision.REVOKED, confirmed=True)
+        assert result.revert.outcome is O.APPLIED and len(w.transport.calls) == 1
+        body = w.transport.calls[0][1]
+        assert [e["slug"] for e in body["extensions"]] == ["pillory", "temporary-opening", "tasks"]
+
+    def test_a_photo_free_lock_is_not_written_on_revoke(self, tmp_path) -> None:
+        w = World(tmp_path, reader=FakeReader(wearer(private(raw_lock()))))
+        result = w.service.decide_consent(actor=OWNER, lock_id=LOCK, decision=ConsentDecision.REVOKED, confirmed=True)
+        assert result.revert is None and w.transport.calls == []
 
     @pytest.mark.parametrize("kw, outcome", [({"actor": "x"}, C.NOT_OWNER), ({"lock_id": "../x"}, C.INVALID_INPUT),
                                              ({"confirmed": False}, C.NOT_CONFIRMED)])
@@ -268,6 +342,7 @@ class TestCli:
         w = World(tmp_path, consent=False, reader=FakeReader(on_target(raw_lock()), on_target(raw_lock()), private(on_target(raw_lock()))))
         code, text = self._run(w, "extension-review", LOCK, "--owner-id", OWNER, "--revert")
         assert code == 0 and "Direction: REVERT" in text and "all_members  ->  keyholder" in text and "--revert --apply --plan" in text
+        assert "removed: verification-picture." in text and "verification-picture extension" in text and "present  ->  removed" in text
         assert w.transport.calls == []
         code, text = self._run(w, "extension-review", LOCK, "--owner-id", OWNER, "--revert", "--apply", "--yes")
         assert code == 0 and "outcome=applied" in text and len(w.transport.calls) == 1

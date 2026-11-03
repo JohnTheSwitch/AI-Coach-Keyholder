@@ -91,11 +91,11 @@ class ReviewConsentDm:
                 ConsentDecision.REVOKED: "Recorded: you revoked community review for this lock."}[decision]
         if result.revert is not None:
             if result.revert.outcome is ExtensionReviewOutcome.APPLIED:
-                text += " Your photos are reviewed by your keyholder only again."
+                text += " Chaster no longer asks for verification pictures or task photos on this lock."
             elif result.revert.outcome is ExtensionReviewOutcome.NOTHING_TO_REVERT:
-                text += " Community review was already off."
+                text += " Chaster was already not asking for photos on this lock."
             else:
-                text += (" Switching the lock back to keyholder-only review did NOT complete "
+                text += (" Switching the photo requirements off did NOT complete "
                          f"({result.revert.outcome.value}); please check the lock on Chaster.")
         elif decision is ConsentDecision.APPROVED and not result.exposed:
             text += " Community review itself is switched on by your keyholder separately."

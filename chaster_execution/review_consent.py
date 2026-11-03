@@ -43,8 +43,10 @@ NOTICE_TEXT = (
     "automatically from one rejected photo.\n"
     "- The setting is visible on your lock's page on Chaster.\n"
     "\n"
-    "Your consent covers this lock only. You can revoke it at any time; the review is then switched back to your "
-    "keyholder only. If you decline, community review is not switched on."
+    "Your consent covers this lock only. You can revoke it at any time: Chaster then stops asking for photos on this lock "
+    "(the verification picture extension is removed, tasks and temporary openings no longer need a photo, and task photos are "
+    "seen by your keyholder only). If you decline, community review is not switched on (and if it already is, it is switched "
+    "off the same way)."
 )
 NOTICE_VERSION = hashlib.sha256(NOTICE_TEXT.encode("utf-8")).hexdigest()[:12]
 CONSENT_TARGET_PREFIX = "community_photo_review:"

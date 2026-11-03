@@ -150,3 +150,8 @@ time on a rejection, that a rejection here is at most an UNCONFIRMED incident fo
 - `extension-config` shows the consent state per lock and warns when community review is on without approved consent.
 
 Only the CLI imports the service; the bot never records consent (guarded in tests). A Discord DM path for tenant wearers is not built yet.
+
+Revocation (2026-11-03, `docs/architecture/phase_i_proposal.md` section 8): `--revert` and a revoked consent make Chaster stop asking for
+photos: `verification-picture` is removed, `temporary-opening`'s picture requirements and the tasks' `verificationRequired` /
+`codeRequired` and peer verification are switched off; every other extension and field is sent back as read. A decline runs it only when
+community review is actually on. The notice text (and so its version) changed: earlier approvals are `stale`.

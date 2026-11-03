@@ -164,3 +164,32 @@ one rejected review can never create a second Incident.
 `python -m cli trust-domain create` (consent record first, TI1; score 0.6, confidence 0.15). With `ENABLE_PEER_REVIEW_WATCH=true` the bot
 applied migration 043, logged "Community review watch enabled: every 600 s", found the owner's Discord id for notices, and the first poll
 recorded the baseline: `6aca95cd…` one task review already `verified` (no Incident), `6ae98ca…` one task review `ongoing` (followed).
+
+## 8. Revocation stops photo requests (2026-11-03, owner directive)
+
+A revocation (and `extension-review --revert`) no longer only hides the photos from the community; it makes Chaster stop asking for them.
+Deep audit of the live configs first (read-only, task texts redacted): `tasks` items carry `verificationRequired` and `codeRequired`
+(TaskItem, OpenAPI 0.35.0); `temporary-opening` has `requireVerificationPictureBefore` / `After`; `verification-picture` has its own
+top-level `visibility` (picture history: `all` on `6ae98ca…`, `keyholder` on `6aca95cd…`) and NO on/off switch: its requests come from the
+extension being on the lock. `pillory` and `link` have no photo settings.
+
+`plan_review_revert` now:
+- REMOVES `verification-picture` from the list (the only way to stop its requests);
+- switches every other extension's own picture requirement off explicitly instead of trusting Chaster to default it after the removal
+  (`temporary-opening`: `requireVerificationPictureBefore` / `After` -> false; owner remark: "any other extension using it should default to
+  not requiring picture verification");
+- on `tasks`: `peerVerification.enabled` -> false, `peerVerification.visibility` -> `keyholder` (punishments as read), every item's
+  `verificationRequired` / `codeRequired` -> false; task text, points and duration as read;
+- sends every other extension and field exactly as read, in read order, adds nothing; a lock without `verification-picture` is accepted.
+The re-read must show nothing left to switch off and exactly the sent set of extensions (`applied`), otherwise `applied_unverified`.
+
+Revoke vs decline: a REVOCATION switches everything off whenever anything is still on. A DECLINE (never agreed) runs the same switch-off only
+if community review is actually on, so declining never strips the keyholder's own photo checks from a lock without community review.
+
+Consequences: the I3 notice text describes the new effect, so its version changed (`97d89d263cde`) and earlier approvals count as `stale`
+until accepted again (one button in the Discord consent overview). After a revocation the FORWARD plan refuses with
+`missing_extension:verification-picture` until the keyholder adds the extension again on Chaster.
+
+Live dry run (nothing sent): both locks would get `tasks peerVerification.enabled on -> off`, `visibility all_members -> keyholder` and
+`verification-picture removed`; their task and temporary-opening photo flags are already off; `pillory`, `link`, `temporary-opening` are
+sent back unchanged.

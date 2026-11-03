@@ -22,14 +22,17 @@ the plan id and every reason a real write would be refused. It sends nothing, wr
 A real attempt is audited FIRST as `attempting` (migration 042), then sent once (never retried), then the lock is read again: `applied`
 only when the review settings now match and the same extensions are still on the lock, otherwise `applied_unverified`.
 
-The REVERT direction (`revert=True`, Phase I3) sets visibility back to `keyholder` (chaster/extension_plan.py `plan_review_revert`). It only
-reduces who sees the photos, so it needs no consent and no plan id from a dry run (a given one must still match), and (owner decision
-2026-11-03) it is NOT stopped by the runtime halt: a wearer's revocation takes effect at once. Every other check is the same.
+The REVERT direction (`revert=True`, Phase I3, widened 2026-11-03) switches the photo requirements of `tasks` and `verification-picture`
+off (peer verification, the tasks' `verificationRequired` / `codeRequired`, the picture history visibility; chaster/extension_plan.py
+`plan_review_revert`). It only reduces what is asked and who sees it, so it needs no consent and no plan id from a dry run (a given one
+must still match), and (owner decision 2026-11-03) it is NOT stopped by the runtime halt: a wearer's revocation takes effect at once.
+Every other check is the same; a fresh read afterwards must show nothing left to switch off.
 
 `decide_consent()` records the OWNER's own decision about a lock the owner wears (the connected account's role on it is `wearer`). A
 lock worn by another account is refused (that consent can only come from that wearer) unless the owner explicitly attests that the
 wearer account is the owner's own second account (`attest_own_account`); the attestation is written into the consent record. A decline
-or a revocation immediately runs the revert write when the lock currently has community review.
+or a revocation immediately runs the revert write: a revocation whenever the lock still has anything to switch off, a decline only
+when community review is actually on.
 """
 
 from __future__ import annotations
@@ -244,7 +247,7 @@ class ExtensionReviewService:
             outcome, http_status = ExtensionReviewOutcome.UNKNOWN, None
         gaps: tuple[str, ...] = ()
         if outcome is None:
-            outcome, gaps = self._verify(lock_id, config, revert=revert)
+            outcome, gaps = self._verify(lock_id, plan, revert=revert)
         self._finish(audit_id, outcome, http_status)
         logger.info("Extension review %s on lock %s: %s (HTTP %s).", "revert" if revert else "update", lock_id, outcome.value, http_status)
         return ExtensionReviewResult(outcome=outcome, audit_id=audit_id, config=config, plan=plan, halted=False,
@@ -278,7 +281,11 @@ class ExtensionReviewService:
         self._consents.record(lock_id=lock_id, decision=decision, comment=comment, now=self._clock.now())
         logger.info("Community review consent for lock %s recorded: %s.", lock_id, decision.value)
         reverted = None
-        if decision is not ConsentDecision.APPROVED and exposed:
+        # Revoke: Chaster stops asking for photos on this lock (whatever is still on is switched off). Decline: community review is
+        # not wanted, so the same switch-off runs only when community review is actually on; it never strips the keyholder's own
+        # photo checks from a lock that has none of it.
+        needs_revert = (exposed if decision is ConsentDecision.REJECTED else plan_review_revert(config).has_changes)
+        if decision is not ConsentDecision.APPROVED and needs_revert:
             reverted = self.apply(actor=actor, lock_id=lock_id, plan_id=None, confirmed=True, revert=True)
         return ConsentResult(outcome=ConsentOutcome.RECORDED, consent=self._consents.state(lock_id), config=config, exposed=exposed,
                              revert=reverted)
@@ -306,15 +313,17 @@ class ExtensionReviewService:
             return report.configurations[0], None
         return None, (report.problems[0].split(": ", 1)[-1] if report.problems else "failed")
 
-    def _verify(self, lock_id: str, before: LockConfiguration, *, revert: bool) -> tuple[ExtensionReviewOutcome, tuple[str, ...]]:
+    def _verify(self, lock_id: str, sent: ReviewPlan, *, revert: bool) -> tuple[ExtensionReviewOutcome, tuple[str, ...]]:
+        """`applied` only when a fresh read shows the target AND exactly the extensions that were sent (a revert removes
+        `verification-picture`; nothing else may appear or disappear)."""
         after, _problem = self._read(lock_id)
         if after is None:
             return ExtensionReviewOutcome.APPLIED_UNVERIFIED, ("re-read failed",)
         if revert:
-            gaps = ("community review is still on",) if community_exposed(after) else ()
+            gaps = tuple(f"{c.slug} {c.field} still {c.before}" for c in plan_review_revert(after).changes)
         else:
             gaps = review_gaps(after)
-        same = sorted(e.slug for e in after.extensions) == sorted(e.slug for e in before.extensions)
+        same = sorted(e.slug for e in after.extensions) == sorted(e["slug"] for e in sent.body["extensions"])
         if gaps or not same:
             return ExtensionReviewOutcome.APPLIED_UNVERIFIED, gaps + (() if same else ("the set of extensions changed",))
         return ExtensionReviewOutcome.APPLIED, ()

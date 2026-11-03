@@ -68,7 +68,7 @@ class TestFacade:
         exposed = wearer(on_target(raw_lock()))
         world = World(tmp_path, reader=FakeReader(exposed, exposed, private(exposed)))
         text = _dm(world).decide(discord_user_id=OWNER_DISCORD, lock_id=LOCK, action="revoke")
-        assert "revoked" in text and "keyholder only again" in text and len(world.transport.calls) == 1
+        assert "revoked" in text and "no longer asks for verification pictures" in text and len(world.transport.calls) == 1
         assert world.ledger.state(LOCK).state is ConsentState.REVOKED
 
     def test_a_failed_switch_back_is_reported(self, tmp_path) -> None:
