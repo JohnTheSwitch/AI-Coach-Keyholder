@@ -68,6 +68,8 @@ class Config:
     ollama_read_timeout_seconds: float = 30.0     # a large local model needs more (for example 120 for a 32B model)
     ollama_keep_alive: str | None = None          # e.g. "30m": keep the model loaded between messages
     research_ollama_model: str | None = None      # Phase G3: model for `python -m cli research analyze` (default: OLLAMA_MODEL)
+    vision_ollama_model: str | None = None        # Phase H1: local vision model (e.g. qwen3-vl:8b-instruct); empty = the vision feature is off
+    vision_read_timeout_seconds: float = 180.0    # Phase H1: one image evaluation may take long on a local GPU
     # Phase G4: opt-in research export (also needs each wearer's `research on`). The token and key are secrets (never logged).
     enable_research_telemetry: bool = False
     telemetry_endpoint: str | None = None         # https:// base URL of the receiver (G5); records go to /v1/records, erasures to /v1/erase
@@ -208,6 +210,8 @@ class Config:
             ollama_read_timeout_seconds=float(get("OLLAMA_READ_TIMEOUT_SECONDS", "30") or "30"),
             ollama_keep_alive=get("OLLAMA_KEEP_ALIVE") or None,
             research_ollama_model=get("RESEARCH_OLLAMA_MODEL") or None,
+            vision_ollama_model=(get("VISION_OLLAMA_MODEL") or "").strip() or None,
+            vision_read_timeout_seconds=float(get("VISION_READ_TIMEOUT_SECONDS", "180") or "180"),
             enable_research_telemetry=(get("ENABLE_RESEARCH_TELEMETRY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             telemetry_endpoint=get("TELEMETRY_ENDPOINT") or None,
             telemetry_token=get("TELEMETRY_TOKEN") or None,

@@ -67,6 +67,8 @@ real architectural findings surfaced while building it:
 - [`system/README.md`](system/README.md) -- the startup orchestrator,
   the consumer/dispatch framework, and the composition-layer wiring
   between all of the above.
+- [`vision/README.md`](vision/README.md) -- the Zero-Trace vision core (Phase H1): in-memory image
+  fetch, the local vision model and a strict verdict parser; nothing is ever written to disk.
 - [`hive_mind_receiver/README.md`](hive_mind_receiver/README.md) -- the STANDALONE receiver for the
   opt-in research telemetry (FastAPI + SQLite, own requirements, shares no code with the bot;
   its own test suite runs separately).
@@ -76,7 +78,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**3624 passing tests** across the whole repository (`pytest`), including
+**3682 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms

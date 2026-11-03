@@ -1,6 +1,6 @@
 # Phase H: the Zero-Trace Visual Proof Engine
 
-Status: H0 (specification, binding). Nothing is implemented. Sections 2 and 3 record what the Chaster API actually allows, verified against the live OpenAPI
+Status: H0 (specification, binding) and H1 (the vision core, `vision/`, section 11) built. Nothing polls Chaster yet. Sections 2 and 3 record what the Chaster API actually allows, verified against the live OpenAPI
 document (fetched 2026-11-03 from `api.chaster.app/api-json`, Chaster API version 0.35.0, 181 paths). Live behaviour still to be confirmed with a read-only
 probe once the keyholder token has the `keyholder` scope is listed in section 9.
 
@@ -123,3 +123,19 @@ The probe prints field names, statuses and the URL host only, never the URL or t
 | H3 | consequences of section 7 inside the engine, neutral wearer messages | engine only |
 | H4 | hardening: injection images, numeric telemetry (verdict and latency only), cross-tenant audit, runbook (crash dumps, `OLLAMA_DEBUG`, Chaster visibility settings) | none |
 | later | Chaster write-back through a registered Partner Extension (separate decision) | live |
+
+## 11. H1 as built (2026-11-03)
+
+- `vision/fetch.py`, `vision/adapter.py`, `vision/prompts.py`, `vision/parser.py`, `vision/models.py`; see `vision/README.md`.
+- The schema has no free-text field at all: `verdict`, `reason_code` (enum), `code_seen` (at most 32 characters). The expected code is never given to the
+  model; `verified` needs reason `matches` and a transcribed code equal to the Chaster code, otherwise it becomes `unclear`.
+- The request body is one `bytearray` with the base64 image spliced in (no `str` copy of the image) and is overwritten after the call. `requests` needs a
+  `bytes` copy of it, which, like the base64 bytes, can only be dropped.
+- Guards: an AST ban (no `open`, `print`, logging, `tempfile`, `shutil`, databases, image `.save`, directory creation, nor imports of the chat path in
+  `vision/`), and a runtime test that runs a full fetch and evaluation while every file and database opener raises. Nothing outside `vision/`, the
+  evaluation script and tests imports the package yet.
+- `VISION_OLLAMA_MODEL` (empty = off) and `VISION_READ_TIMEOUT_SECONDS` (180). A non-local `OLLAMA_HOST` is refused.
+- `python -m scripts.eval_vision`: the owner's offline accuracy check on local sample photos (memory only, nothing written).
+- Live smoke test on this machine with a synthetic gray image: `qwen3-vl:8b-instruct` accepted the image and the schema and answered `unclear` /
+  `image_unclear` for both a device check and a task proof (about 80 s including loading the model, about 8 s warm).
+
