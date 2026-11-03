@@ -115,6 +115,11 @@ CHASTER_TOOL_GUIDANCE = (
 #      cas, time, left, remaining, check, zkontroluj, nacti, ...), OR
 #   3. a short first-person state QUESTION (must contain "?"): "am i
 #      locked?" / "jsem zamceny?" (first-person word + locked/unlocked).
+#   4. (Phase J1) a short TIME-LEFT question (must contain "?", at most
+#      80 characters) without naming the lock: "how much time is left?",
+#      "how long until I'm out?", "kolik mi zbyva?", "jak dlouho jeste?".
+#      Never when it is about something else that runs out (a task,
+#      timer, meeting, work, vacation, film, game ...).
 # A message that also names an obviously physical lock (door, car,
 # bike, safe ...) is never matched, and neither is a long message.
 # Plain `lock status` is a registered command and never reaches here.
@@ -138,6 +143,13 @@ _PHYSICAL_LOCK_WORDS = frozenset({
 _FIRST_PERSON = frozenset({"jsem", "am", "i"})
 _SELF_STATE_PREFIXES = ("zamcen", "odemcen", "locked", "unlocked")
 MAX_SELF_STATE_CHARACTERS = 60
+MAX_TIME_LEFT_CHARACTERS = 80
+_REMAIN_WORDS = frozenset({"left", "remaining", "remain", "remains", "zbyva", "zbyvaji", "zbyvat", "zbyvajici"})
+_UNTIL_WORDS = frozenset({"until", "till", "still", "more", "left", "remaining", "jeste", "zbyva", "budu", "potrva", "zustanu"})
+_OTHER_SUBJECT_PREFIXES = (
+    "task", "ukol", "timer", "meeting", "schuzk", "film", "movie", "game", "hra", "hry", "work", "prac", "shift", "smen",
+    "class", "lesson", "lekc", "vacation", "dovolen", "battery", "baterk", "download", "stahov", "trip", "vylet", "school", "skol",
+)
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
 
@@ -174,7 +186,25 @@ def is_chaster_status_query(message: str) -> bool:
     ):
         return True
     has_lock_noun = any(t.startswith(_LOCK_NOUN_PREFIXES) for t in tokens)
-    return has_lock_noun and bool(token_set & _STATUS_CUES)
+    if has_lock_noun and bool(token_set & _STATUS_CUES):
+        return True
+    return _is_time_left_question(message, tokens, token_set)
+
+
+def _is_time_left_question(message: str, tokens: list[str], token_set: set[str]) -> bool:
+    """Rule 4: "how much time is left?" and its Czech forms, short questions only, never about another thing that runs out."""
+    if "?" not in message or len(message) > MAX_TIME_LEFT_CHARACTERS:
+        return False
+    if any(t.startswith(_OTHER_SUBJECT_PREFIXES) for t in tokens):
+        return False
+    pairs = list(zip(tokens, tokens[1:]))
+    if "time" in token_set and token_set & _REMAIN_WORDS:
+        return True                                                      # how much time is left / time remaining
+    if ("how", "long") in pairs and token_set & _UNTIL_WORDS:
+        return True                                                      # how long until I'm out / how long still
+    if token_set & {"zbyva", "zbyvaji"} and token_set & {"kolik", "cas", "casu", "jak", "mi"}:
+        return True                                                      # kolik mi zbyva / jak dlouho mi zbyva
+    return ("jak", "dlouho") in pairs and bool(token_set & _UNTIL_WORDS)   # jak dlouho jeste / jak dlouho budu
 
 
 _LOCK_TOPIC_PREFIXES = (

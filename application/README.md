@@ -319,4 +319,10 @@ v0.30: the hybrid lock-status path passes the user's language to `build_chaster_
 
 v0.35: general chat turns load Chaster context (`_chaster_chat_context`) for lock-related wording or an active connection; failures are swallowed so chat is never blocked.
 
-v0.37: English only. The hybrid status path and the passive chat context no longer take a language (`build_chaster_*_context(locks, now=)`), the engine is always called with `en`, and onboarding offers English only (accounts that stored `cs` keep working and get English). 3907 tests.
+v0.37: English only. The hybrid status path and the passive chat context no longer take a language (`build_chaster_*_context(locks, now=)`), the engine is always called with `en`, and onboarding offers English only (accounts that stored `cs` keep working and get English). 3952 tests.
+
+Phase J1 (Zero-Command UX, `docs/architecture/phase_j_proposal.md`): `application/progress.py` answers "show my progress" / "how am I
+doing?" / "jak mi to jde?" deterministically, after the lock-status check and before any model: the user's local task (active one,
+completed in the last 7 days) and vacation; for the OWNER only (`ApplicationService(owner_user_id=...)`, set by the bot from
+`OWNER_USER_ID`) also the community photo reviews of the last 7 days, the rejections still waiting for the keyholder's decision and
+whether a penalty window runs. The Trust score is never shown and the module reads no Trust state (tested).

@@ -257,7 +257,7 @@ class TestWiring:
         Database(runtime.db_path, core=runtime.core).save_consent_record(ConsentRecord(
             created_at=w.clock.now(), target_type=ConsentTargetType.INTEGRATION, target_id=CONSENT_TARGET, action=ConsentAction.APPROVED,
             explanation_shown=invitation_text("Alex"), user_comment="accept"))
-        for i, text in enumerate(("anything", "english", "neutral", "alex", "how am I doing?")):
+        for i, text in enumerate(("anything", "english", "neutral", "alex", "what should I focus on today?")):
             w.say(runtime, "2000002", text, f"m{i}")
         assert runtime.cycle()
         with runtime.core.transaction() as tx:

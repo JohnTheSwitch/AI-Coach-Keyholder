@@ -533,6 +533,7 @@ def main() -> None:
         check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
         channel_service=channel_service, coaching_memory=coaching, conditioning=conditioning,
         telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
+        owner_user_id=config.owner_user_id,
     )
     bot = build_bot(config, db, clock, application_service)
     check_in_sender.attach(bot)

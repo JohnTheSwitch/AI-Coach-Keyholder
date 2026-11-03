@@ -112,7 +112,7 @@ class TestOrdinaryConversationReceivesAuthoritativeContext:
             user_id=service.user_service.get_or_create_user("discord", "42", now=FIXED_TIME).id,
             status=LockReportStatus.LOCKED_USER_REPORTED, reported_via_consent_id="c1", now=FIXED_TIME,
         )
-        service.handle_message(_incoming("how am I doing?", external_message_id="m1"))
+        service.handle_message(_incoming("what should I focus on today?", external_message_id="m1"))
         assert len(model.calls) == 1
         system_text = model.calls[0].messages[0].content
         assert "the user reported being locked" in system_text

@@ -234,7 +234,7 @@ class TestSelfHealingAndRecovery:
         fresh = ChasterTokenResponse(access_token="fresh-access", refresh_token="fresh-refresh", expires_in=300, refresh_expires_in=1800, granted_scopes=("locks",))
         with patch.object(ChasterOAuthClient, "refresh_tokens", return_value=fresh) as refresh, \
              patch.object(ChasterLockClient, "list_active_locks", return_value=[LOCK]) as locks:
-            reply = service.handle_message(_incoming("how long is left?", "m1"))
+            reply = service.handle_message(_incoming("any update for me?", "m1"))
         refresh.assert_called_once()
         assert locks.call_args.kwargs["access_token"] == "fresh-access"
         assert reply.embed.color == "green"
@@ -245,7 +245,7 @@ class TestSelfHealingAndRecovery:
         _onboard(service)
         _connect(service, expires_in=timedelta(minutes=-1))
         with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
-            reply = service.handle_message(_incoming("how long is left?", "m1"))
+            reply = service.handle_message(_incoming("any update for me?", "m1"))
         tool_message = model.requests[1][0].messages[-1]
         assert "reconnect_required" in tool_message.content and "`chaster connect`" in tool_message.content
         assert reply.embed.title == "Chaster Reconnection Required" and reply.embed.color == "red"

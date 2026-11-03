@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import functools
 import logging
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from application.router import CommandRouter, RequestContext
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
+from application.progress import is_progress_query, read_progress, render_progress
 from application.user_service import UserService
 from chaster.models import ConnectionStatus
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
@@ -115,6 +117,7 @@ class ApplicationService:
         check_in_listener=None,
         channel_service=None,
         coaching_memory=None, conditioning=None, telemetry=None, research=None, iron_contract=None, vacation=None,
+        owner_user_id: str | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -135,6 +138,8 @@ class ApplicationService:
         self._iron_contract = iron_contract
         self._vacation = vacation
         self._pending_forget: dict[str, datetime] = {}       # user id -> until when `yes` confirms `forget all` (in memory)
+        # Phase J1: the owner (the wearer of the connected account's locks) also sees community review and penalty-window progress.
+        self._owner_user_id = owner_user_id.strip() if owner_user_id and owner_user_id.strip() else None
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -248,6 +253,10 @@ class ApplicationService:
             # model can never improvise manual commands for it.
             if is_chaster_status_query(incoming.text):
                 return self._answer_chaster_status_question(incoming, context, preferences)
+
+            # Phase J1: "show my progress" / "how am I doing?" -- answered from real records, never by the model, never with Trust.
+            if is_progress_query(incoming.text):
+                return self._answer_progress(context)
 
             self._notify_check_in(user.id, incoming.text, incoming.received_at)
 
@@ -375,6 +384,19 @@ class ApplicationService:
         self.router.register("channel discord", "Send the bot's messages to Discord (the default)", self._handle_channel_discord)
         self.router.register("channel chaster", "Send the bot's messages to your Chaster chat instead (opt-in)", self._handle_channel_chaster)
         self.router.register_family("channel", invalid_handler=self._handle_channel_invalid)
+
+    def _answer_progress(self, ctx: RequestContext) -> OutgoingMessage:
+        assignment = self.task_runtime.get_active_assignment(ctx.user.id)
+        title = None
+        if assignment is not None:
+            template = self.task_catalog.get_template(assignment.template_id, assignment.template_version)
+            title = self._present_title(template.title if template is not None else None)
+        is_owner = self._owner_user_id is not None and ctx.user.id == self._owner_user_id
+        snapshot = read_progress(self._core, user_id=ctx.user.id, now=ctx.now, active_task_title=title, include_reviews=is_owner,
+                                 vacation=self._vacation)
+        if is_owner:
+            snapshot = replace(snapshot, penalty_running=self.penalty_engine.get_active_or_frozen_penalty_window() is not None)
+        return OutgoingMessage(text=render_progress(snapshot))
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())

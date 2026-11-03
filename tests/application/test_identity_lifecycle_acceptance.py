@@ -282,7 +282,7 @@ class TestAuthoritativeContextRemainsAuthoritative:
     def test_locked_state_appears_verbatim_alongside_scarletts_profile(self, service: ApplicationService, model: _RecordingModel) -> None:
         _onboard_selecting_scarlett(service)
         service.handle_message(_incoming("lock report locked", external_message_id="m1"))
-        service.handle_message(_incoming("how am I doing?", external_message_id="m2"))
+        service.handle_message(_incoming("what should I focus on today?", external_message_id="m2"))
         system_text = model.calls[0].messages[0].content
         assert "Lock: the user reported being locked" in system_text
         assert "has not been independently physically verified" in system_text

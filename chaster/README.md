@@ -588,7 +588,7 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3907 tests repository-wide.
+logger contains `SECRET`. 3952 tests repository-wide.
 
 ## Emergency unlock: lock fields confirmed (2026-11-03)
 
@@ -598,3 +598,7 @@ it has a valid `_id`, `status` is `locked`, `role` is `wearer`, `emergencyUnlock
 anything missing or malformed makes it ineligible with a reason, never an exception. Only locks whose `status` is `locked` are unlock
 candidates (an unlocked or deserted lock in the wearer's active list is ignored); zero or several candidates still fail closed, and
 Chaster's own 400 answer stays the final authority. The local emergency-unlock server can therefore succeed for an eligible lock.
+
+Phase J1: `is_chaster_status_query` gained rule 4, short time-left questions without naming the lock ("How much time is left?", "How long
+until I'm out?", "Kolik mi zbývá?", "Jak dlouho ještě?"; a `?` and at most 80 characters), never when the message is about another thing
+that runs out (task, timer, meeting, work, vacation, film, game, battery, download, trip, school).

@@ -364,7 +364,7 @@ class TestCrossTenantAudit:
         wa, wb = a.wiring, b.wiring
         for attr in ("telemetry_buffer", "telemetry_store", "research_preferences", "iron_contract", "vacation"):
             assert getattr(wa, attr) is not getattr(wb, attr), attr
-        for i, text in enumerate(("anything", "english", "neutral", "alex", "how am I doing?")):
+        for i, text in enumerate(("anything", "english", "neutral", "alex", "what should I focus on today?")):
             tw.say(a, "2000002", text, f"a{i}")
         assert len(wa.telemetry_buffer) == 1 and len(wb.telemetry_buffer) == 0
         a.cycle()
