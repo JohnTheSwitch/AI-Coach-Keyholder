@@ -342,10 +342,17 @@ class TrustManager:
         description: str,
         evidence: IncidentEvidence,
         now: datetime,
+        incident_id: str | None = None,
     ) -> Incident:
         """A new Incident ALWAYS starts UNCONFIRMED. assess_severity() is
-        NOT called yet -- Incident.assessment stays None (TI15)."""
+        NOT called yet -- Incident.assessment stays None (TI15).
+
+        `incident_id` (optional, Phase I4) lets a caller choose the id in
+        advance so a retried registration is idempotent: the second insert
+        of the same id fails on the primary key instead of creating a
+        duplicate Incident."""
         incident = Incident(
+            **({"id": incident_id} if incident_id else {}),
             created_at=now,
             rule_group_id=rule_group_id,
             trust_domain=trust_domain,

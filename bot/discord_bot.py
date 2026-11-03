@@ -126,6 +126,8 @@ class CoachKeyholderBot(discord.Client):
         self._chat_task: asyncio.Task | None = None
         self.research_export = None              # Phase G4: the export coroutine (system.composition.research_export_loop_for) when configured
         self._research_task: asyncio.Task | None = None
+        self.peer_reviews = None                 # Phase I4: the peer_review.wiring.peer_review_loop coroutine when the watch is active
+        self._peer_review_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -150,6 +152,8 @@ class CoachKeyholderBot(discord.Client):
             self._invite_task = asyncio.create_task(self.invitations.run(), name="tenant-invitations")
         if self.research_export is not None:
             self._research_task = asyncio.create_task(self.research_export, name="research-export")
+        if self.peer_reviews is not None:
+            self._peer_review_task = asyncio.create_task(self.peer_reviews, name="peer-review-watch")
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -200,6 +204,9 @@ class CoachKeyholderBot(discord.Client):
         if self._research_task is not None:
             self._research_task.cancel()
             self._research_task = None
+        if self._peer_review_task is not None:
+            self._peer_review_task.cancel()
+            self._peer_review_task = None
         if self._chaster_listener is not None:
             try:
                 await self._chaster_listener.stop()
@@ -585,6 +592,15 @@ def main() -> None:
         return found
 
     bot.research_export = research_export_loop_for(config, research_exporters, clock)
+    # Phase I4: community review results -> UNCONFIRMED Incidents for the keyholder's review (its own loop, read-only towards Chaster).
+    from peer_review.wiring import build_peer_review_watch, peer_review_loop
+    peer = build_peer_review_watch(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
+                                   connections=chaster_connections)
+    for note in peer.notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if peer.watch is not None:
+        bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds, send=discord_adapter.send_message,
+                                            owner_target=peer.owner_target)
     if bot.research_export is not None:
         logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):

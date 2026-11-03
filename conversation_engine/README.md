@@ -673,7 +673,7 @@ v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_con
 
 v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
 
-v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3860 tests.
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 3908 tests.
 
 ## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
 

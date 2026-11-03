@@ -14,6 +14,9 @@ review settings (peer verification, visibility, punishments) of the `tasks` and 
 Phase I3: the forward write also needs the wearer's recorded consent; `--revert` sets visibility back to `keyholder` (no consent needed,
 it only reduces who sees the photos). `review-consent` shows the notice and records the owner's own decision about a lock the owner wears.
 
+`peer-reviews` (Phase I4) lists the community review results the bot recorded and the UNCONFIRMED Incidents a rejection created;
+`confirm` / `dismiss` is the keyholder's manual decision on one of them (owner only, --yes). Nothing here talks to Chaster.
+
 `freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -29,7 +32,8 @@ from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
 from chaster.managed_locks import ManagedLock
 
 __all__ = ["main", "render_listing", "render_configuration", "render_review", "render_consent", "build_directory", "build_configuration_reader",
-           "build_extension_review_service", "build_freeze_service", "describe", "discovery_user_ids"]
+           "build_extension_review_service", "build_freeze_service", "build_peer_review_decisions_cli", "describe", "discovery_user_ids",
+           "render_peer_reviews"]
 
 _HEADERS = ("LOCK ID", "TITLE", "WEARER", "WEARER ID", "STATUS", "isFrozen", "TEST")
 
@@ -334,6 +338,47 @@ def render_consent(result, *, lock_id: str, owner_id: str) -> str:
     return "\n".join(lines)
 
 
+def build_peer_review_decisions_cli():
+    """Phase I4: the owner's view of and decisions on community review Incidents (local database only)."""
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from peer_review.wiring import build_peer_review_decisions
+
+    config = Config.load()
+    return build_peer_review_decisions(config, CoreDatabase(config.db_path))
+
+
+_PEER_TEXT = {
+    "confirmed": "Confirmed: the Incident is now CONFIRMED (keyholder review) and counts like any confirmed Incident.",
+    "dismissed": "Dismissed: the Incident stays UNCONFIRMED for good and never counts.",
+    "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
+    "not_owner": "Refused: that identity is not the owner.",
+    "not_confirmed": "Refused: add --yes to record this decision.",
+    "not_found": "No community review Incident has that id (see: python -m cli peer-reviews list --owner-id <id>).",
+    "already_decided": "Nothing to do: that Incident was already decided.",
+    "failed": "Failed: the Incident could not be confirmed; nothing was recorded.",
+}
+
+
+def render_peer_reviews(rows) -> str:
+    """Ids, enum statuses and vote counts only (no task text, no codes, no image keys)."""
+    if not rows:
+        return "No community review results recorded."
+    lines = []
+    for r in rows:
+        votes = f"{'?' if r.verified_votes is None else r.verified_votes}/{'?' if r.rejected_votes is None else r.rejected_votes}"
+        if r.incident_id is None:
+            state = "-"
+        elif r.owner_decision:
+            state = f"incident {r.incident_id} {r.owner_decision.upper()}"
+        elif r.incident_registered:
+            state = f"incident {r.incident_id} UNCONFIRMED, awaiting your decision" + ("" if r.notified else " (not yet notified)")
+        else:
+            state = f"incident {r.incident_id} being recorded"
+        lines.append(f"{r.first_seen_at}  lock {r.lock_id}  {r.source:<20}  {r.status:<8}  votes {votes:<7}  {state}")
+    return "\n".join(lines)
+
+
 _ADMIN_TEXT = {
     "done": "Done.",
     "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
@@ -629,7 +674,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
-         config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None) -> int:
+         config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None,
+         peer_factory: Callable[[], object] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -638,6 +684,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     research_model_factory = research_model_factory or build_research_model
     config_factory = config_factory or build_configuration_reader
     review_factory = review_factory or build_extension_review_service
+    peer_factory = peer_factory or build_peer_review_decisions_cli
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -666,6 +713,17 @@ def main(argv: list[str], *, out: TextIO | None = None,
     consent.add_argument("--yes", action="store_true", help="confirm the decision (a decline or revocation also reverts a live lock)")
     consent.add_argument("--wearer-is-my-account", action="store_true",
                          help="attest that the lock's wearer account is your own second account (recorded with the decision)")
+    peers = sub.add_parser("peer-reviews", help="Phase I4: community review results and the keyholder's decision on rejection Incidents.")
+    psub = peers.add_subparsers(dest="peer_command", required=True)
+    pl = psub.add_parser("list", help="Rejections with their Incident (default) or every recorded review (--all). Read-only.")
+    pl.add_argument("--all", action="store_true")
+    for verb, help_text in (("confirm", "CONFIRM the Incident (it then counts like any confirmed Incident)."),
+                            ("dismiss", "Dismiss the Incident (it stays UNCONFIRMED and never counts).")):
+        pd = psub.add_parser(verb, help=help_text)
+        pd.add_argument("incident_id")
+        pd.add_argument("--yes", action="store_true")
+    for pp in psub.choices.values():
+        pp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -817,6 +875,19 @@ def main(argv: list[str], *, out: TextIO | None = None,
         if not result.done:
             return 3
         return 0 if result.revert is None or result.revert.outcome.value in ("applied", "nothing_to_revert") else 4
+    if args.command == "peer-reviews":
+        decisions = peer_factory()
+        if args.peer_command == "list":
+            refusal = decisions.authorize(args.owner_id)
+            if refusal is not None:
+                print(_PEER_TEXT[refusal.value], file=out)
+                return 3
+            print(render_peer_reviews(decisions.rows(include_all=args.all)), file=out)
+            return 0
+        outcome = decisions.decide(actor=args.owner_id, incident_id=args.incident_id, confirm=args.peer_command == "confirm",
+                                   confirmed=args.yes, now=now())
+        print(f"{_PEER_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
+        return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
     if args.command == "freeze-lock":
         service = freeze_factory()
         result = service.run(actor=args.owner_id, lock_id=args.lock_id, frozen=args.state, confirmed=args.yes)

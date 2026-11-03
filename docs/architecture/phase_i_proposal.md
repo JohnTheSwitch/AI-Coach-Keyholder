@@ -1,7 +1,7 @@
 # Phase I: Autonomous Extension Management
 
 Status: I1 (role-agnostic discovery, read-only configuration fetcher) and I2 (the guarded configuration overwrite, section 5) built. I2 was applied live
-on both locks on 2026-11-03 (section 6, live result). I3 (wearer consent, section 6) built;
+on both locks on 2026-11-03 (section 6, live result). I3 (wearer consent, section 6) and I4 (community review results -> unconfirmed Incidents, section 7) built;
 the forward write now also needs the wearer's recorded consent.
 
 ## 1. Goal (owner, 2026-11-03)
@@ -57,6 +57,7 @@ code) and the task texts inside `config` (kept only in memory, excluded from `re
 | I1 | discovery in both roles, read-only configuration fetcher, `extension-config` report | reads only |
 | I2 | BUILT (section 5): the guarded write: read-modify-write of the COMPLETE extension list changing only `peerVerification` of the two review extensions; dry run showing the exact diff first; refuses when the lock is not `locked`, the account's role lacks `lock.extensions.edit`, the runtime is halted or the lock changed since the read; owner-only, `--yes`, audited; re-read and verify afterwards | live |
 | I3 | BUILT (section 6): wearer notice and consent record; `--apply` requires approved consent; `--revert`; the owner's own decisions by CLI | engine; a revert is live |
+| I4 | BUILT (section 7): community review results polled; a rejection becomes exactly one UNCONFIRMED Incident for the keyholder; transitions ledger; owner DM and CLI decision | reads only; local records |
 
 ## 5. I2 as built (2026-11-03)
 
@@ -128,3 +129,32 @@ accepts the body as read, and a wearer-side edit on a `full_trust` lock is appli
 
 **Live order (as run).** Consent for `6ae98ca…` (`--accept --yes`) and `6aca95cd…` (`--accept --yes --wearer-is-my-account`), a fresh dry run
 (consent does not change the plan id), then the halt clear / apply / halt sequence.
+
+## 7. I4 as built: community review results -> UNCONFIRMED Incidents (2026-11-04)
+
+**Goal (owner).** Read the community votes on task photos and verification pictures; a rejection creates strictly an UNCONFIRMED Incident
+for the keyholder's decision; no automatic token deduction or time added (no double jeopardy); every polled status transition recorded so
+one rejected review can never create a second Incident.
+
+**API used (OpenAPI 0.35.0, read-only).** `GET /extensions/tasks/{lockId}/history` (TaskHistoryEntry.peerVerification) and
+`GET /locks/{lockId}/verification-pictures` (VerificationPictureHistoryEntry.peerVerification, or the deprecated `votes` with
+`peerVerificationId`). Each review has an id and `status` ongoing / verified / rejected (PeerVerificationStatusEnum) plus vote counts.
+
+| Piece | As built |
+|---|---|
+| Reads | `ChasterLockClient.get_task_history()` / `get_verification_pictures()`; `chaster/peer_reviews.py` keeps review id, status, vote counts, submission time; task texts, verification codes, image keys, voters and reason texts are never copied. |
+| Ledger (migration 043) | `peer_reviews` (latest state per lock + review id, the claimed Incident id, registration, notice and decision stamps), `peer_review_transitions` (append-only, one row per status change), `peer_review_locks` (baseline marker). |
+| Baseline | The first COMPLETE read of a lock records the reviews that already ended without creating Incidents; `ongoing` ones are followed. A partial first read postpones the baseline. |
+| De-duplication | A review's first `rejected` status and its Incident-id claim are written in one transaction (`... SET incident_id = ? WHERE incident_id IS NULL`); the Incident is registered with that pre-chosen id (`TrustManager.register_incident_report(incident_id=...)`), so a retry hits the primary key instead of duplicating. Tested with repeated polls, two watchers on one database, a failed registration and a crash between registration and marking. |
+| Incident | Rule group `peer_review_rejection`, Trust domain `PEER_REVIEW_TRUST_DOMAIN` (default `routine`), evidence impact LOW / confidence LOW / intent UNCLEAR, description with lock, source, review id and vote counts. Always UNCONFIRMED; no assessment. |
+| No double jeopardy | `incident.reported` has no consumer; the Penalty Engine reacts only to `incident.confirmation_changed`; the daily evaluation and the plugin SDK count CONFIRMED Incidents only; the poll class has no path to any confirmation and the package imports nothing from execution, penalty, release or rules. Chaster's own punishments were removed in I2. |
+| Owner notice | One Discord DM per Incident to the owner (id from the owner's identity row), retried each poll until Discord accepts it. |
+| Decision | `python -m cli peer-reviews list|confirm|dismiss` (owner, `--yes`): `confirm` = CONFIRMED with source `keyholder_review` (from then on it counts like any confirmed Incident), `dismiss` = stays UNCONFIRMED for good. |
+| Runtime | Its own bot task (`peer_review_loop`, first poll 30 s after start, then every `PEER_REVIEW_POLL_SECONDS`, default 600, minimum 120), independent of the Rules Engine cycle (off in this deployment). Behind `ENABLE_PEER_REVIEW_WATCH` (default false). Not stopped by the execution runtime halt: it only reads Chaster and writes local unconfirmed records. |
+
+**Interpretations to confirm.**
+1. **All Incidents go to the owner's database and Trust domain**, also for `6aca95cd…`, whose wearer is the owner's own second account. A genuinely
+   different wearer would need the tenant path (their own database), which is not wired for this watch.
+2. **A `rejected` review that later turns `verified`** (should Chaster ever reverse it) is recorded as a transition; the Incident stays for the
+   keyholder to dismiss.
+3. **Locks that are not `locked`** are not polled.

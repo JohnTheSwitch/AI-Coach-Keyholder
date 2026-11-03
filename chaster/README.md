@@ -575,6 +575,10 @@ Phase I3 adds `community_exposed()` (a review extension with peer verification o
 gained `plan_review_revert()` (visibility back to `keyholder` where it is `all_members`, nothing else). The consent ledger and gate are in
 `chaster_execution/README.md`.
 
+Phase I4: `ChasterLockClient.get_task_history()` / `get_verification_pictures()` (read-only GETs) and `peer_reviews.py`
+(`PeerReviewReader`, `parse_task_history`, `parse_verification_pictures`): review id, status and vote counts only; task texts,
+verification codes and image keys are never copied. Used by `peer_review/` (see `peer_review/README.md`).
+
 ## Access logging: no query strings, no headers
 
 aiohttp's default access logger (`aiohttp.access`, INFO) prints the whole request line plus `Referer` and `User-Agent`. On a live
@@ -584,4 +588,4 @@ header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.App
 `callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
 runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
 (plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
-logger contains `SECRET`. 3860 tests repository-wide.
+logger contains `SECRET`. 3908 tests repository-wide.

@@ -143,3 +143,7 @@ via Goals; there is no direct Task -> Trust route).
 - `trust_manager/goal_scoring.py` (pure): progress `+0.05`, setback `-0.08`
   (asymmetric), confidence `1.0`, all `BOOTSTRAP_DEFAULT`. The existing 0.5
   per-row and 0.15 per-recalculation caps still apply.
+
+v0.39 Phase I4: `register_incident_report()` accepts an optional `incident_id`, so a caller that claims the id in its own ledger first
+(`peer_review/`) can retry a registration idempotently: a second insert of the same id fails on the primary key instead of creating a
+duplicate Incident. Every new Incident still starts UNCONFIRMED.
