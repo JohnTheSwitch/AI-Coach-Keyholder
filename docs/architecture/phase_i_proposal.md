@@ -1,7 +1,7 @@
 # Phase I: Autonomous Extension Management
 
 Status: I1 (role-agnostic discovery, read-only configuration fetcher) and I2 (the guarded configuration overwrite, section 5) built. I2 has only been
-run as a dry run; the live write waits for the owner to clear the runtime halt.
+run as a dry run and against the halt gate; the live write waits for the owner to clear the runtime halt. I3 is proposed (section 6).
 
 ## 1. Goal (owner, 2026-11-03)
 
@@ -55,7 +55,7 @@ code) and the task texts inside `config` (kept only in memory, excluded from `re
 |---|---|---|
 | I1 | discovery in both roles, read-only configuration fetcher, `extension-config` report | reads only |
 | I2 | BUILT (section 5): the guarded write: read-modify-write of the COMPLETE extension list changing only `peerVerification` of the two review extensions; dry run showing the exact diff first; refuses when the lock is not `locked`, the account's role lacks `lock.extensions.edit`, the runtime is halted or the lock changed since the read; owner-only, `--yes`, audited; re-read and verify afterwards | live |
-| I3 | wearer transparency and consent: the wearer is told that community members see the photos (2.5, 2.6) before a lock is switched to `all_members` | engine only |
+| I3 | PROPOSED (section 6): wearer transparency and consent: the wearer is told that community members see the photos (2.5, 2.6); `--apply` requires a recorded consent | engine only |
 
 ## 5. I2 as built (2026-11-03)
 
@@ -81,3 +81,35 @@ code) and the task texts inside `config` (kept only in memory, excluded from `re
 **Open until the first live write:** whether Chaster accepts the body as read (it may validate config fields more strictly than it returns them; a 400
 changes nothing), and whether an edit by the WEARER of a lock with a keyholder is applied directly or handled differently by Chaster. Recommended
 order: the keyholder lock first, then check it on Chaster, then the wearer lock.
+
+**Halt gate verified live (2026-11-03):** `--apply --plan b92932793208fe65 --yes` on `6aca95cd…` while halted was refused with `outcome=halted` before any
+read or send (audit `64b90b43…`). The owner authorized the live apply of both plans; clearing the halt from an assistant session was blocked by the
+assistant's safety classifier, so the owner runs the clear / apply / halt sequence himself.
+
+## 6. I3 proposal: wearer transparency and consent (PROPOSAL, no code)
+
+**Why.** `all_members` means any logged-in Chaster member can see the verification photos (and task photos sent for verification) of the lock and vote on
+them. That exposes the wearer to an audience they did not have before; it is a change to how they are watched, so philosophy 2.5 (specific, revocable consent)
+and 2.6 (the wearer knows what happens and why) apply. Removing the Chaster punishments is in the wearer's favour but must be explained too: a rejected
+review no longer adds time on Chaster; it becomes at most an UNCONFIRMED Incident for the owner (2.10, 2.12), never an automatic penalty.
+
+**Proposed pieces.**
+
+| Piece | Content |
+|---|---|
+| Notice text (versioned) | One fixed English text: who can see the photos (any logged-in Chaster member), what they do (vote verified / rejected), what a rejection causes here (an unconfirmed Incident the owner reviews, no automatic penalty, no Chaster time), how to refuse or revoke, and that the setting is visible on the lock's Chaster page. Its SHA-256 prefix is the notice version. |
+| Consent record | `consent_log` in the wearer's own database: `target_type = integration`, `target_id = community_photo_review:<lock_id>`, `target_version = <notice version>`, `explanation_shown = <the exact text>`, `approved` / `rejected` / `revoked`. Same pattern as the tenancy acceptance (`multi_wearer_keyholder`). |
+| Delivery | Owner's own lock (tenant zero, the wearer is the owner): the CLI shows the notice and records consent with `--owner-id` + `--yes`. A managed wearer (tenant): a Discord DM with exact replies `community review accept` / `community review decline`, handled before any conversation and never by a model (like `accept` / `halt`). |
+| Gate on I2 | `extension-review --apply` gains one more refusal, `no_consent`: the latest consent record for that lock and the CURRENT notice version must be `approved`. A changed notice text needs fresh consent. The dry run lists the missing consent as a blocker. |
+| Revocation | `community review revoke` (wearer DM) or the owner CLI records `revoked` at once and plans the reverse change (`visibility = keyholder`; punishments stay empty). Applying the reverse write goes through the same guarded path. |
+| Status | `extension-config` shows per lock: consent state, notice version, and whether the live setting and the consent agree (for example `all_members` without consent is flagged). |
+
+**Decisions needed.**
+1. **Order already taken.** The I2 writes come before I3. For `6ae98ca…` the wearer is the owner, so the owner's authorization counts as consent and can be recorded
+   retroactively. For `6aca95cd…` the wearer is a DIFFERENT Chaster account: is that person a tenant (Discord DM possible), the owner's own second account, or
+   neither? If neither, the notice can only go through the Chaster lock chat (Phase C channel) or by the owner personally; which one?
+2. If that wearer declines or does not answer, should the lock be switched back to `keyholder` visibility (proposed: yes, through the guarded path), and after how long without an answer?
+3. Should a revocation by the wearer reverse the setting automatically (it still passes the runtime halt and the audit), or only queue the reverse plan for the owner? Proposed: automatic
+   is safer for the wearer (2.5 revocable "at any time"), and it can only reduce exposure.
+4. Is the notice also shown when an extension is only switched ON (the `6ae98ca…` verification-picture case), or only when visibility changes? Proposed: both, since enabling review is
+   what creates the audience.
