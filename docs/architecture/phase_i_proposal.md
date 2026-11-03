@@ -1,7 +1,7 @@
 # Phase I: Autonomous Extension Management
 
-Status: I1 (role-agnostic discovery, read-only configuration fetcher) and I2 (the guarded configuration overwrite, section 5) built. I2 has only been
-run as a dry run and against the halt gate; the live write waits for the owner to clear the runtime halt. I3 (wearer consent, section 6) built;
+Status: I1 (role-agnostic discovery, read-only configuration fetcher) and I2 (the guarded configuration overwrite, section 5) built. I2 was applied live
+on both locks on 2026-11-03 (section 6, live result). I3 (wearer consent, section 6) built;
 the forward write now also needs the wearer's recorded consent.
 
 ## 1. Goal (owner, 2026-11-03)
@@ -120,5 +120,11 @@ the other way: a revert is NOT stopped by the runtime halt.
 3. **No answer timeout yet.** Decision 2's "after how long" applies to remote wearers only; it comes with that channel. Without consent nothing is switched
    on, so silence already means "no".
 
-**Live order from here.** Consent for `6ae98ca…` (`--accept --yes`) and `6aca95cd…` (`--accept --yes --wearer-is-my-account`), a fresh dry run
+**Live result (2026-11-03).** The owner recorded consent for both locks, ran the clear / apply / halt sequence and Chaster answered HTTP 201
+for both writes. A read-only `extension-config` afterwards shows `6ae98ca…` and `6aca95cd…` with peer verification on, visibility
+`all_members` and no punishments on `tasks` and `verification-picture` ("matches the target"), all other extensions still present, consent
+`approved` (notice `b5e47d78b70f`) and the runtime halted again (`Post-write safety halt`). The open points of section 5 are answered: Chaster
+accepts the body as read, and a wearer-side edit on a `full_trust` lock is applied directly.
+
+**Live order (as run).** Consent for `6ae98ca…` (`--accept --yes`) and `6aca95cd…` (`--accept --yes --wearer-is-my-account`), a fresh dry run
 (consent does not change the plan id), then the halt clear / apply / halt sequence.
