@@ -82,7 +82,8 @@ Section 15 ("Conflict with user-reported state").
   (`/oauth/chaster/callback`), localhost-only bind. Started/stopped
   by `bot/discord_bot.py::CoachKeyholderBot.setup_hook()`/`close()` —
   a startup failure here is caught and logged, never allowed to
-  prevent Discord itself from starting.
+  prevent Discord itself from starting. Its access log never contains
+  a query string (see "Access logging" below).
 
 ## What is implemented — CHASTER-01B, Increments 1–3
 
@@ -546,7 +547,7 @@ v0.34: the Czech status prompt carries the same direct-wording rule for explaini
 `mentions_lock_topic()` (broad word-prefix check, diacritics-insensitive) or an active connection makes `ApplicationService` load the lock data for the normal conversation path via `build_chaster_chat_context`. Any failure yields no context (chat continues). With context present the model-chosen `get_chaster_status` tool is not offered (the data is already there); explicit status questions still use the status path. 2122 tests repository-wide. The Czech status prompt also requires the infinitive after helper verbs (`můžeš zkusit`, not `můžeš zkus`).
 
 
-v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3812 tests repository-wide.
+v0.37: the whole Chaster context is English. `english_text.format_time_english(seconds)` replaces `czech_text` (`2 days, 8 hours and 37 minutes`; under a minute -> `less than a minute`); the lock view, status context (`ENGLISH_STATUS_SYSTEM_PROMPT`) and chat context are single-language, summary lines read `Lock 1 of 2: "Name" [frozen], keyholder lock`. Earlier Czech-specific notes above are historical. 3815 tests repository-wide.
 
 ## v0.39 dual-role discovery (Phase A, read-only)
 
@@ -565,3 +566,14 @@ property of the lock, not of the account); `python -m cli list-locks` uses the c
 and `LockConfigurationReader` (per-lock problem codes, INFO logs with enum values only). `python -m cli extension-config` prints the report.
 Never copied: the combination, `offerToken`, `sharedLinkToken`, extension `userData`; task texts stay out of `repr` and logs. Specification and
 live result: `docs/architecture/phase_i_proposal.md`.
+
+## Access logging: no query strings, no headers
+
+aiohttp's default access logger (`aiohttp.access`, INFO) prints the whole request line plus `Referer` and `User-Agent`. On a live
+`chaster connect` that put the OAuth `code`, `state` and `session_state` on the bot console, and the follow-up favicon request repeated
+them in its `Referer`. `access_log.py` replaces it: `QuerylessAccessLogger` logs only `METHOD /path -> status` (no query string, no
+header, no remote address), and `SAFE_HANDLER_ARGS` attaches it through `web.Application(handler_args=...)` in both
+`callback_listener.py` and `emergency_unlock_listener.py` (`build_app()`). Application handler args override runner kwargs, so every
+runner serving these apps, the production `AppRunner` and aiohttp's `TestServer` alike, uses it. Tests send `?code=SECRET&state=SECRET`
+(plus a `Referer` repeating it) through `TestServer`/`TestClient` and through the real `start()`, and assert no captured record from any
+logger contains `SECRET`. 3815 tests repository-wide.

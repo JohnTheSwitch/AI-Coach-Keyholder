@@ -21,6 +21,7 @@ import logging
 
 from aiohttp import web
 
+from chaster.access_log import SAFE_HANDLER_ARGS
 from chaster.emergency_unlock import EmergencyUnlockRequestStatus, EmergencyUnlockService
 from infrastructure.clock import Clock
 
@@ -50,10 +51,15 @@ class EmergencyUnlockListener:
         self._clock = clock
         self._runner: web.AppRunner | None = None
 
-    async def start(self) -> None:
-        app = web.Application()
+    def build_app(self) -> web.Application:
+        # SAFE_HANDLER_ARGS replaces aiohttp's default access log line
+        # (query string, Referer, User-Agent) -- see chaster/access_log.py.
+        app = web.Application(handler_args=SAFE_HANDLER_ARGS)
         app.router.add_post(UNLOCK_PATH, self._handle_unlock)
-        runner = web.AppRunner(app)
+        return app
+
+    async def start(self) -> None:
+        runner = web.AppRunner(self.build_app())
         await runner.setup()
         site = web.TCPSite(runner, self._bind_host, self._bind_port)
         await site.start()

@@ -23,6 +23,8 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from chaster.access_log import SAFE_HANDLER_ARGS
+
 logger = logging.getLogger("ai_coach_keyholder.chaster.callback_listener")
 
 CALLBACK_PATH = "/oauth/chaster/callback"
@@ -45,10 +47,16 @@ class ChasterCallbackListener:
         self._on_callback = on_callback
         self._runner: web.AppRunner | None = None
 
-    async def start(self) -> None:
-        app = web.Application()
+    def build_app(self) -> web.Application:
+        # SAFE_HANDLER_ARGS replaces aiohttp's default access log line,
+        # which would otherwise print the OAuth `code`/`state` query
+        # string (and the Referer repeating it) -- see chaster/access_log.py.
+        app = web.Application(handler_args=SAFE_HANDLER_ARGS)
         app.router.add_get(CALLBACK_PATH, self._handle_callback)
-        runner = web.AppRunner(app)
+        return app
+
+    async def start(self) -> None:
+        runner = web.AppRunner(self.build_app())
         await runner.setup()
         site = web.TCPSite(runner, self._bind_host, self._bind_port)
         await site.start()

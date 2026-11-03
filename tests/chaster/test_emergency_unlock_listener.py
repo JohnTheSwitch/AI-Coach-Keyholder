@@ -5,11 +5,14 @@ tests/chaster/test_emergency_unlock_listener.py
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 import requests
+from aiohttp.test_utils import TestClient, TestServer
 from cryptography.fernet import Fernet
 
 from chaster.emergency_unlock import EmergencyUnlockService
@@ -90,14 +93,14 @@ class TestLocalExposure:
     def test_emergency_listener_is_a_separate_aiohttp_application_from_the_oauth_callback_listener(self) -> None:
         """The OAuth callback listener and the emergency listener must
         never share an aiohttp.web.Application -- confirmed by
-        checking each builds its own inside its own start()."""
+        checking each builds its own in its own build_app(), which its
+        own start() serves."""
         import inspect
 
         from chaster.callback_listener import ChasterCallbackListener
-        emergency_start_source = inspect.getsource(EmergencyUnlockListener.start)
-        callback_start_source = inspect.getsource(ChasterCallbackListener.start)
-        assert "web.Application()" in emergency_start_source
-        assert "web.Application()" in callback_start_source
+        for listener_class in (EmergencyUnlockListener, ChasterCallbackListener):
+            assert "web.Application(handler_args=SAFE_HANDLER_ARGS)" in inspect.getsource(listener_class.build_app)
+            assert "web.AppRunner(self.build_app())" in inspect.getsource(listener_class.start)
 
 
 class TestRequestHandling:
@@ -204,3 +207,24 @@ class TestRequestHandling:
             await listener.stop()
 
         asyncio.run(_run())  # must not raise
+
+
+class TestAccessLogNeverLeaksSecrets:
+    def test_query_string_referer_and_body_secret_are_never_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        listener, core, connections = _build_listener(tmp_path, port=0)
+
+        async def _run() -> None:
+            async with TestClient(TestServer(listener.build_app(), host="127.0.0.1")) as client:
+                response = await client.post(
+                    f"{UNLOCK_PATH}?secret=SECRET&state=SECRET",
+                    json={"secret": "SECRET", "user_id": "u1"},
+                    headers={"Referer": "http://127.0.0.1/?code=SECRET"},
+                )
+                assert response.status == 401
+
+        caplog.set_level(logging.DEBUG)
+        asyncio.run(_run())
+
+        access_lines = [r.getMessage() for r in caplog.records if r.name == "aiohttp.access"]
+        assert access_lines == [f"POST {UNLOCK_PATH} -> 401"]
+        assert "SECRET" not in "\n".join(f"{r.name} {r.getMessage()}" for r in caplog.records)

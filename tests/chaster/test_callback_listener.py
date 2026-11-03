@@ -12,10 +12,13 @@ no live Chaster/Discord/Cloudflare involved.
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 
+import aiohttp
 import pytest
 import requests
+from aiohttp.test_utils import TestClient, TestServer
 
 from chaster.callback_listener import CALLBACK_PATH, ChasterCallbackListener
 
@@ -136,3 +139,74 @@ class TestRequestHandling:
                 await listener.stop()
 
         asyncio.run(_run())
+
+
+SECRET = "SECRET"
+
+
+def _all_captured_text(caplog: pytest.LogCaptureFixture) -> str:
+    """Every captured record's logger name and fully formatted message
+    -- what any console/file handler on the root logger would print."""
+    return "\n".join(f"{record.name} {record.getMessage()}" for record in caplog.records)
+
+
+class TestAccessLogNeverLeaksQueryStrings:
+    """Regression: aiohttp's default access logger printed the full
+    callback URL (OAuth `code`, `state`, `session_state`) at INFO, and
+    a follow-up favicon request repeated them in its Referer."""
+
+    def test_callback_and_favicon_requests_never_log_the_query_string_or_referer(self, caplog: pytest.LogCaptureFixture) -> None:
+        received: list = []
+
+        async def on_callback(state, code, error):
+            received.append((state, code, error))
+            return "connected"
+
+        listener = ChasterCallbackListener(bind_host="127.0.0.1", bind_port=0, on_callback=on_callback)
+
+        async def _run() -> None:
+            async with TestClient(TestServer(listener.build_app(), host="127.0.0.1")) as client:
+                callback_url = f"{CALLBACK_PATH}?code={SECRET}&state={SECRET}&session_state={SECRET}"
+                response = await client.get(callback_url)
+                assert response.status == 200
+                favicon = await client.get(
+                    "/favicon.ico", headers={"Referer": f"http://127.0.0.1:8420{callback_url}"},
+                )
+                assert favicon.status == 404
+
+        caplog.set_level(logging.DEBUG)
+        asyncio.run(_run())
+
+        assert received == [(SECRET, SECRET, None)]
+        access_lines = [r.getMessage() for r in caplog.records if r.name == "aiohttp.access"]
+        # The access log still records the request -- just without the query string.
+        assert access_lines == [f"GET {CALLBACK_PATH} -> 200", "GET /favicon.ico -> 404"]
+        assert SECRET not in _all_captured_text(caplog)
+
+    def test_the_real_started_listener_never_logs_the_query_string(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Same guarantee through start()'s own production AppRunner/TCPSite."""
+        port = _free_port()
+
+        async def _run() -> None:
+            async def on_callback(state, code, error):
+                return "connected"
+
+            listener = ChasterCallbackListener(bind_host="127.0.0.1", bind_port=port, on_callback=on_callback)
+            await listener.start()
+            try:
+                # aiohttp's own client rather than `requests`, whose
+                # urllib3 DEBUG line would log the URL on the client side.
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{port}{CALLBACK_PATH}",
+                        params={"code": SECRET, "state": SECRET}, timeout=aiohttp.ClientTimeout(total=5),
+                    ) as response:
+                        assert response.status == 200
+            finally:
+                await listener.stop()
+
+        caplog.set_level(logging.DEBUG)
+        asyncio.run(_run())
+
+        assert any(r.name == "aiohttp.access" for r in caplog.records)
+        assert SECRET not in _all_captured_text(caplog)
