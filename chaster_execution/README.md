@@ -117,3 +117,15 @@ Chaster message can reach it. Checks, in order, each refusal audited and nothing
 state (self-locks are refused), and the lock is not already in the requested state. Every invocation writes one `manual_lock_actions` row; a real attempt is written
 first as `attempting` and then updated, so a crash cannot hide a physical action. Exit codes: 0 applied or nothing to do, 3 refused, 4 failed or ambiguous (`unknown`:
 check the lock on Chaster; never retried automatically). It does not use the barrier limit pool and creates no Rules Engine decision.
+
+## v0.39 Phase I2: the guarded extension-review update (`extension_review.py`, migration 042)
+
+`python -m cli extension-review <lock_id> --owner-id <id>` is a DRY RUN: it reads the lock through the connected account, builds the COMPLETE body for
+`POST /locks/{lockId}/extensions` (`chaster/extension_plan.py`: every extension sent back as read; only `peerVerification.enabled` = true, `visibility` =
+`all_members` and `punishments` = [] change on `tasks` and `verification-picture`), prints each field change, every extension in the payload, a plan id and every
+reason a real write would be refused. It sends and writes nothing and works while the runtime is halted. `--apply --plan <id> --yes` is the live write
+(`ChasterHttpTransport.set_extensions`), with the same pattern as the manual freeze: owner, `--yes`, plain lock id and plan id, runtime halt not set, the lock is
+readable, `locked`, and the account's role holds `lock.extensions.edit`, the body could be rebuilt faithfully, there is something to change, and the plan id of a
+fresh read equals the dry run's (a lock that changed in between is refused). One `manual_extension_actions` row per `--apply` invocation (refusals included; the
+attempt first as `attempting`); sent once, never retried; a fresh read afterwards decides `applied` or `applied_unverified`. Exit codes: 0 planned, nothing to do
+or applied, 3 refused, 4 failed, ambiguous or unverified. Only the CLI imports it (guarded in tests).

@@ -5,7 +5,9 @@ The real Chaster write transport (Route A: the KEYHOLDER connection's OAuth toke
 
 Barrier management (v0.39) uses the DOCUMENTED freeze endpoint:
     POST https://api.chaster.app/locks/{lockId}/freeze    {"isFrozen": true | false}
-(see `set_frozen`). The time contract below is different: it is owner-supplied.
+(see `set_frozen`). Extension management (Phase I2) uses the DOCUMENTED
+    POST https://api.chaster.app/locks/{lockId}/extensions    {"extensions": [...]}
+(see `set_extensions`; reached only from the guarded `python -m cli extension-review`). The time contract below is different: it is owner-supplied.
 
 Request contract -- OWNER-SUPPLIED, not in Chaster's OpenAPI:
     POST https://api.chaster.app/locks/{lockId}/update-time
@@ -112,7 +114,16 @@ class ChasterHttpTransport:
             return TransportResult(outcome=TransportOutcome.NOT_SENT)
         return self._post(lock_id, "freeze", {"isFrozen": frozen})
 
-    def _post(self, lock_id: str, endpoint: str, body: dict) -> TransportResult:
+    def set_extensions(self, *, lock_id: str, body: dict) -> TransportResult:
+        """Extension management (Phase I2): POST /locks/{lockId}/extensions with EditLockExtensionsDto {"extensions": [...]} -- the
+        COMPLETE list (see chaster/extension_plan.py). Needs lock.extensions.edit. Documented success is 201; 200 and 204 are accepted
+        as well. 400 / 403 / 404 as above; anything else is UNKNOWN."""
+        if (not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id) or not isinstance(body, dict)
+                or set(body) != {"extensions"} or not isinstance(body["extensions"], list) or not body["extensions"]):
+            return TransportResult(outcome=TransportOutcome.NOT_SENT)
+        return self._post(lock_id, "extensions", body, ok=(200, 201, 204))
+
+    def _post(self, lock_id: str, endpoint: str, body: dict, *, ok: tuple[int, ...] = (204,)) -> TransportResult:
         url = f"{LOCKS_URL}/{lock_id}/{endpoint}"
 
         def operation(token: str) -> TransportResult:
@@ -132,7 +143,7 @@ class ChasterHttpTransport:
             if status == 401:
                 raise ChasterLockApiError("Chaster rejected the access token.", status_code=401)
             mapping = {
-                204: TransportOutcome.OK,
+                **{code: TransportOutcome.OK for code in ok},
                 400: TransportOutcome.NOT_ELIGIBLE,
                 403: TransportOutcome.FORBIDDEN,
                 404: TransportOutcome.NOT_FOUND,

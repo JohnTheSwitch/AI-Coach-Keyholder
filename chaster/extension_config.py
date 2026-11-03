@@ -72,6 +72,7 @@ class ExtensionSnapshot:
     extension_id: str | None
     mode: str | None
     regularity: float | None
+    is_partner: bool | None
     peer_verification: PeerVerificationSettings | None
     config: dict = field(repr=False, compare=False)        # deep copy for the later full-list write; never logged
 
@@ -132,7 +133,7 @@ def _extension(raw: Any) -> ExtensionSnapshot | None:
     config = raw.get("config")
     config = copy.deepcopy(config) if isinstance(config, dict) else {}
     return ExtensionSnapshot(slug=raw["slug"], extension_id=_str(raw.get("_id")), mode=_str(raw.get("mode")),
-                             regularity=_number(raw.get("regularity")), config=config,
+                             regularity=_number(raw.get("regularity")), is_partner=_bool(raw.get("isPartner")), config=config,
                              peer_verification=_peer_verification(config.get("peerVerification")))
 
 

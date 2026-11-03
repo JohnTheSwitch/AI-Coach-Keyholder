@@ -1,6 +1,7 @@
 # Phase I: Autonomous Extension Management
 
-Status: I1 (role-agnostic discovery and the read-only configuration fetcher) built. Nothing writes to Chaster yet.
+Status: I1 (role-agnostic discovery, read-only configuration fetcher) and I2 (the guarded configuration overwrite, section 5) built. I2 has only been
+run as a dry run; the live write waits for the owner to clear the runtime halt.
 
 ## 1. Goal (owner, 2026-11-03)
 
@@ -53,5 +54,30 @@ code) and the task texts inside `config` (kept only in memory, excluded from `re
 | Step | Content | Live effect |
 |---|---|---|
 | I1 | discovery in both roles, read-only configuration fetcher, `extension-config` report | reads only |
-| I2 | the guarded write: read-modify-write of the COMPLETE extension list changing only `peerVerification` of the two review extensions; dry run showing the exact diff first; refuses when the lock is not `locked`, the account's role lacks `lock.extensions.edit`, the runtime is halted or the lock changed since the read; owner-only, `--yes`, audited; re-read and verify afterwards | live |
+| I2 | BUILT (section 5): the guarded write: read-modify-write of the COMPLETE extension list changing only `peerVerification` of the two review extensions; dry run showing the exact diff first; refuses when the lock is not `locked`, the account's role lacks `lock.extensions.edit`, the runtime is halted or the lock changed since the read; owner-only, `--yes`, audited; re-read and verify afterwards | live |
 | I3 | wearer transparency and consent: the wearer is told that community members see the photos (2.5, 2.6) before a lock is switched to `all_members` | engine only |
+
+## 5. I2 as built (2026-11-03)
+
+- `chaster/extension_plan.py`: `plan_review_update(config)` builds the COMPLETE body (`{"extensions": [{slug, config, mode, regularity}, ...]}`, same order,
+  configs deep-copied) and sets exactly `peerVerification.enabled = true`, `visibility = all_members`, `punishments = []` on `tasks` and
+  `verification-picture`; any other key, also inside `peerVerification`, is sent back as read. Enabling is included because community review cannot
+  happen while peer verification is off (the wearer lock's verification picture). It refuses when the body cannot be rebuilt faithfully (missing review
+  extension, partner extension, invalid `mode` or `regularity`). `plan_id` = the first 16 hex characters of the SHA-256 of the canonical body.
+- `ChasterHttpTransport.set_extensions(lock_id, body)`: `POST /locks/{lockId}/extensions`; 200/201/204 OK, 400 not eligible, 403 forbidden, 404 not
+  found, 401 refresh once, anything else or a read timeout ambiguous; malformed input is never sent.
+- `chaster_execution/extension_review.py`: `preview()` (dry run, works while halted, nothing audited) and `apply()` (owner, `--yes`, input, runtime halt,
+  account, `locked`, `lock.extensions.edit` for the account's role, faithful plan, something to change, plan id equal to the dry run's; audited first as
+  `attempting` in `manual_extension_actions`, migration 042; sent once; a fresh read decides `applied` or `applied_unverified`).
+- `python -m cli extension-review <lock_id> --owner-id <id>` (dry run) and `... --apply --plan <id> --yes` (live).
+
+**Dry run on the live locks (2026-11-03, runtime halted, nothing sent):**
+
+| Lock | Role | Changes | Sent back unchanged |
+|---|---|---|---|
+| `6aca95cd…` | keyholder | tasks visibility keyholder → all_members; tasks punishments [add_time(3600)] → []; verification-picture visibility keyholder → all_members | pillory, link, temporary-opening |
+| `6ae98ca…` | wearer | tasks visibility keyholder → all_members; verification-picture enabled off → on; verification-picture visibility unset → all_members | pillory, temporary-opening, link |
+
+**Open until the first live write:** whether Chaster accepts the body as read (it may validate config fields more strictly than it returns them; a 400
+changes nothing), and whether an edit by the WEARER of a lock with a keyholder is applied directly or handled differently by Chaster. Recommended
+order: the keyholder lock first, then check it on Chaster, then the wearer lock.

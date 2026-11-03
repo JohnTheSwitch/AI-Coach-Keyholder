@@ -8,7 +8,10 @@ or provider text, and never changes anything. Network calls happen only when the
 `extension-config` (Phase I1) is READ-ONLY as well: it discovers every lock of the connected account in both roles and prints the
 review settings (peer verification, visibility, punishments) of the `tasks` and `verification-picture` extensions.
 
-`freeze-lock` is the one guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
+`extension-review` (Phase I2) is a DRY RUN unless `--apply --plan <id> --yes` is given; the live write is guarded like `freeze-lock`
+(owner, runtime halt, audit) and sends exactly the plan the dry run printed.
+
+`freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
 from __future__ import annotations
@@ -22,8 +25,8 @@ from typing import Callable, TextIO
 from chaster.lock_directory import KEYHOLDER_SCOPE, LockDirectory, LockListing
 from chaster.managed_locks import ManagedLock
 
-__all__ = ["main", "render_listing", "render_configuration", "build_directory", "build_configuration_reader", "build_freeze_service",
-           "describe", "discovery_user_ids"]
+__all__ = ["main", "render_listing", "render_configuration", "render_review", "build_directory", "build_configuration_reader",
+           "build_extension_review_service", "build_freeze_service", "describe", "discovery_user_ids"]
 
 _HEADERS = ("LOCK ID", "TITLE", "WEARER", "WEARER ID", "STATUS", "isFrozen", "TEST")
 
@@ -187,6 +190,91 @@ def build_freeze_service():
         directory=LockDirectory(token_manager=tokens, lock_client=ChasterLockClient(), connections=connections),
         transport=ChasterHttpTransport(token_manager=tokens, keyholder_user_id=config.chaster_execution_keyholder_user_id, clock=clock),
         owner_user_id=config.owner_user_id, keyholder_user_id=config.chaster_execution_keyholder_user_id, clock=clock)
+
+
+def build_extension_review_service():
+    """The real wiring of the guarded extension-review update (tests inject their own service instead)."""
+    from chaster.extension_config import LockConfigurationReader
+    from chaster.lock_client import ChasterLockClient
+    from chaster_execution.control import ExecutionControl
+    from chaster_execution.extension_review import ExtensionReviewService
+    from chaster_execution.transport import ChasterHttpTransport
+    from infrastructure.clock import SystemClock
+    from infrastructure.database import Database as CoreDatabase
+
+    config, _connections, tokens = _chaster_wiring()
+    account = config.chaster_execution_keyholder_user_id
+    if not account:
+        raise SystemExit("CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set: no connected Chaster account.")
+    core = CoreDatabase(config.db_path)
+    clock = SystemClock()
+    return ExtensionReviewService(
+        config.db_path, core=core, control=ExecutionControl(config.db_path, core=core),
+        reader=LockConfigurationReader(token_manager=tokens, lock_client=ChasterLockClient()),
+        transport=ChasterHttpTransport(token_manager=tokens, keyholder_user_id=account, clock=clock),
+        owner_user_id=config.owner_user_id, account_user_id=account, clock=clock)
+
+
+_REVIEW_TEXT = {
+    "planned": "DRY RUN: nothing was sent.",
+    "already_on_target": "Nothing to do: the review settings already match (community review, no Chaster punishments).",
+    "applied": "Done: Chaster accepted the update and a fresh read shows community review with the same extensions.",
+    "applied_unverified": "CHECK THE LOCK ON CHASTER: the update was accepted, but a fresh read does not confirm it.",
+    "attempting": "UNKNOWN: the attempt was not completed.",
+    "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
+    "not_owner": "Refused: that identity is not the owner.",
+    "not_confirmed": "Refused: add --yes to confirm this live change.",
+    "invalid_input": "Refused: give a valid lock id and the 16-character plan id from the dry run (--plan).",
+    "halted": "Refused: the execution runtime is halted (python -m scripts.execution_control clear REASON).",
+    "account_not_configured": "Refused: CHASTER_EXECUTION_KEYHOLDER_USER_ID is not set.",
+    "read_failed": "Refused: the lock could not be read through the connected account.",
+    "not_locked": "Refused: the lock is not locked.",
+    "not_permitted": "Refused: the account's role on this lock does not hold lock.extensions.edit.",
+    "plan_refused": "Refused: the complete extension list could not be rebuilt faithfully.",
+    "plan_mismatch": "Refused: the lock changed since the dry run (or the plan id is wrong). Run the dry run again.",
+    "not_sent": "Failed: nothing was sent to Chaster.",
+    "unauthorized": "Failed: Chaster rejected the credentials (reconnect the account).",
+    "forbidden": "Failed: Chaster says the account may not edit this lock's extensions.",
+    "not_eligible": "Failed: Chaster rejected the update (HTTP 400); nothing changed.",
+    "not_found": "Failed: Chaster does not know that lock.",
+    "unknown": "UNKNOWN: the update may or may not have been applied. Check the lock on Chaster before trying again.",
+}
+
+
+def render_review(result, *, lock_id: str, owner_id: str) -> str:
+    """The dry-run / apply report: enum values and field names only (no task text, no codes, no tokens)."""
+    lines = [_REVIEW_TEXT.get(result.outcome.value, result.outcome.value) + f"  [outcome={result.outcome.value}"
+             + (f" audit={result.audit_id}" if result.audit_id else "") + (f" http={result.http_status}" if result.http_status else "") + "]"]
+    if result.detail:
+        lines.append(f"  detail: {result.detail}")
+    c, plan = result.config, result.plan
+    if c is not None:
+        lines.append(f"Lock {c.lock_id}: role {c.role.value if c.role else 'unknown'}, status {_cell(c.status)}, "
+                     f"may edit extensions: {'yes' if c.can_edit_extensions else 'NO'}")
+    if result.halted is not None:
+        lines.append(f"Runtime halt: {'HALTED' if result.halted else 'clear'}")
+    if plan is not None:
+        lines.append(f"Payload: POST /locks/{plan.lock_id}/extensions with ALL {len(plan.body['extensions'])} extensions "
+                     f"({', '.join(e['slug'] for e in plan.body['extensions'])}); none added, none removed.")
+        if plan.changes:
+            width = max(len(f"{ch.slug} {ch.field}") for ch in plan.changes)
+            lines.append("Changes:")
+            lines += [f"  {(ch.slug + ' ' + ch.field).ljust(width)}  {ch.before}  ->  {ch.after}" for ch in plan.changes]
+        else:
+            lines.append("Changes: none")
+        lines.append("Every extension in the payload:")
+        for e in plan.body["extensions"]:
+            keys = sorted(e["config"])
+            note = "sent back exactly as read" if e["slug"] in plan.unchanged else "only the changes above; everything else as read"
+            lines.append(f"  {e['slug']}: mode {e['mode']}, regularity {e['regularity']}, config keys {', '.join(keys) or 'none'} ({note})")
+        lines.append(f"Plan id: {plan.plan_id}")
+    if result.blockers:
+        lines += ["A real write would be refused right now because:"] + [f"  - {b}" for b in result.blockers]
+    if result.remaining_gaps:
+        lines += ["The re-read still shows:"] + [f"  - {g}" for g in result.remaining_gaps]
+    if result.outcome.value == "planned" and plan is not None and plan.refusal is None:
+        lines.append(f"To apply exactly this plan: python -m cli extension-review {lock_id} --owner-id {owner_id} --apply --plan {plan.plan_id} --yes")
+    return "\n".join(lines)
 
 
 _ADMIN_TEXT = {
@@ -484,7 +572,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
-         config_factory: Callable[[], tuple] | None = None) -> int:
+         config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -492,6 +580,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     ideas_factory = ideas_factory or build_idea_sources
     research_model_factory = research_model_factory or build_research_model
     config_factory = config_factory or build_configuration_reader
+    review_factory = review_factory or build_extension_review_service
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -502,6 +591,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
     freeze.add_argument("--state", type=_state, required=True, help="true = freeze, false = unfreeze")
     freeze.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     freeze.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
+    review = sub.add_parser("extension-review", help="Community review on a lock's tasks and verification pictures: DRY RUN by default; "
+                                                     "--apply writes (owner only, runtime halt, audited).")
+    review.add_argument("lock_id")
+    review.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    review.add_argument("--apply", action="store_true", help="LIVE: send the plan (needs --plan and --yes, and a cleared runtime halt)")
+    review.add_argument("--plan", default=None, help="the plan id printed by the dry run")
+    review.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -630,6 +726,16 @@ def main(argv: list[str], *, out: TextIO | None = None,
         suffix = f" tenant={result.tenant.id}" if result.tenant is not None else ""
         print(f"{_ADMIN_TEXT[result.outcome.value]} [outcome={result.outcome.value}{suffix}]", file=out)
         return 0 if result.done else 3
+    if args.command == "extension-review":
+        service = review_factory()
+        if args.apply:
+            result = service.apply(actor=args.owner_id, lock_id=args.lock_id, plan_id=args.plan, confirmed=args.yes)
+        else:
+            result = service.preview(actor=args.owner_id, lock_id=args.lock_id)
+        print(render_review(result, lock_id=args.lock_id, owner_id=args.owner_id), file=out)
+        if result.outcome.value in ("planned", "already_on_target", "applied"):
+            return 0
+        return 3 if result.refused else 4
     if args.command == "freeze-lock":
         service = freeze_factory()
         result = service.run(actor=args.owner_id, lock_id=args.lock_id, frozen=args.state, confirmed=args.yes)

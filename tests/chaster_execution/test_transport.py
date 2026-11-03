@@ -229,7 +229,7 @@ class TestFactoryAndInterface:
 
     def test_public_surface_is_only_time_and_barrier_methods(self, parts) -> None:
         public = {n for n in dir(ChasterHttpTransport) if not n.startswith("_")}
-        assert public == {"add_time", "remove_time", "set_frozen"}
+        assert public == {"add_time", "remove_time", "set_frozen", "set_extensions"}       # set_extensions: Phase I2, CLI only
 
     def test_module_never_disables_tls_verification(self) -> None:
         text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")
