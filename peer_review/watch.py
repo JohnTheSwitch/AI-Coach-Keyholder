@@ -86,6 +86,9 @@ class PendingNotice:
     review_id: str
     incident_id: str
     text: str
+    source: str = ""
+    verified_votes: int | None = None
+    rejected_votes: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,7 +234,8 @@ class PeerReviewWatch:
                                 "AND owner_decision IS NULL ORDER BY first_seen_at")
         return [PendingNotice(lock_id=r["lock_id"], review_id=r["review_id"], incident_id=r["incident_id"],
                               text=notice_text(lock_id=r["lock_id"], source=r["source"], incident_id=r["incident_id"],
-                                               verified=r["verified_votes"], rejected=r["rejected_votes"])) for r in rows]
+                                               verified=r["verified_votes"], rejected=r["rejected_votes"]),
+                              source=r["source"], verified_votes=r["verified_votes"], rejected_votes=r["rejected_votes"]) for r in rows]
 
     def mark_notified(self, incident_id: str, now: datetime) -> None:
         def write(tx: Transaction, _s: object) -> None:
@@ -273,6 +277,10 @@ class PollHealth:
             self._pending_is_alert = False
             logger.info("Community review watch recovered after %d failed polls.", self.failures)
         self.failures, self.alerted = 0, False
+
+    @property
+    def pending_is_alert(self) -> bool:
+        return self._pending_is_alert
 
     def delivered(self) -> None:
         self.pending, self._pending_is_alert = None, False

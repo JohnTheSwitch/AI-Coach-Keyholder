@@ -446,13 +446,20 @@ class TestIsolation:
             rel = path.relative_to(ROOT)
             if rel.parts[0] in {"cli", "tests"} or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:
                 continue
-            if rel.as_posix() == "chaster_execution/extension_review.py":
-                continue
+            if rel.as_posix() in ("chaster_execution/extension_review.py", "system/review_consent_dm.py"):
+                continue                       # the service itself, and the owner's DM consent facade (guarded below)
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
                     [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
                 offenders += [f"{rel}: {n}" for n in names if n.endswith(("extension_review", "extension_plan"))]
         assert offenders == []
+
+    def test_the_dm_consent_facade_can_never_reach_the_forward_write(self) -> None:
+        """Phase J1: the bot's only door to the service may show consent and record decisions (whose revocation reverts); it never
+        calls `apply` or `preview` itself."""
+        text = (ROOT / "system" / "review_consent_dm.py").read_text(encoding="utf-8")
+        calls = {n.func.attr for n in ast.walk(ast.parse(text)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        assert "decide_consent" in calls and not calls & {"apply", "preview", "set_extensions"}
 
     def test_the_composition_never_wires_extension_writes(self) -> None:
         for name in ("system/composition.py", "system/tenant_factory.py", "bot/discord_bot.py"):

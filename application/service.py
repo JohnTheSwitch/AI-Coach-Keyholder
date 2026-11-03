@@ -43,6 +43,7 @@ from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.progress import is_progress_query, read_progress, render_progress
+from application.review_consent_query import is_review_consent_query
 from application.user_service import UserService
 from chaster.models import ConnectionStatus
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
@@ -117,7 +118,7 @@ class ApplicationService:
         check_in_listener=None,
         channel_service=None,
         coaching_memory=None, conditioning=None, telemetry=None, research=None, iron_contract=None, vacation=None,
-        owner_user_id: str | None = None,
+        owner_user_id: str | None = None, review_consent_reply=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -140,6 +141,9 @@ class ApplicationService:
         self._pending_forget: dict[str, datetime] = {}       # user id -> until when `yes` confirms `forget all` (in memory)
         # Phase J1: the owner (the wearer of the connected account's locks) also sees community review and penalty-window progress.
         self._owner_user_id = owner_user_id.strip() if owner_user_id and owner_user_id.strip() else None
+        # Phase J1 slice 2: callable() -> OutgoingMessage with the community review consent overview and its buttons (owner only;
+        # system/review_consent_dm.py, injected by the bot). Decisions are button presses, never this text path.
+        self._review_consent_reply = review_consent_reply
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -257,6 +261,10 @@ class ApplicationService:
             # Phase J1: "show my progress" / "how am I doing?" -- answered from real records, never by the model, never with Trust.
             if is_progress_query(incoming.text):
                 return self._answer_progress(context)
+
+            # Phase J1 slice 2: "who can see my photos?" / "stop community review" -> the consent overview with buttons (owner only).
+            if self._review_consent_reply is not None and self._is_owner(context) and is_review_consent_query(incoming.text):
+                return self._answer_review_consent()
 
             self._notify_check_in(user.id, incoming.text, incoming.received_at)
 
@@ -385,13 +393,24 @@ class ApplicationService:
         self.router.register("channel chaster", "Send the bot's messages to your Chaster chat instead (opt-in)", self._handle_channel_chaster)
         self.router.register_family("channel", invalid_handler=self._handle_channel_invalid)
 
+    def _is_owner(self, ctx: RequestContext) -> bool:
+        return self._owner_user_id is not None and ctx.user.id == self._owner_user_id
+
+    def _answer_review_consent(self) -> OutgoingMessage:
+        try:
+            return self._review_consent_reply()
+        except Exception:
+            logger.exception("Building the community review consent overview failed.")
+            return OutgoingMessage(text="I could not read your locks on Chaster right now, so I cannot show your community review "
+                                        "settings. Please try again in a few minutes.")
+
     def _answer_progress(self, ctx: RequestContext) -> OutgoingMessage:
         assignment = self.task_runtime.get_active_assignment(ctx.user.id)
         title = None
         if assignment is not None:
             template = self.task_catalog.get_template(assignment.template_id, assignment.template_version)
             title = self._present_title(template.title if template is not None else None)
-        is_owner = self._owner_user_id is not None and ctx.user.id == self._owner_user_id
+        is_owner = self._is_owner(ctx)
         snapshot = read_progress(self._core, user_id=ctx.user.id, now=ctx.now, active_task_title=title, include_reviews=is_owner,
                                  vacation=self._vacation)
         if is_owner:

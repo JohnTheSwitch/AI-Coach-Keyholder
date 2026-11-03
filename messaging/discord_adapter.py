@@ -5,8 +5,9 @@ DiscordMessagingAdapter (Phase B): the Discord side of the messaging layer. It w
 `user.send(...)` and the normalisation of an incoming direct message, behind the channel-neutral interface.
 
 - `send_message(target_id, content, view=None)`: target_id is a Discord user id as text; long text is split into Discord-sized
-  chunks; an optional discord.ui.View (buttons) is attached to the LAST chunk; returns False (never raises) when the client is
-  missing/not ready, the id is malformed, DMs are closed or Discord fails.
+  chunks; an optional discord.ui.View (buttons) is attached to the LAST chunk; with an optional discord.Embed the embed is sent
+  INSTEAD of the text (one message, with the view); returns False (never raises) when the client is missing/not ready, the id is
+  malformed, DMs are closed or Discord fails.
 - `unify(message, user_id)`: builds a `UnifiedMessage` from a discord.Message (ids only in `raw_payload`).
 - `handle_incoming_message(unified)`: hands the message to the injected handler (the application pipeline) and sends the text
   it returns back through `unified.reply()`. A failing handler is logged and answered with a fixed neutral text.
@@ -57,7 +58,7 @@ class DiscordMessagingAdapter(BaseMessagingAdapter):
     def client(self):
         return self._client
 
-    async def send_message(self, target_id: str, content: str, *, view=None) -> bool:
+    async def send_message(self, target_id: str, content: str, *, view=None, embed=None) -> bool:
         client = self._client
         if client is None or not client.is_ready() or not isinstance(content, str) or not content.strip():
             return False
@@ -67,6 +68,9 @@ class DiscordMessagingAdapter(BaseMessagingAdapter):
             return False
         try:
             user = await client.fetch_user(discord_id)
+            if embed is not None:                  # Phase J1: the embed carries the whole message; `content` is the fallback text
+                await user.send(embed=embed, **({"view": view} if view is not None else {}))
+                return True
             chunks = split_message(content)
             for i, chunk in enumerate(chunks):
                 if view is not None and i == len(chunks) - 1:

@@ -295,9 +295,13 @@ class TestCli:
 
 
 class TestIsolation:
-    def test_the_bot_never_records_review_consent(self) -> None:
+    def test_the_bot_reaches_consent_only_through_the_owner_dm_facade(self) -> None:
+        """Phase J1: the bot may build `system.review_consent_dm` (owner's Discord account, buttons); nothing else in the bot or the
+        tenant runtime records consent."""
         from pathlib import Path
         root = Path(__file__).parent.parent.parent
-        for name in ("system/composition.py", "system/tenant_factory.py", "system/tenant_gateway.py", "bot/discord_bot.py"):
+        for name in ("system/composition.py", "system/tenant_factory.py", "system/tenant_gateway.py"):
             text = (root / name).read_text(encoding="utf-8")
             assert "review_consent" not in text and "decide_consent" not in text
+        bot = (root / "bot" / "discord_bot.py").read_text(encoding="utf-8")
+        assert "decide_consent" not in bot and "ReviewConsentLedger" not in bot and "build_review_consent_dm(" in bot

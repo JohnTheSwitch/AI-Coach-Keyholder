@@ -73,6 +73,7 @@ from system.tenant_gateway import InvitationNotifier, TenantGateway
 from system.lock_pairing import LockPairingService, wearer_account_lookup
 from tenancy.admin import TenantAdmin
 from tenancy.archive import TenantArchiver
+from bot.action_buttons import actions_view
 from messaging.channel_service import ChannelPreferenceService
 from messaging.chaster_adapter import ChasterMessagingAdapter
 from messaging.chaster_loop import run_chaster_chat_loop
@@ -128,6 +129,7 @@ class CoachKeyholderBot(discord.Client):
         self._research_task: asyncio.Task | None = None
         self.peer_reviews = None                 # Phase I4: the peer_review.wiring.peer_review_loop coroutine when the watch is active
         self.peer_review_buttons = None          # Phase I4: peer_review.discord_buttons.PeerReviewButtonHandler (owner's one-click decisions)
+        self.review_consent_dm = None            # Phase J1: system.review_consent_dm.ReviewConsentDm (owner's consent buttons)
         self._peer_review_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
@@ -158,6 +160,9 @@ class CoachKeyholderBot(discord.Client):
         if self.peer_review_buttons is not None:
             from peer_review.discord_buttons import PeerReviewDecisionButton
             self.add_dynamic_items(PeerReviewDecisionButton)    # persistent: buttons on older notices keep working after a restart
+        if self.review_consent_dm is not None:
+            from bot.action_buttons import ReviewConsentButton
+            self.add_dynamic_items(ReviewConsentButton)
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -269,10 +274,11 @@ class CoachKeyholderBot(discord.Client):
             outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
             reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
+            reply_view = actions_view(outgoing.actions) if outgoing.actions else None      # Phase J1: buttons, if any
         except Exception:
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
             reply_text = "Something went wrong handling that. It's been logged."
-            reply_embed = None
+            reply_embed = reply_view = None
 
         # Whatever state this reply reflects (including any onboarding
         # step transition) was already written by handle_message()
@@ -291,10 +297,11 @@ class CoachKeyholderBot(discord.Client):
             # its own docstring) but is not sent as separate plain
             # content alongside the embed, to avoid a duplicated
             # message body.
+            extra = {"view": reply_view} if reply_view is not None else {}
             if reply_embed is not None:
-                sent = await message.channel.send(embed=reply_embed)
+                sent = await message.channel.send(embed=reply_embed, **extra)
             else:
-                sent = await message.channel.send(reply_text)
+                sent = await message.channel.send(reply_text, **extra)
         except Exception:
             logger.exception("Failed to send a reply to user_id=%s -- persisted state is unaffected.", message.author.id)
             return
@@ -525,6 +532,12 @@ def main() -> None:
         routes=message_routes, connections=chaster_connections, token_manager=chat_tokens, client=chat_client,
         bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready)
 
+    # Phase J1 slice 2: the owner's community review consent overview + buttons (the only bot-side door to the extension service).
+    from system.review_consent_dm import build_review_consent_dm, render_overview
+    from peer_review.wiring import owner_discord_id
+    review_consent_dm = build_review_consent_dm(config, core, token_manager=chaster_token_manager, lock_client=chaster_lock_client,
+                                                connections=chaster_connections,
+                                                owner_discord_id=owner_discord_id(core, config.owner_user_id), clock=clock)
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
@@ -534,8 +547,10 @@ def main() -> None:
         channel_service=channel_service, coaching_memory=coaching, conditioning=conditioning,
         telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
         owner_user_id=config.owner_user_id,
+        review_consent_reply=(lambda: render_overview(review_consent_dm.overview())) if review_consent_dm is not None else None,
     )
     bot = build_bot(config, db, clock, application_service)
+    bot.review_consent_dm = review_consent_dm
     check_in_sender.attach(bot)
     if platform is not None:
         # Phase E2: every ACTIVE wearer runs as an isolated tenant (own database, own staggered loop); tenant zero keeps the loop above.
@@ -609,7 +624,7 @@ def main() -> None:
         bot.peer_review_buttons = PeerReviewButtonHandler(build_peer_review_decisions(config, core), owner_user_id=config.owner_user_id,
                                                           owner_discord_id=peer.owner_target, now=clock.now)
         bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds, send=discord_adapter.send_message,
-                                            owner_target=peer.owner_target, view_for=decision_view)
+                                            owner_target=peer.owner_target, view_for=decision_view, embed_for=_build_discord_embed)
     if bot.research_export is not None:
         logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
     if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):

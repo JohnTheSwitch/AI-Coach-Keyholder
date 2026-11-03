@@ -47,7 +47,7 @@ from chaster.extension_config import LockConfiguration, LockConfigurationReader,
 from chaster.extension_plan import ReviewPlan, plan_review_revert, plan_review_update
 from chaster_execution.control import ExecutionControl
 from chaster_execution.models import TransportOutcome
-from chaster_execution.review_consent import ConsentDecision, ReviewConsent, ReviewConsentLedger
+from chaster_execution.review_consent import OWNER_ATTESTATION, ConsentDecision, ReviewConsent, ReviewConsentLedger
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
@@ -274,7 +274,7 @@ class ExtensionReviewService:
         if not worn_by_owner and attest_own_account is not True:
             return ConsentResult(outcome=ConsentOutcome.WEARER_IS_ANOTHER_ACCOUNT, consent=self._consents.state(lock_id), config=config,
                                  exposed=exposed)
-        comment = f"owner cli: {decision.value}" + ("" if worn_by_owner else "; the owner attests the wearer account is the owner's own")
+        comment = f"owner cli: {decision.value}" + ("" if worn_by_owner else f"; {OWNER_ATTESTATION}")
         self._consents.record(lock_id=lock_id, decision=decision, comment=comment, now=self._clock.now())
         logger.info("Community review consent for lock %s recorded: %s.", lock_id, decision.value)
         reverted = None

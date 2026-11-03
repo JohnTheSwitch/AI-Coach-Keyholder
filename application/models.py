@@ -50,6 +50,16 @@ class EmbedField:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ActionSpec:
+    """A channel-agnostic button (Phase J1). `action_id` is the stable identifier the channel hands back when it is pressed (on Discord
+    the persistent button's custom id, matched by a registered handler); `style` is one of "primary", "secondary", "success", "danger".
+    A channel without buttons simply ignores actions and shows `OutgoingMessage.text`, which always describes the choice."""
+    action_id: str
+    label: str
+    style: str = "secondary"
+
+
+@dataclass(frozen=True, kw_only=True)
 class EmbedSpec:
     """A plain, channel-agnostic description of a rich/structured
     reply -- NOT a `discord.Embed` (this module imports no channel
@@ -76,6 +86,7 @@ class OutgoingMessage:
     with no embed support can always fall back to it safely."""
     text: str
     embed: EmbedSpec | None = None
+    actions: tuple[ActionSpec, ...] = ()            # Phase J1: buttons (channel-agnostic), only for flows that register a handler
 
 
 @dataclass(kw_only=True)

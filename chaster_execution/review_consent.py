@@ -28,8 +28,8 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 
-__all__ = ["NOTICE_TEXT", "NOTICE_VERSION", "CONSENT_TARGET_PREFIX", "ConsentDecision", "ConsentState", "ReviewConsent",
-           "ReviewConsentLedger", "consent_target"]
+__all__ = ["NOTICE_TEXT", "NOTICE_VERSION", "CONSENT_TARGET_PREFIX", "OWNER_ATTESTATION", "ConsentDecision", "ConsentState",
+           "ReviewConsent", "ReviewConsentLedger", "consent_target"]
 
 NOTICE_TEXT = (
     "Community photo review on your lock\n"
@@ -48,6 +48,7 @@ NOTICE_TEXT = (
 )
 NOTICE_VERSION = hashlib.sha256(NOTICE_TEXT.encode("utf-8")).hexdigest()[:12]
 CONSENT_TARGET_PREFIX = "community_photo_review:"
+OWNER_ATTESTATION = "the owner attests the wearer account is the owner's own"     # written into a record's comment (CLI attestation)
 _TARGET_TYPE = "integration"
 
 
@@ -100,6 +101,12 @@ class ReviewConsentLedger:
         else:
             state = _STATES.get(row["action"], ConsentState.NONE)
         return ReviewConsent(lock_id=lock_id, state=state, notice_version=row["target_version"], decided_at=row["created_at"])
+
+    def owner_attested(self, lock_id: str) -> bool:
+        """True once any record for this lock carries the owner's attestation that the lock's wearer account is the owner's own."""
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM consent_log WHERE target_type = ? AND target_id = ? AND user_comment LIKE ?",
+                                (_TARGET_TYPE, consent_target(lock_id), f"%{OWNER_ATTESTATION}%")) is not None
 
     def record(self, *, lock_id: str, decision: ConsentDecision, comment: str, now: datetime) -> str:
         record_id = str(uuid.uuid4())

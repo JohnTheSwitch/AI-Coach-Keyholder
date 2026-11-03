@@ -1,6 +1,6 @@
 # Phase J: Zero-Command Conversational UX, Live Consequences, Local Coach
 
-Status: PROPOSAL (2026-11-03). J1 slice 1 BUILT (section 3.1); everything else awaits the owner's decisions in section 6.
+Status: PROPOSAL (2026-11-03). J1 slices 1 and 2 BUILT (sections 3.1, 3.2); the rest awaits the owner's decisions in section 6.
 
 ## 1. Design principles (owner, 2026-11-03)
 
@@ -51,15 +51,31 @@ Status: PROPOSAL (2026-11-03). J1 slice 1 BUILT (section 3.1); everything else a
 - **Guard.** Tests assert the progress answer and the status answer contain no Trust value, and that `application/progress.py` reads no
   Trust Manager state.
 
-### 3.2 Next J1 slices (need decisions, section 6)
+### 3.2 Slice 2 (BUILT 2026-11-03): DM-native consent and formatted notices
+
+- **Buttons on any reply.** `OutgoingMessage.actions` (channel-agnostic `ActionSpec`: id, label, style); the Discord layer turns them into
+  persistent buttons (`bot/action_buttons.py`, built as the registered `DynamicItem`, so clicks still work after a restart; an action
+  without a registered handler is dropped, never shown dead). Other channels ignore them and show the text, which always describes the
+  choice.
+- **Consent by conversation.** `application/review_consent_query.py` recognises "who can see my photos?", "stop community review",
+  "I don't want strangers to see my pictures", "kdo vidí moje fotky?", "komunitní hodnocení". For the OWNER the reply is the I3 notice with
+  each locked lock's consent state and exposure and the buttons that fit (Accept + Decline when undecided, Accept when declined or
+  revoked, Revoke when approved). The text never decides anything; only a button press does. Other users' messages are not intercepted.
+- **The decision path.** `system/review_consent_dm.py` (`ReviewConsentDm`) is the bot's ONLY door to the extension-review service and
+  exposes nothing but the overview and `decide_consent()` (a test asserts it never calls `apply`, `preview` or `set_extensions`). Only the
+  owner's verified Discord account can decide; the record is written exactly like the CLI's. A lock held as keyholder can be decided in
+  Discord only after the owner attested once on the CLI (`--wearer-is-my-account`); the attestation is carried into each new record.
+  Decline / Revoke of an exposed lock runs the I3 automatic revert (keyholder-only review), which the owner approved in I3 (revocation
+  reverts automatically, also while halted); this answers decision 2 for the revert direction only. The forward write stays CLI-only.
+- **Formatted proactive notices.** `peer_review/notices.py`: the rejection notice is an embed ("Photo review rejected", red: lock, votes,
+  incident id, how to decide) with the Confirm / Dismiss buttons; the watch alert (red) and recovery note (green) are embeds too. The
+  plain text stays the fallback. `DiscordMessagingAdapter.send_message(..., embed=)` sends the embed and the buttons as one message.
+
+### 3.3 Next J1 slices (need decisions, section 6)
 
 - **Zero-command migration.** Replace `help`'s command list with a short natural description of what the bot can do; accept natural
   phrasings for the read-only commands ("what's my task?", "am I on vacation?"); keep exact, deterministic phrases (or buttons) for every
   consent/safety action, because those must never be guessed.
-- **Consent by conversation or buttons.** When the wearer asks about community review ("who can see my photos?", "stop community
-  review"), the bot shows the I3 notice with **Accept / Decline / Revoke** buttons, recorded exactly like `review-consent`. A decline or
-  revocation of an exposed lock must switch the lock back to keyholder-only review: that is a live Chaster write from a Discord path,
-  which the I2 isolation currently forbids (decision 2).
 - **Notification engine.** Generalise the I4 notice delivery (DM, retry, buttons, owner-only) into one outbound queue for every proactive
   message (incidents, poll alerts, consent prompts, J2 consequences), so all of them share retry, quiet hours and the Chaster-chat channel
   preference.
@@ -85,9 +101,10 @@ Status: PROPOSAL (2026-11-03). J1 slice 1 BUILT (section 3.1); everything else a
    `conditioning ...`, `vacation ...`, `halt`, `resume`, `leave confirm`, `accept`, `decline`, `chaster connect/disconnect`) but stop
    advertising them as "commands" (no command list); retire the read-only commands in favour of natural questions only after the natural
    paths cover them.
-2. **Revert from Discord.** May a wearer's "stop community review" (button or phrase) trigger the switch back to keyholder-only review
-   directly from the bot (still owner-only, audited, it only reduces exposure)? This lifts the I2 rule that only the CLI can write
-   extensions, for the revert direction only.
+2. **Revert from Discord** (built in slice 2 on the strength of the I3 approval that a revocation reverts automatically): confirm that a
+   Decline / Revoke button may switch the lock back to keyholder-only review from the bot. It is owner-only, audited, passes the halt and
+   can only reduce exposure; the forward write stays CLI-only. If not wanted, the facade can record the decision and leave the revert to
+   the CLI.
 3. **J2 consequences.** Which Penalty Engine outcomes become which Chaster actions (freeze? add time? how much?), under which limits?
 4. **Button label.** Rename "Confirm Penalty" to "Confirm Incident" until J2 exists?
 5. **J3 model.** Which local model for coaching (the current conversation model, or a separate one), and is check-in data allowed into

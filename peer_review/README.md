@@ -35,6 +35,11 @@ expired or missing connection). After 3 in a row the keyholder gets ONE Discord 
 `chaster connect` for `reauthorization_required` / `not_connected`); the first clean poll afterwards sends one recovery note. An
 undelivered message is retried with the next poll; if the watch recovers before the alert went out, neither is sent.
 
+## Formatted notices (Phase J1)
+
+`notices.py` turns the rejection notice into an embed ("Photo review rejected": lock, votes, incident id, how to decide) carrying the
+Confirm / Dismiss buttons, and the watch alert / recovery note into red / green embeds. The plain text remains the fallback.
+
 ## The keyholder's decision: Discord buttons
 
 The owner's DM about a rejection carries two buttons, **Confirm Penalty** and **Dismiss Incident** (`discord_buttons.py`). They call the
