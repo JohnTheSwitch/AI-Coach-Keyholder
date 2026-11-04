@@ -69,7 +69,7 @@ from notifications.delivery import NotificationDelivery
 from notifications.dispatcher import NotificationDispatcher, notification_loop
 from notifications.queue import NotificationQueue
 from schedule_windows.windows import WindowKind, classify
-from system.composition import build_rules_and_execution, research_export_loop_for
+from system.composition import build_extension_guard, build_rules_and_execution, extension_guard_loop, research_export_loop_for
 from system.composition import window_config_from as quiet_config_from
 from system.dm_actions import ExemptionDm, HygieneDm, InfractionDm, discord_user_resolver
 from system.penalty_notices import penalty_notice_handlers
@@ -147,6 +147,8 @@ class CoachKeyholderBot(discord.Client):
         self._notification_task: asyncio.Task | None = None
         self.detectors = None                    # infractions.wiring.detector_loop coroutine when a watch is active
         self._detector_task: asyncio.Task | None = None
+        self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
+        self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
         self.penalty_notices = None              # system.penalty_notices handlers, registered as outbox consumers
@@ -181,6 +183,8 @@ class CoachKeyholderBot(discord.Client):
             self._notification_task = asyncio.create_task(self.notifications, name="notifications")
         if self.detectors is not None:
             self._detector_task = asyncio.create_task(self.detectors, name="detectors")
+        if self.extension_guard is not None:
+            self._extension_guard_task = asyncio.create_task(self.extension_guard, name="extension-guard")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -699,6 +703,12 @@ def main() -> None:
         bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
     if detectors.active:
         bot.detectors = detector_loop(detectors, clock)
+    # The bot keeps the owner's required lock settings true on Chaster by itself, never past a halt.
+    extension_guard = build_extension_guard(config, core, notifications=notification_queue, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
+                                            connections=chaster_connections, halt_source=platform.halt if platform is not None else None, clock=clock)
+    if extension_guard is not None:
+        bot.extension_guard = extension_guard_loop(extension_guard, clock, interval_seconds=config.extension_guard_poll_seconds)
+        logger.info("Extension guard enabled: every %d s, subject to the runtime halt.", config.extension_guard_poll_seconds)
     # One outbound queue for every proactive notice: retries, quiet hours and the channel preference live here.
     notice_user = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
     bot.penalty_notices = penalty_notice_handlers(notice_user) if notice_user else None

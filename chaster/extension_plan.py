@@ -153,6 +153,25 @@ def plan_review_revert(config: LockConfiguration) -> ReviewPlan:
     return _plan(config, revert, remove=(PICTURE_EXTENSION,), require_review_extensions=False)
 
 
+# What must hold on Chaster, by the owner's decision (docs/architecture/chaster_capability_map.md 6). chaster_execution/extension_guard.py keeps it true.
+# Chaster's late-relock penalty stays 0: a relock that is late for a health reason must never cost time, and the bot judges overruns itself.
+REQUIRED_SETTINGS = {"temporary-opening": {"penaltyTime": 0}}
+
+
+def plan_extension_policy(config: LockConfiguration) -> ReviewPlan:
+    """Moves each setting in REQUIRED_SETTINGS to its required value and sends every other extension back exactly as read."""
+
+    def enforce(ext, cfg: dict) -> list[FieldChange]:
+        changes = []
+        for name, required in REQUIRED_SETTINGS.get(ext.slug, {}).items():
+            if cfg.get(name) != required:
+                changes.append(FieldChange(slug=ext.slug, field=name, before=str(cfg.get(name)), after=str(required)))
+                cfg[name] = required
+        return changes
+
+    return _plan(config, enforce, require_review_extensions=False)
+
+
 def _plan(config: LockConfiguration, transform, *, remove: tuple[str, ...] = (), require_review_extensions: bool = True) -> ReviewPlan:
     """The complete body: every extension in its read order, each config deep-copied and changed only by `transform(ext, cfg)`, which
     mutates `cfg` and returns the FieldChanges it made. An extension whose config ends up equal to what was read is `unchanged`; a slug in

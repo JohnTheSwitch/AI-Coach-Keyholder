@@ -148,3 +148,7 @@ intents of a Penalty Window on the one configured lock, only if a fresh read sho
 separate from `lock_decisions`, so an intent survives a halt of any length (logged once, nothing read or sent) while the 15-minute decision expiry
 stays as it is. At most once: the claim is committed before the call and an ambiguous outcome is `needs_review`. It acts on window events only, so
 it never re-freezes a lock the 72-hour backstop released. Off by default (`ENABLE_PENALTY_BARRIER`, `PENALTY_FREEZE_LOCK_ID`).
+
+## Extension guard
+
+`extension_guard.py` keeps the settings in `chaster/extension_plan.py::REQUIRED_SETTINGS` true on Chaster by itself: it reads, corrects one field, and only a fresh read counts as done. It never acts past the runtime halt. See `docs/architecture/chaster_capability_map.md`, section 6.

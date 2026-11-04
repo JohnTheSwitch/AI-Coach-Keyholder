@@ -21,8 +21,7 @@ What this system can do on Chaster, from three sources, on 2026-11-04: the offic
 
 **Rule:** to change an extension, resend the full list with that one change. Never remove `tasks` or `verification-picture` to "reset" them.
 
-A partner extension's `partnerConfigurationToken` is not readable, so `chaster/extension_plan.py` refuses to rebuild a list containing one. Adding a partner extension therefore ends our ability
-to edit that lock's list faithfully, until that is solved.
+`chaster/extension_plan.py` still refuses to rebuild a list containing a partner extension. That is the safe default, not a hard limit: see the partner section below for what actually happens.
 
 ### First-party
 
@@ -39,14 +38,26 @@ to edit that lock's list faithfully, until that is solved.
 | `guess-timer` | Guess the Timer | unlimited | `minRandomTime`, `maxRandomTime` | **Yes** | Not with Zero-Time |
 | `random-events` | Random Events | unlimited | `difficulty` | **Yes** | Not with Zero-Time |
 
-### Partner (23, not tried)
+### Partner (23)
 
-This grouping is a first reading from names and default configs, not from testing or their documentation. Check an extension properly before using it.
+Tried live on 2026-11-04: each added with its default config on the keyholder test lock, read back, removed at once. **21 of 23 were accepted** with a plain `slug`, `config`, `mode` and `regularity`; no
+`partnerConfigurationToken` is needed to add one. Nothing was used or played, so this shows that they install, not how they behave over time. Installing one also tells that partner's own server about the
+lock (Chaster's `extension_session.created` event). Which group each belongs to is a reading of its description and default config.
 
-- **Can end or weaken a lock on their own, keep away:** `unlock-condition` (Unlock Gamble), `programmable-lock` (runs code against the lock), `keyshare`, `reach-lock`, `research-and-desire-extension`.
-- **Change time or freeze as game rewards:** `find-the-key-1`, `gambling`, `scratchcards`, `simon-memory-game`, `jigsaw-puzzle`, `wordle`, `random-actions`, `weatherlock`, `pay-attention`, `behave`, `typing-lines`, `rewards-shop`, `quest`.
-- **Worth a look:** `hygiene-recorder` (recorded hygiene evidence), `taskverification`, `pay-attention` (attention checks that can freeze rather than add time, with `wrongGuessFreezeLock`), `obedience-1`.
-- `footwear-control`, `sync-with-exposedrush`: not relevant.
+| Group | Extensions |
+|---|---|
+| **Skipped, on purpose** (`isLockingProvider`: they could take over how the lock opens) | `research-and-desire-extension`, `reach-lock` |
+| **Can lead to an unlock** (never on a lock we care about) | `unlock-condition`, `keyshare` |
+| **Run on their own** | `programmable-lock` (runs code: its default freezes on start and adds time every 10 hours), `random-actions`, `weatherlock`, `pay-attention`, `quest` |
+| **Games and rewards that change time or freeze** | `find-the-key-1`, `gambling`, `scratchcards`, `simon-memory-game`, `jigsaw-puzzle`, `wordle`, `behave`, `typing-lines`, `rewards-shop` |
+| **Worth a look** | `hygiene-recorder` (video proof and keyholder review), `taskverification`, `pay-attention` (can freeze instead of adding time), `obedience-1` |
+| Not relevant | `footwear-control`, `sync-with-exposedrush` |
+
+Adding `guess-timer`, `pay-attention`, `jigsaw-puzzle` or `wordle` turned the lock's `extensionsAllowUnlocking` to false while installed; it went back on removal. The other 22 did not change it, and none
+changed `status`, `isFrozen` or `endDate`.
+
+**A partner's config cannot be edited through `POST /locks/{id}/extensions`.** Resending the list with a partner in it, with no token, keeps it (same `_id`), but a changed config is silently dropped: HTTP 201 and
+the old value stays (verified on `simon-memory-game`). Its config lives behind its own configuration page and token. So an HTTP success proves nothing here: re-read after every write.
 
 ### Chaster's own Penalties engine
 
@@ -63,9 +74,10 @@ This grouping is a first reading from names and default configs, not from testin
 | `PUT/GET/DELETE /keyholder/notes/lock/{id}` | A private note on a lock; **verified** | Available: a place for keyholder context |
 | `POST /locks/{id}/history` | Lock log. A read, despite the POST; **verified** | Available: `extension_enabled`, `extension_updated`, `lock_frozen`, `lock_unfrozen`, `time_changed`, `tasks_task_assigned`, `tasks_task_completed`, ... |
 | `GET /extensions/temporary-opening/{id}` | Is it open now; **verified** with the production parser. An unlocked lock can keep reporting a stale `openedAt` (seen on `6aba61d...`, from October), so read it only on a locked lock, as the watch does | In use by the hygiene watch |
-| `POST /extensions/tasks/{id}/complete-task`, `/unassign-task`, `/start-task-timer` | Task control | Spec. Assignment itself goes through the generic action below |
+| `POST /extensions/tasks/{id}/unassign-task` | Take a task back; **verified**, 201 | Available |
+| `POST /extensions/tasks/{id}/complete-task`, `/start-task-timer` | Task control | Spec |
 | `POST /extensions/verification-picture/{id}/request` | Ask for a picture | Spec. A natural keyholder tool |
-| `POST /locks/{id}/extensions/{extId}/action` | Generic extension action; names are per extension and undocumented | Spec |
+| `POST /locks/{id}/extensions/{extId}/action` | Generic extension action; names are per extension and undocumented. **Verified** for `tasks`: `{"action": "assignTask", "payload": {"task": {"task": "...", "points": 0}}}` as keyholder, 201 | **New capability, not used yet:** the bot could assign real Chaster tasks |
 | `GET/PATCH /locks/{id}/extensions/{partyId}/schedule` | Extension schedules | Spec. Needs `lock.extensions.schedules` |
 | `POST /locks/{id}/permissions/proposal` (+ accept, reject, withdraw) | Change the permission contract. Parts that only widen the other party apply at once | Spec. A `critical_change` in spirit |
 | `POST /conversations/{id}` | Chat | In use (Chaster channel) |
@@ -105,14 +117,11 @@ larger decision, not needed today.
 
 ## 6. Open points from this map
 
-1. **Chaster already polices hygiene openings, and differently from our limits.** Our locks: 15 minutes (`openingTime` 900), every 2 days (`regularity` 172800), and by its name **`penaltyTime` adds 12 hours on a late relock**
-   (43200 s; read from the config, not seen happening). The hygiene watch uses the design doc's 20 to 30 minutes and 3 to 7 a week. So:
-   - If so, a late relock could be punished twice, by Chaster's 12 hours and by an Incident. Philosophy 3.8 ("a single event does not create a repeated, endless consequence") argues against that.
-   - That 12 hours is also a time change from a health-related overrun. It happens on Chaster's side, and it is not bound by Mandatory Access.
-   - Chaster's 2-day regularity allows about 3.5 openings a week, so the frequency limit can only ever trigger at the lowest level.
-   - Owner to decide: set `penaltyTime` to 0 and let the bot judge, or keep Chaster's and drop the bot's duration check, and align the numbers either way.
-2. **`pillory`, `link` and the late-relock penalty still change time** on our locks, by themselves. Zero-Time-Modification binds the bot, not Chaster. If the goal is that time never moves at all, removing
-   `pillory` and `link` (no stored state, verified) and zeroing `penaltyTime` achieves it.
+1. **Hygiene late-relock penalty: resolved by the owner, 2026-11-04.** `penaltyTime` is now 0 on both locks, and the bot keeps it there itself (`chaster_execution/extension_guard.py`, every 15 minutes, driven by
+   `REQUIRED_SETTINGS` in `chaster/extension_plan.py`). A relock that is late for a health reason no longer costs time, and the bot alone judges overruns. Still open: Chaster's own limits (15 minutes,
+   every 2 days) are tighter than the design doc's 20 to 30 minutes and 3 to 7 a week, so the frequency limit can only ever trigger at the lowest level.
+2. **`pillory` and `link` still change time** on our locks, by themselves. Zero-Time-Modification binds the bot, not Chaster. If the goal is that time never moves at all, removing
+   `pillory` and `link` (no stored state, verified) achieves it.
 3. **A stricter barrier option:** `temporary-opening.freezeLockWhileOpen`, and `allowOnlyKeyholderToOpen` could make every opening a keyholder decision. The second would conflict with Mandatory Access, so it stays off.
 4. **`requireVerificationPictureBefore/After`** on hygiene openings is off since the consent revert (I3); turning it on is a consent question.
 
@@ -137,3 +146,18 @@ connected account. They did not go through `ExtensionReviewService`, so they hav
 
 **End state, verified by a fresh read:** all five extensions have their original `config`, `mode` and `regularity`, `userData` of every extension unchanged, status `locked`, still frozen, same `endDate`, same settings. Only `pillory`'s `_id` and the
 `updatedAt` of `temporary-opening` differ. Nothing stores that id.
+
+### Second round (2026-11-04), after the owner: "both test locks and nobody's really locked. You can play with it more and try out the other 23 extensions"
+
+| Test | Result |
+|---|---|
+| `penaltyTime` 43200 to 0 on both locks | 201 and verified. This one stays. |
+| Each of the 28 extensions not on the lock: add, read, remove | 26 added and removed, 2 locking providers skipped. Lock status, frozen state and end date unchanged throughout. |
+| Partner resend without a token | 201, same `_id` |
+| Partner config edit without a token | 201 but **ignored**: the value did not change |
+| `assignTask` as keyholder, then `unassign-task` | Both 201. The task appeared and was gone again; `userData` back to the original |
+| The bot's real `ExtensionGuard` on a deliberately drifted lock | Halted: reported, sent nothing. Halt clear: corrected, verified by a fresh read. Next pass: nothing to do. Audit in a throwaway database; the stored halt was not touched. |
+
+**End state, verified:** both locks have `penaltyTime` 0. `6aca95c...` has its five extensions, status `locked`, still frozen, same `endDate`, `tasks` data unchanged. `6ae98ca...` had only the `penaltyTime` edit.
+
+Not tried: playing or using any extension, a real hygiene opening, a verification-picture request (it would leave a pending request with no way to cancel it), and anything on the never list above.

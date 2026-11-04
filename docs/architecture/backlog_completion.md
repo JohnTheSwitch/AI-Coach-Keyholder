@@ -59,6 +59,8 @@ Limits are `hygiene_privilege_technical_design.md` 2.2, by the `hygiene` Trust d
 A first overrun confirmed by the keyholder is a Warning (minor evidence), not a window (3.8: proportionate). A break the bot did not follow has an unknown close and is
 never judged on length.
 
+Chaster's own late-relock penalty is held at 0 by `chaster_execution/extension_guard.py` (owner, 2026-11-04), so an overrun has one judge: this watch, and a health answer really does protect the wearer.
+
 **Limit, by design.** A wearer who calls a planned break a health need is not caught. That is the philosophy's trade-off: a false accusation over a health need is the worse failure.
 
 **Not built.** The rest of the Hygiene Privilege design: requesting a break, denying one, and the Penalty Window override tiers. Those need a decision, because the design doc

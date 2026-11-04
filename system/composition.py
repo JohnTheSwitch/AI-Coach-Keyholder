@@ -19,6 +19,7 @@ from datetime import timedelta
 
 from chaster_execution.control import ExecutionControl
 from chaster_execution.executor import ChasterExecutor
+from chaster_execution.extension_guard import ExtensionGuard, extension_guard_loop
 from chaster_execution.hydration import make_snapshot_provider
 from chaster_execution.models import ExecStatus
 from chaster_execution.penalty_barrier import PenaltyBarrierExecutor
@@ -133,6 +134,32 @@ def window_config_from(config) -> WindowConfig:
         work_start=config.workday_start, work_end=config.workday_end, holiday_country=config.holiday_country,
         weekend_release_start=config.weekend_release_start,
     )
+
+
+def build_extension_guard(config, core, *, notifications, token_manager, lock_client, connections, halt_source=None, clock: Clock | None = None):
+    """The extension guard for the owner's own account, or None. A tenant has none: its invitation never disclosed one."""
+    account = getattr(config, "chaster_execution_keyholder_user_id", None)
+    owner = getattr(config, "owner_user_id", None)
+    if not getattr(config, "enable_extension_guard", True) or not account or token_manager is None or lock_client is None or connections is None:
+        return None
+    from chaster.extension_config import LockConfigurationReader
+    from chaster.lock_directory import LockDirectory
+
+    source = clock or SystemClock()
+    directory = LockDirectory(token_manager=token_manager, lock_client=lock_client, connections=connections)
+
+    def list_lock_ids(now):
+        listing = directory.list_account_locks(user_id=account, now=now)
+        return list(dict.fromkeys(l.lock_id for l in listing.wearer_locks + listing.keyholder_locks if l.status == "locked")), list(listing.problems)
+
+    def notify(key, text, now):
+        if owner:
+            notifications.enqueue(user_id=owner, kind="extension_guard", dedupe_key=f"extension_guard:{key}", text=text, now=now)
+
+    return ExtensionGuard(config.db_path, core=core, control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source),
+                          reader=LockConfigurationReader(token_manager=token_manager, lock_client=lock_client),
+                          transport=ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=account, clock=source),
+                          account_user_id=account, list_lock_ids=list_lock_ids, notify=notify)
 
 
 def _warning_notifier(notifications, sender, user_id: str, clock: Clock | None):

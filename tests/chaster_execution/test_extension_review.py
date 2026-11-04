@@ -448,8 +448,8 @@ class TestIsolation:
             rel = path.relative_to(ROOT)
             if rel.parts[0] in {"cli", "tests"} or rel.parts[0].startswith(".") or "__pycache__" in rel.parts:
                 continue
-            if rel.as_posix() in ("chaster_execution/extension_review.py", "system/review_consent_dm.py"):
-                continue                       # the service itself, and the owner's DM consent facade (guarded below)
+            if rel.as_posix() in ("chaster_execution/extension_review.py", "system/review_consent_dm.py", "chaster_execution/extension_guard.py"):
+                continue                       # the service itself, the owner's DM consent facade, and the owner's self-correcting guard (all guarded separately)
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
                     [node.module] if isinstance(node, ast.ImportFrom) and node.module else []

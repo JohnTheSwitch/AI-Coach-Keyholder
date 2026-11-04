@@ -183,6 +183,8 @@ class Config:
     enable_lock_claim_watch: bool = False     # compare lock reports with Chaster; a report that was false when made -> UNCONFIRMED Incident
     lock_claim_trust_domain: str = "routine"
     detector_poll_seconds: int = 120          # how often the two watches read Chaster (at least 60)
+    enable_extension_guard: bool = True       # keep the owner's required lock settings true on Chaster (subject to the runtime halt)
+    extension_guard_poll_seconds: int = 900   # how often they are checked (at least 300)
     enable_peer_review_watch: bool = False    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
@@ -285,6 +287,8 @@ class Config:
             enable_lock_claim_watch=(get("ENABLE_LOCK_CLAIM_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "routine") or "routine",
             detector_poll_seconds=max(60, int(get("DETECTOR_POLL_SECONDS", "120") or "120")),
+            enable_extension_guard=(get("ENABLE_EXTENSION_GUARD", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            extension_guard_poll_seconds=max(300, int(get("EXTENSION_GUARD_POLL_SECONDS", "900") or "900")),
             enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",
             peer_review_poll_seconds=max(120, int(get("PEER_REVIEW_POLL_SECONDS", "600") or "600")),
