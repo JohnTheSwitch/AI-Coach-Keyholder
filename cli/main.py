@@ -745,6 +745,7 @@ def _state(value: str) -> bool:
 def _coach_status(args, out: TextIO) -> int:
     """Phase J3, read-only: is the local model there, and what did the coach propose, refuse and record. Codes and counts; proposal texts stay in the DM."""
     from conversation_engine.ollama_adapter import OllamaConversationModel
+    from core.config import Config
     from infrastructure.database import Database as CoreDatabase
 
     config = Config.load()

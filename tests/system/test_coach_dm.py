@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -488,3 +489,22 @@ class TestAMissedCommitmentEndToEnd:
     def test_the_token_evaluation_never_reads_commitments(self) -> None:
         for name in ("system/daily_evaluation.py", "release_engine/token_pool.py", "release_engine/service.py", "penalty_engine/repository.py", "rules_engine/engine.py"):
             assert "commitment" not in (ROOT / name).read_text(encoding="utf-8").lower(), name
+
+
+def test_coach_status_command_runs_against_a_real_database(core, monkeypatch):  # noqa: F811
+    """Nothing ran this command before it reached the owner, and it crashed on a missing import. Real config class, real migrated schema, no network."""
+    from cli.main import main
+    from conversation_engine.ollama_adapter import ModelReadiness, OllamaConversationModel
+    from core.config import Config
+
+    config = SimpleNamespace(owner_user_id=ID, ollama_host="http://127.0.0.1:1", ollama_model="llama3.1", enable_coach=True, ollama_num_ctx=8192, db_path=core.db_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    monkeypatch.setattr(OllamaConversationModel, "check_ready", lambda self: ModelReadiness(reachable=True, installed=True))
+    out = StringIO()
+
+    assert main(["coach-status", "--owner-id", ID], out=out) == 0
+    assert "Model llama3.1: installed" in out.getvalue() and "Proposals: none" in out.getvalue()
+
+    refused = StringIO()
+    assert main(["coach-status", "--owner-id", "someone-else"], out=refused) == 1
+    assert "Refused" in refused.getvalue()
