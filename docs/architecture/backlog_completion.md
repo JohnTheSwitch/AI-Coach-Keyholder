@@ -63,7 +63,7 @@ Chaster's own late-relock penalty is held at 0 by `chaster_execution/extension_g
 
 **Limit, by design.** A wearer who calls a planned break a health need is not caught. That is the philosophy's trade-off: a false accusation over a health need is the worse failure.
 
-**Not built.** The rest of the Hygiene Privilege design: requesting a break, denying one, and the Penalty Window override tiers. Those need a decision, because the design doc
+**Not built.** The Penalty Window override tiers of the Hygiene Privilege design. Those need a decision, because the design doc
 is still a draft, and Chaster's own extension already controls when an opening is possible.
 
 ### `EPISTEMIC_MISREPRESENTATION`
@@ -94,6 +94,7 @@ ends by time or "I'm back" -> resume -> freeze intent -> barrier
 - **I7:** `decide()` reads the request only, and the keyholder's card does not mention a window. Applying is a separate step, `tick()`, which also pauses a window that starts during
   an exemption.
 - **It opens the lock (owner, 2026-11-04):** an approval also triggers a hygiene opening on `EXEMPTION_LOCK_ID` (default `PENALTY_FREEZE_LOCK_ID`), with or without a Penalty Window, because lifting a freeze leaves a lock locked. It raises `openingTime` to the approved length and clears the cooldown first, and puts both back. **"I'm back" is checked, not believed:** still open keeps the exemption running; a relock is compared with the approved time using Chaster's own log. Late goes to `infraction_signals` (health answer first, then the keyholder), and with no `hygiene` domain the keyholder gets a plain note. Chaster can show that the lock was relocked, not that the device is on. Never past the runtime halt: a halted approval opens when the halt clears, or not at all once its time is over. The combination never passes through the bot.
+- **Asking for a hygiene opening (owner's option A, 2026-11-04):** "hygiene opening" or "hygiene break" brings up buttons, because a question must never open a lock. Within the rolling weekly allowance, **Open it** opens for the allowed session; past it, the button asks the keyholder. **It's a health need** always opens, for an hour on Chaster's clock, and is never limited, counted or judged (3.9). With no `hygiene` Trust domain yet the lowest tier applies. It shares the exemption's path, but does not pause a Penalty Window. The hygiene watch no longer asks about an opening the bot made itself.
 - **Time:** no hour moves anywhere. Only the frozen flag and the Penalty Window's own countdown, and the redemption hold stays on.
 - **Safety:** every message says an urgent health or safety matter needs none of this.
 - **Length:** 6 h, 24 h, 3 days or 7 days. Longer is what a vacation is for.

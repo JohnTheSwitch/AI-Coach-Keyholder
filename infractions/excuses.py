@@ -27,7 +27,7 @@ class Excuses:
             with self._core.transaction() as tx:
                 emergency = tx.fetch_one("SELECT 1 FROM freeze_periods WHERE reason = 'emergency_override' AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)",
                                          (_iso(end), _iso(start)))
-                exemption = tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND decided_at IS NOT NULL AND decided_at <= ? AND status IN ('approved', 'ended') "
+                exemption = tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND decided_at IS NOT NULL AND decided_at <= ? AND kind != 'hygiene' AND status IN ('approved', 'ended') "
                                          "AND expires_at IS NOT NULL AND COALESCE(ended_at, expires_at) >= ? AND id != ?", (user_id, _iso(end), _iso(start), ignore_exemption or ""))
             if emergency is not None:
                 return "emergency_override"

@@ -273,6 +273,27 @@ class TestMandatoryAccessIsOutsideAllOfThis:
         assert get("HYGIENE_MISUSE").detectable and get("EPISTEMIC_MISREPRESENTATION").detectable
 
 
+class TestOpeningsTheBotMadeItself:
+    def test_it_does_not_ask_about_them(self, tmp_path) -> None:
+        """The bot opened it for a reason it already knows, so a planned-or-health question would be wrong."""
+        w = World(tmp_path)
+        with w.core.raw_connection() as conn:
+            conn.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, kind, minutes, opening_lock_id, opened_at) VALUES ('e', ?, 'approved', ?, 'hygiene', 30, ?, ?)",
+                         (USER, iso(NOW), LOCK, iso(NOW)))
+            conn.commit()
+        w.opening = iso(NOW)
+        w.hygiene.poll(NOW)
+        assert w.q("SELECT * FROM hygiene_openings") == [] and w.q("SELECT * FROM notifications WHERE kind = 'hygiene_opening'") == []
+
+    def test_a_planned_break_does_not_excuse_other_findings(self, tmp_path) -> None:
+        w = World(tmp_path)
+        with w.core.raw_connection() as conn:
+            conn.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, kind, minutes, decided_at, expires_at) VALUES ('e', ?, 'approved', ?, 'hygiene', 30, ?, ?)",
+                         (USER, iso(NOW), iso(NOW), iso(NOW + timedelta(minutes=30))))
+            conn.commit()
+        assert w.excuses.reason(USER, NOW, NOW + timedelta(minutes=5)) is None
+
+
 class TestReads:
     def test_a_failed_read_never_closes_an_opening(self, tmp_path) -> None:
         w = World(tmp_path)

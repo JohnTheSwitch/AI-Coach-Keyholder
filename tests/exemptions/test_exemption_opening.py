@@ -380,6 +380,12 @@ class TestTheExecutor:
         assert first["config"]["openingTime"] == 21600 and first["regularity"] == CLEAR_COOLDOWN_REGULARITY
         assert chaster.config.extension("temporary-opening").regularity == 172800.0 and chaster.config.extension("temporary-opening").config["openingTime"] == 21600
 
+    def test_a_short_opening_is_a_whole_number_of_seconds(self) -> None:
+        chaster = Chaster()
+        _executor(chaster).open_for(0.5)
+        value = next(e for e in chaster.posts[0]["extensions"] if e["slug"] == "temporary-opening")["config"]["openingTime"]
+        assert value == 1800 and isinstance(value, int)
+
     def test_the_late_penalty_stays_zero(self) -> None:
         chaster = Chaster(_config(penalty=43200))
         _executor(chaster).open_for(6)

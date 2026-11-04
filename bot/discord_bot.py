@@ -63,7 +63,8 @@ from infrastructure.database import Database as CoreDatabase
 from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
-from exemptions.service import ExemptionService, is_exemption_request
+from exemptions.service import ExemptionService, is_exemption_request, is_hygiene_request
+from infractions.hygiene import policy_for
 from infractions.wiring import build_detectors, detector_loop, overrun_signal
 from trust_manager.repository import TrustManager
 from notifications.delivery import NotificationDelivery
@@ -595,11 +596,21 @@ def main() -> None:
         exemption_opening = build_exemption_opening(config, core, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
                                                     halt_source=platform.halt if platform is not None else None, clock=clock)
         logger.info("Exemptions enabled: %s.", f"an approval opens lock {exemption_opening.lock_id}" if exemption_opening is not None else "no lock configured, an approval opens nothing")
-        exemption_dm = ExemptionDm(ExemptionService(config.db_path, core=core, owner_user_id=config.owner_user_id, penalties=make_penalty_engine(core), opening=exemption_opening),
+        def hygiene_allowance(trust=TrustManager(config.db_path, core=core), domain=config.hygiene_trust_domain or "hygiene"):
+            state = trust.get_domain_state(domain)           # no domain yet: the lowest tier, the design's own default
+            policy = policy_for(float(state.score) if state is not None else 0.0)
+            return policy.breaks_per_week, policy.session_minutes
+
+        exemption_dm = ExemptionDm(ExemptionService(config.db_path, core=core, owner_user_id=config.owner_user_id, penalties=make_penalty_engine(core), opening=exemption_opening,
+                                                    hygiene_allowance=hygiene_allowance),
                                    resolve_user=resolve_user, now=clock.now)
 
         def exemption_reply(user_id, text, now):
-            return exemption_dm.service.start(user_id, now) if user_id == wearer and is_exemption_request(text) else None
+            if user_id != wearer:
+                return None
+            if is_hygiene_request(text):
+                return exemption_dm.service.start_hygiene(user_id, now)
+            return exemption_dm.service.start(user_id, now) if is_exemption_request(text) else None
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,

@@ -72,7 +72,7 @@ class ExemptionOpening:
         self._send = send
         self._clock = clock
 
-    def open_for(self, hours: int) -> OpeningResult:
+    def open_for(self, hours: float) -> OpeningResult:
         if self._control.is_halted():
             return OpeningResult(outcome=OpeningOutcome.HALTED)
         config = self._read_config()
@@ -82,7 +82,7 @@ class ExemptionOpening:
         if config.status != "locked" or extension is None or not config.can_edit_extensions:
             return OpeningResult(outcome=OpeningOutcome.UNAVAILABLE, detail="not_openable")
         saved = {"openingTime": extension.config.get("openingTime"), "regularity": extension.regularity}
-        plan = plan_opening_settings(config, opening_seconds=hours * 3600, regularity=CLEAR_COOLDOWN_REGULARITY)
+        plan = plan_opening_settings(config, opening_seconds=round(hours * 3600), regularity=CLEAR_COOLDOWN_REGULARITY)
         if plan.refusal is not None:
             return OpeningResult(outcome=OpeningOutcome.UNAVAILABLE, detail=plan.refusal)
         if not self._write(plan):

@@ -20,6 +20,10 @@ Penalty Window exists (invariant I7), so a request is treated the same inside an
 **Not a gate on safety.** This is for planned life. A health or safety need never waits for this (3.9, 3.10), and every message here says so.
 
 An exemption approved while no window runs is simply recorded as in force, and `tick()` pauses a window that starts during it.
+
+**Asking for a hygiene opening (owner, 2026-11-04)** uses this same path, as a row with its own `kind`. The phrase only brings up buttons: a question must never open a lock, so a press is what commits.
+Within the weekly allowance the press opens at once. Past it, the press asks the keyholder. A health need is the other button: Mandatory Access (philosophy 3.9), never limited, counted or judged, and
+its opening is not checked for lateness. A hygiene break does not pause a Penalty Window: that is what an exemption is for.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from uuid import uuid4
 from application.models import ActionSpec, OutgoingMessage
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
+from infrastructure.text import plain_text
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
 from notifications.queue import enqueue_in_transaction
@@ -44,18 +49,26 @@ from penalty_engine.models import FreezeReason
 
 logger = logging.getLogger("ai_coach_keyholder.exemptions")
 
-__all__ = ["ExemptionService", "ExemptionDecision", "is_exemption_request", "CATEGORIES", "DURATIONS", "SAFETY_LINE"]
+__all__ = ["ExemptionService", "ExemptionDecision", "is_exemption_request", "is_hygiene_request", "HEALTH_MINUTES", "CATEGORIES", "DURATIONS", "SAFETY_LINE"]
 
 CATEGORIES = {"family": "Family event", "social": "Social occasion", "work_school": "Work or school", "health": "Health", "travel": "Travel", "other": "Something else"}
 DURATIONS = (6, 24, 72, 168)                # hours; a longer absence is what a vacation is for
 SAFETY_LINE = "If this is an urgent health or safety matter, you don't need this: do what keeps you safe, and it will never be held against you."
 
 _REQUEST = re.compile(r"\b(exemption|exempt me|v[yý]jimk[auy]|v[yý]jimku)\b", re.IGNORECASE)
+_HYGIENE = re.compile(r"\bhygiene (opening|break)\b|\bhygienick\w* (otevren\w*|prestavk\w*)\b|\botevr\w* .*\bhygien")
+HEALTH_MINUTES = 60                         # how long a health opening runs on Chaster's clock; nothing is judged against it
+ALLOWANCE_WINDOW = timedelta(days=7)
 
 
 def is_exemption_request(message: str) -> bool:
     """Deterministic, never a model's reading: the word itself opens the buttons, and a button is what commits to anything."""
     return isinstance(message, str) and len(message) <= 300 and _REQUEST.search(message) is not None
+
+
+def is_hygiene_request(message: str) -> bool:
+    """Deterministic, and it only offers buttons."""
+    return isinstance(message, str) and len(message) <= 300 and _HYGIENE.search(plain_text(message)) is not None
 
 
 class ExemptionDecision(StrEnum):
@@ -67,7 +80,7 @@ class ExemptionDecision(StrEnum):
 
 class Opening(Protocol):
     lock_id: str
-    def open_for(self, hours: int): ...
+    def open_for(self, hours: float): ...
     def status(self, *, opened_at: datetime): ...
     def restore(self, saved: dict | None) -> bool: ...
 
@@ -82,9 +95,17 @@ def _hours(value: int) -> str:
     return f"{value // 24} day{'s' if value >= 48 else ''}" if value >= 24 else f"{value} hours"
 
 
+def _length(row) -> str:
+    return f"{row['minutes']} minutes" if row["minutes"] else _hours(row["hours"])
+
+
+def _span(row) -> timedelta:
+    return timedelta(minutes=row["minutes"]) if row["minutes"] else timedelta(hours=row["hours"])
+
+
 class ExemptionService:
     def __init__(self, db_path: str | Path | None = None, *, core: CoreDatabase | None = None, owner_user_id: str | None, penalties: Penalties, opening: Opening | None = None,
-                 raise_overrun: Callable[[Transaction, dict, datetime, datetime], bool] | None = None) -> None:
+                 raise_overrun: Callable[[Transaction, dict, datetime, datetime], bool] | None = None, hygiene_allowance: Callable[[], tuple[int, int]] | None = None) -> None:
         """`opening`: None means no lock is configured, and an exemption pauses a window without opening anything. `raise_overrun(tx, row, relocked_at, now)` files a late relock as a
         signal, and returns False when it cannot; the keyholder then gets a plain note."""
         self._core = core if core is not None else CoreDatabase(Path(db_path))
@@ -92,6 +113,7 @@ class ExemptionService:
         self._penalties = penalties
         self._opening = opening
         self._raise_overrun = raise_overrun
+        self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
 
     def set_overrun_signal(self, raise_overrun: Callable[[Transaction, dict, datetime, datetime], bool]) -> None:
         """The detectors are built after this service."""
@@ -116,6 +138,65 @@ class ExemptionService:
             return self._running_card(ident)
         return OutgoingMessage(text=f"Of course. What is it for? {SAFETY_LINE}",
                                actions=tuple(ActionSpec(action_id=f"exemption:cat_{code}:{ident}", label=label) for code, label in CATEGORIES.items()))
+
+    def start_hygiene(self, user_id: str, now: datetime) -> OutgoingMessage | None:
+        """Asking for a hygiene opening. Only offers buttons: nothing opens until one is pressed."""
+        if self._allowance is None or self._opening is None:
+            return None
+        breaks, minutes = self._allowance()
+        within = self._planned_this_week(user_id, now) < breaks
+
+        def write(tx: Transaction, _s: object) -> tuple[str, str | None]:
+            row = tx.fetch_one("SELECT id, status FROM wear_exemptions WHERE user_id = ? AND status IN ('requested', 'approved')", (user_id,))
+            if row is not None:
+                return row["status"], row["id"]
+            tx.execute("DELETE FROM wear_exemptions WHERE user_id = ? AND status = 'draft'", (user_id,))
+            new_id = str(uuid4())
+            tx.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, kind, minutes) VALUES (?, ?, 'draft', ?, 'hygiene', ?)", (new_id, user_id, _iso(now), minutes))
+            return "draft", new_id
+
+        status, ident = apply_transition(self._core, write=write)
+        if status == "requested":
+            return OutgoingMessage(text=f"Your earlier request is still with your keyholder. {SAFETY_LINE}")
+        if status == "approved":
+            return self._running_card(ident)
+        health = ActionSpec(action_id=f"exemption:hhealth:{ident}", label="It's a health need", style="success")
+        cancel = ActionSpec(action_id=f"exemption:hcancel:{ident}", label="Not now")
+        if within:
+            return OutgoingMessage(text=f"You can have a {minutes}-minute hygiene opening now. The combination appears in Chaster, not here. A health need never counts against anything.",
+                                   actions=(ActionSpec(action_id=f"exemption:hopen:{ident}", label="Open it", style="primary"), health, cancel))
+        return OutgoingMessage(text="You've used this week's planned breaks, so another one needs your keyholder. A health need is different: it never counts against anything.",
+                               actions=(ActionSpec(action_id=f"exemption:hask:{ident}", label="Ask my keyholder", style="primary"), health, cancel))
+
+    def press_hygiene(self, user_id: str, exemption_id: str, action: str, now: datetime) -> OutgoingMessage:
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ? AND user_id = ? AND status = 'draft' AND kind = 'hygiene'", (exemption_id, user_id))
+        if row is None:
+            return OutgoingMessage(text="That request is no longer open. Just ask again if you still need it.")
+        if action == "hcancel":
+            def drop(tx: Transaction, _s: object) -> None:
+                tx.execute("DELETE FROM wear_exemptions WHERE id = ? AND status = 'draft'", (exemption_id,))
+
+            apply_transition(self._core, write=drop)
+            return OutgoingMessage(text="Okay, nothing was opened.")
+        if action == "hask" or (action == "hopen" and self._planned_this_week(user_id, now) >= self._allowance()[0]):
+            return self._ask_keyholder(row, now)
+        health = action == "hhealth"
+        minutes = HEALTH_MINUTES if health else row["minutes"]
+
+        def approve(tx: Transaction, _s: object) -> None:
+            tx.execute("UPDATE wear_exemptions SET status = 'approved', kind = ?, minutes = ?, requested_at = ?, decided_at = ?, decided_by = ?, expires_at = ? WHERE id = ?",
+                       ("hygiene_health" if health else "hygiene", minutes, _iso(now), _iso(now), "wearer_health" if health else "allowance", _iso(now + timedelta(minutes=minutes)), exemption_id))
+
+        apply_transition(self._core, write=approve)
+        self.tick(now)
+        with self._core.transaction() as tx:
+            current = tx.fetch_one("SELECT opened_at, opening_outcome FROM wear_exemptions WHERE id = ?", (exemption_id,))
+        if current["opened_at"] is None:
+            return OutgoingMessage(text="I couldn't open it just now. You'll get a message as soon as I know more." + (f" {SAFETY_LINE}" if health else ""))
+        text = "Opening your lock now: the combination appears in Chaster. Take the time you need, then relock there and press the button."
+        return OutgoingMessage(text=text if health else f"Opening your lock now for {minutes} minutes: the combination appears in Chaster. When you're done, relock there and press the button.",
+                               actions=self._back_button(exemption_id))
 
     def choose_category(self, user_id: str, exemption_id: str, code: str, now: datetime) -> OutgoingMessage:
         if code not in CATEGORIES:
@@ -177,7 +258,7 @@ class ExemptionService:
             row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ? AND status = 'requested'", (exemption_id,))
             if row is None:
                 return False
-            expires = now + timedelta(hours=row["hours"])
+            expires = now + _span(row)
             tx.execute("UPDATE wear_exemptions SET status = ?, decided_at = ?, decided_by = ?, expires_at = ? WHERE id = ?",
                        (decision.value, _iso(now), actor, _iso(expires) if approve else None, exemption_id))
             if approve:
@@ -187,7 +268,7 @@ class ExemptionService:
                     actions=self._back_button(exemption_id))
             else:
                 enqueue_in_transaction(tx, user_id=row["user_id"], kind="exemption_decision", dedupe_key=f"exemption:decision:{exemption_id}", now=now, immediate=True,
-                                       text=f"Your exemption wasn't approved this time. {SAFETY_LINE}")
+                                       text=f"Your {'hygiene opening' if row['kind'] == 'hygiene' else 'exemption'} wasn't approved this time. {SAFETY_LINE}")
             return True
 
         if not apply_transition(self._core, write=write):
@@ -223,8 +304,28 @@ class ExemptionService:
 
     # ------------------------------------------------------------------ internals
 
+    def _planned_this_week(self, user_id: str, now: datetime) -> int:
+        """Openings the bot really made for planned breaks. A health need never appears here."""
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT COUNT(*) AS n FROM wear_exemptions WHERE user_id = ? AND kind = 'hygiene' AND opened_at IS NOT NULL AND opened_at > ?",
+                                (user_id, _iso(now - ALLOWANCE_WINDOW)))["n"]
+
+    def _ask_keyholder(self, row, now: datetime) -> OutgoingMessage:
+        def write(tx: Transaction, _s: object) -> None:
+            tx.execute("UPDATE wear_exemptions SET status = 'requested', requested_at = ? WHERE id = ? AND status = 'draft'", (_iso(now), row["id"]))
+            if self._owner:
+                enqueue_in_transaction(tx, user_id=self._owner, kind="exemption_request", dedupe_key=f"exemption:request:{row['id']}", now=now, immediate=True,
+                                       text=f"Hygiene opening request: {row['minutes']} minutes, past this week's planned breaks. A health need never comes here.",
+                                       actions=(ActionSpec(action_id=f"exemption:approve:{row['id']}", label="Approve", style="success"),
+                                                ActionSpec(action_id=f"exemption:decline:{row['id']}", label="Decline", style="secondary")))
+
+        apply_transition(self._core, write=write)
+        return OutgoingMessage(text=f"Sent to your keyholder. I'll tell you as soon as they answer. {SAFETY_LINE}")
+
     def _approval_text(self, row) -> str:
-        length = _hours(row["hours"])
+        length = _length(row)
+        if row["kind"] != "exemption":
+            return f"Approved: a {length} hygiene opening. I'm opening your lock now, and the combination appears in Chaster. When you're done, relock there and press the button below."
         if self._opening is None:
             return (f"Your exemption is approved for {length}. A Penalty Window, if there is one, is paused for that time and continues where it left off. Any penalty freeze on your lock is "
                     "lifted as soon as the system is allowed to act. Tell me when you're back, or it simply ends on time.")
@@ -246,7 +347,7 @@ class ExemptionService:
 
         if not apply_transition(self._core, write=claim):
             return
-        result = self._opening.open_for(row["hours"])
+        result = self._opening.open_for(row["hours"] if row["hours"] else row["minutes"] / 60)
         opened = result.outcome.value == "opened"
         retry = result.outcome.value == "halted"
 
@@ -274,6 +375,8 @@ class ExemptionService:
         if not status.is_open:
             self._settle(row, status.relocked_at, now)
             return
+        if row["kind"] == "hygiene_health":
+            return                                  # a health need is not chased
 
         def remind(tx: Transaction, _s: object) -> None:
             if tx.execute("UPDATE wear_exemptions SET overdue_notified_at = ? WHERE id = ? AND overdue_notified_at IS NULL", (_iso(now), row["id"])).rowcount == 1:
@@ -285,14 +388,14 @@ class ExemptionService:
     def _settle(self, row, relocked_at: datetime | None, now: datetime) -> str:
         """Closed on Chaster. On time ends quietly. Late goes to the signals path. A close with no log entry is not guessed at: the keyholder is told."""
         expires = parse_iso(row["expires_at"])
-        late = relocked_at is not None and relocked_at > expires
+        late = relocked_at is not None and relocked_at > expires and row["kind"] != "hygiene_health"
         reason = "relocked_late" if late else "relocked_on_time" if relocked_at is not None else "closed_unverified"
 
         def record(tx: Transaction, _s: object) -> None:
             tx.execute("UPDATE wear_exemptions SET relocked_at = ? WHERE id = ?", (_iso(relocked_at) if relocked_at else None, row["id"]))
             filed = late and self._raise_overrun is not None and self._raise_overrun(tx, dict(row), relocked_at, now)
             if self._owner and ((late and not filed) or relocked_at is None):
-                text = (f"An exemption's lock was relocked after the approved time ({_hours(row['hours'])})." if late else
+                text = (f"An exemption's lock was relocked after the approved time ({_length(row)})." if late else
                         "An exemption's lock shows closed on Chaster, but its log has no relock entry, so I can't say when.")
                 enqueue_in_transaction(tx, user_id=self._owner, kind="exemption_opening", dedupe_key=f"exemption:settled:{row['id']}", now=now, immediate=True, text=text)
 
@@ -304,6 +407,8 @@ class ExemptionService:
                 self._queue_restore(row, now)
         if late:
             return "Welcome back. You relocked after the approved time, so this goes to your keyholder. If it was a health or safety need, you'll be able to say so."
+        if row["kind"] != "exemption":
+            return "Thanks, Chaster shows you're relocked."
         return "Welcome back. Chaster confirms you relocked in time, and your exemption has ended." if relocked_at else "Welcome back. Your exemption has ended."
 
     def _queue_restore(self, row, now: datetime) -> None:
@@ -315,6 +420,8 @@ class ExemptionService:
             apply_transition(self._core, write=write)
 
     def _apply(self, row, now: datetime) -> None:
+        if row["kind"] != "exemption":
+            return                                  # a hygiene break does not pause a Penalty Window
         window = self._penalties.get_active_or_frozen_penalty_window()
         if window is None:
             return

@@ -181,6 +181,8 @@ class HygieneWatch:
                 tx.execute("UPDATE hygiene_openings SET closed_at = ?, duration_known = ? WHERE id = ?", (_iso(now), 1 if followed else 0, current["id"]))
             if opened_at is None:
                 return
+            if tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE opening_lock_id = ? AND status = 'approved' AND opened_at IS NOT NULL", (lock_id,)) is not None:
+                return                              # the bot opened this itself, for a reason it already knows: asking again would be wrong
             opening_id = str(uuid4())
             cursor = tx.execute("INSERT OR IGNORE INTO hygiene_openings (id, user_id, lock_id, opened_at, last_seen_open_at) VALUES (?, ?, ?, ?, ?)",
                                 (opening_id, self._user, lock_id, opened_at, _iso(now)))
