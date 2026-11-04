@@ -5,6 +5,9 @@ The Discord adapter for proactive check-in prompts (v0.39). It implements the
 `CheckInSender` protocol of the supervision package. The periodic cycle runs in a worker thread,
 so delivery is handed to the Discord client's own event loop with run_coroutine_threadsafe.
 
+Check-in prompts deliberately bypass the notification queue (they still use the one `send_dm`): a prompt's deadline starts at delivery, so the service must
+know the outcome at once, and a prompt that was not provably delivered is never counted as missed.
+
 Outcome mapping (a prompt that is not provably delivered is never treated as a missed check-in):
   delivered              -> DELIVERED
   not ready / no Discord identity / DMs closed (Forbidden) / unknown user (NotFound) -> UNDELIVERABLE
@@ -18,9 +21,8 @@ import concurrent.futures
 import logging
 from pathlib import Path
 
-import discord
-
 from infrastructure.database import Database as CoreDatabase
+from messaging.discord_adapter import DmOutcome, send_dm
 from supervision.checkins import SendOutcome
 
 logger = logging.getLogger("ai_coach_keyholder.bot.checkin_sender")
@@ -28,6 +30,7 @@ logger = logging.getLogger("ai_coach_keyholder.bot.checkin_sender")
 __all__ = ["DiscordCheckInSender"]
 
 _SEND_TIMEOUT_SECONDS = 30
+_OUTCOME = {DmOutcome.DELIVERED: SendOutcome.DELIVERED, DmOutcome.UNDELIVERABLE: SendOutcome.UNDELIVERABLE, DmOutcome.UNKNOWN: SendOutcome.UNKNOWN}
 
 
 class DiscordCheckInSender:
@@ -70,11 +73,4 @@ class DiscordCheckInSender:
 
     @staticmethod
     async def _send(client, discord_id: int, text: str) -> SendOutcome:
-        try:
-            user = await client.fetch_user(discord_id)
-            await user.send(text)
-            return SendOutcome.DELIVERED
-        except (discord.Forbidden, discord.NotFound):
-            return SendOutcome.UNDELIVERABLE
-        except discord.HTTPException:
-            return SendOutcome.UNKNOWN
+        return _OUTCOME[await send_dm(client, discord_id, text)]

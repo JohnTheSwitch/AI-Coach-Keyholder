@@ -31,8 +31,7 @@ def incident_embed(notice: PendingNotice) -> EmbedSpec:
             EmbedField(name="Lock", value=notice.lock_id),
             EmbedField(name="Votes", value=_votes(notice.verified_votes, notice.rejected_votes)),
             EmbedField(name="Incident", value=notice.incident_id),
-            EmbedField(name="Decide", value=("Use the buttons below. Fallback on the bot's machine: "
-                                             f"`python -m cli peer-reviews confirm|dismiss {notice.incident_id} --owner-id <your id> --yes`")),
+            EmbedField(name="Decide", value="Use the buttons below."),
         ),
     )
 

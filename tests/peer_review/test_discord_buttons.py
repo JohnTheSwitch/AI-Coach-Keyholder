@@ -189,4 +189,4 @@ def test_the_bot_registers_the_persistent_buttons_and_the_handler() -> None:
     from pathlib import Path
     text = (Path(__file__).parent.parent.parent / "bot" / "discord_bot.py").read_text(encoding="utf-8")
     assert "self.add_dynamic_items(PeerReviewDecisionButton)" in text and "bot.peer_review_buttons = PeerReviewButtonHandler(" in text
-    assert "view_for=decision_view" in text
+    assert "view_for=decision_actions" in text and "send=queued_send(" in text

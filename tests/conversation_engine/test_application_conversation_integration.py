@@ -134,6 +134,6 @@ class TestKnownCommandServedDuringAnotherSubjectsGeneration:
         b_done_at = time.monotonic() - start
         t1.join(timeout=5)
 
-        assert "Available commands" in results["b"]
+        assert "just talk to me" in results["b"]
         assert results["a"] == "slow reply"
         assert b_done_at < 0.2

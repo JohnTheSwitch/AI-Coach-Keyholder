@@ -12,6 +12,7 @@ and the impact LOW; severity is only assessed if the keyholder confirms the Inci
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -38,7 +39,7 @@ from trust_manager.repository import TrustManager
 logger = logging.getLogger("ai_coach_keyholder.peer_review.wiring")
 
 __all__ = ["PEER_REVIEW_EVIDENCE", "PeerReviewWiring", "build_peer_review_watch", "build_peer_review_decisions", "owner_discord_id",
-           "peer_review_loop"]
+           "peer_review_loop", "queued_send"]
 
 PEER_REVIEW_EVIDENCE = IncidentEvidence(
     actual_or_potential_impact=ImpactLevel.LOW, rule_breach_directness=BreachDirectness.PARTIAL,
@@ -109,6 +110,20 @@ def build_peer_review_decisions(config, core: CoreDatabase) -> PeerReviewDecisio
         confirm_incident=lambda incident_id, evidence, now: trust.confirm_incident(
             incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.KEYHOLDER_REVIEW,
             evidence_description=evidence, now=now))
+
+
+def queued_send(queue, *, user_id: str, clock: Clock):
+    """`send` for `peer_review_loop` when the notification queue is in use: True means durably queued, so the watch marks the notice as handed over and the queue
+    owns the retries, quiet hours and channel choice. `view` is a tuple of ActionSpec and `embed` an EmbedSpec, because a card may wait across a restart."""
+
+    async def send(_target: str, text: str, *, view=None, embed=None) -> bool:
+        now = clock.now()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+        await asyncio.to_thread(queue.enqueue, user_id=user_id, kind="peer_review", dedupe_key=f"peer_review:{now.date().isoformat()}:{digest}", text=text, now=now,
+                                embed=embed, actions=view or ())
+        return True
+
+    return send
 
 
 async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_seconds: float, send=None, owner_target: str | None = None,

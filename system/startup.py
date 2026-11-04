@@ -65,7 +65,7 @@ def build_consumer_registry(
     trust_manager: TrustManager, penalty_engine: PenaltyEngine, recovery_plan: RecoveryPlanManager,
     rules_engine: RulesEngineService | None = None, supervision: SupervisionService | None = None,
     release_engine=None, release_user_id: str | None = None,   # kept for call compatibility; tokens come from the daily pool
-    conditioning=None,
+    conditioning=None, penalty_notices: dict | None = None,
 ) -> ConsumerRegistry:
     """
     The real, working cross-module wiring this project's architecture
@@ -205,6 +205,10 @@ def build_consumer_registry(
                     occurred_at=event.occurred_at,
                 ),
             )
+
+    # The wearer hears about every consequence, queued in the same transaction that consumes the event (system/penalty_notices.py).
+    for event_type, handler in (penalty_notices or {}).items():
+        registry.register(event_type, "penalty_notices", handler)
 
     # Phase J2: the Rules Engine records the redemption hold and the barrier intents from the window's own events (it evaluates nothing).
     for event_type, handler in PENALTY_HOLD_HANDLERS.items():

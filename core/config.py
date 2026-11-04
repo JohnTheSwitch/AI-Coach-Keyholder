@@ -177,6 +177,12 @@ class Config:
     chaster_chat_poll_seconds: int = 30
     chaster_api_budget_per_minute: int = 30   # shared request budget of the keyholder account (multi-wearer)
     daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
+    enable_exemptions: bool = True            # the Temporary Wear Exemption flow in DM (the keyholder's button decides; needs OWNER_USER_ID)
+    enable_hygiene_watch: bool = False        # follow Chaster's temporary openings; planned breaks past the limits -> UNCONFIRMED Incidents
+    hygiene_trust_domain: str = "hygiene"     # never another domain: a hygiene finding stays in its own area (philosophy 3.7)
+    enable_lock_claim_watch: bool = False     # compare lock reports with Chaster; a report that was false when made -> UNCONFIRMED Incident
+    lock_claim_trust_domain: str = "routine"
+    detector_poll_seconds: int = 120          # how often the two watches read Chaster (at least 60)
     enable_peer_review_watch: bool = False    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
@@ -273,6 +279,12 @@ class Config:
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
             chaster_api_budget_per_minute=int(get("CHASTER_API_BUDGET_PER_MINUTE", "30") or "30"),
             daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",
+            enable_exemptions=(get("ENABLE_EXEMPTIONS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_hygiene_watch=(get("ENABLE_HYGIENE_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            hygiene_trust_domain=get("HYGIENE_TRUST_DOMAIN", "hygiene") or "hygiene",
+            enable_lock_claim_watch=(get("ENABLE_LOCK_CLAIM_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "routine") or "routine",
+            detector_poll_seconds=max(60, int(get("DETECTOR_POLL_SECONDS", "120") or "120")),
             enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",
             peer_review_poll_seconds=max(120, int(get("PEER_REVIEW_POLL_SECONDS", "600") or "600")),

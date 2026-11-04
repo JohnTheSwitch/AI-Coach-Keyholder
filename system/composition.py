@@ -11,7 +11,9 @@ Rules Engine and an observed wearer lock.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from uuid import uuid4
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -133,11 +135,33 @@ def window_config_from(config) -> WindowConfig:
     )
 
 
+def _warning_notifier(notifications, sender, user_id: str, clock: Clock | None):
+    """`notify(text) -> accepted`. With the queue, "accepted" means durably queued, and the queue owns the retries; a tenant has no queue and sends directly."""
+    if notifications is None:
+        return lambda text: sender.send(user_id=user_id, text=text) is SendOutcome.DELIVERED
+    source = clock or SystemClock()
+    return lambda text: notifications.enqueue(user_id=user_id, kind="check_in_warning", dedupe_key=f"check_in_warning:{uuid4()}", text=text, now=source.now()) or True
+
+
+def _release_sender(notifications, sender, user_id: str, clock: Clock | None):
+    """A release notice is what the user is waiting for, so it skips quiet hours. The notifier keeps its own once-a-day ledger; the key only guards a retry."""
+    if notifications is None:
+        return lambda text: sender.send(user_id=user_id, text=text)
+    source = clock or SystemClock()
+
+    def send(text: str) -> None:
+        now = source.now()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        notifications.enqueue(user_id=user_id, kind="release", dedupe_key=f"release:{now.date().isoformat()}:{digest}", text=text, now=now, immediate=True)
+
+    return send
+
+
 def build_rules_and_execution(
     config, core, *, connections=None, oauth_client=None, lock_client=None, token_manager=None,
     transport=None, clock: Clock | None = None, check_in_sender: CheckInSender | None = None,
     check_in_complete=None, keyholder_connections=None, keyholder_token_manager=None, halt_source=None,
-    observation_source=None, telemetry_consent_target: str | None = None, telemetry_tenant_id: str = "tenant_0",
+    observation_source=None, telemetry_consent_target: str | None = None, telemetry_tenant_id: str = "tenant_0", notifications=None,
 ) -> RulesExecutionWiring:
     """`transport` / `check_in_sender` / `check_in_complete` are injectable (tests; the bot supplies the real
     Discord sender and Ollama completion). Production passes transport=None and gets the real
@@ -220,7 +244,7 @@ def build_rules_and_execution(
                     register_incident=lambda description, now: trust.register_incident_report(
                         rule_group_id=ESCALATION_RULE_GROUP, trust_domain=domain, description=description,
                         evidence=_LOW_SEVERITY_EVIDENCE, now=now).id,
-                    notify=lambda text, u=user: check_in_sender.send(user_id=u, text=text) is SendOutcome.DELIVERED,
+                    notify=_warning_notifier(notifications, check_in_sender, user, clock),
                 ),
             )
             out.notes.append("Proactive check-ins enabled (discretionary window only).")
@@ -351,7 +375,7 @@ def build_rules_and_execution(
                 )
                 if check_in_sender is not None:
                     out.release_task.notifier = ReleaseNotifier(
-                        core, user_id=wearer_id, send=lambda text, u=wearer_id: check_in_sender.send(user_id=u, text=text),
+                        core, user_id=wearer_id, send=_release_sender(notifications, check_in_sender, wearer_id, clock),
                         today=lambda now: window_cfg.local(now).date(), check_ins=out.check_ins)
                 conditioning = None
                 if getattr(config, "enable_slave_training", False):

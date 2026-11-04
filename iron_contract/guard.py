@@ -39,7 +39,7 @@ IRON_CONTRACT_DISCLOSURE = (
 LOCKED_REFUSAL = (f"Not while you are locked. The {IRON_CONTRACT_MARKER} holds until you are unlocked. "
                   "If this is about your health or safety, that always comes first: use your emergency option.")
 UNKNOWN_REFUSAL = ("Your lock status is not known, so this is only possible once you are known to be unlocked. "
-                   "If you are unlocked, report it with `lock report unlocked` first.")
+                   "If you are unlocked, ask me for your lock status and tell me with the button first.")
 
 
 class LockStatus(StrEnum):

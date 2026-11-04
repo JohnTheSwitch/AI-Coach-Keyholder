@@ -26,11 +26,12 @@ from typing import Callable
 
 import discord
 
+from application.models import ActionSpec
 from peer_review.watch import DecisionOutcome, PeerReviewDecisions
 
 logger = logging.getLogger("ai_coach_keyholder.peer_review.discord_buttons")
 
-__all__ = ["CUSTOM_ID_TEMPLATE", "PeerReviewButtonHandler", "PeerReviewDecisionButton", "decision_view", "custom_id"]
+__all__ = ["CUSTOM_ID_TEMPLATE", "PeerReviewButtonHandler", "PeerReviewDecisionButton", "decision_view", "decision_actions", "custom_id"]
 
 CUSTOM_ID_TEMPLATE = r"peer_review:(?P<action>confirm|dismiss):(?P<incident>[0-9a-f-]{36})"
 _INCIDENT_ID = re.compile(r"^[0-9a-f-]{36}$")
@@ -112,6 +113,12 @@ class PeerReviewDecisionButton(discord.ui.DynamicItem[discord.ui.Button], templa
             await interaction.response.edit_message(content=f"{interaction.message.content}\n\n**{text}**", view=None)
         else:
             await interaction.response.send_message(text, ephemeral=True)
+
+
+def decision_actions(incident_id: str) -> tuple[ActionSpec, ...]:
+    """The same two buttons as neutral specs, for a card that waits in the notification queue."""
+    return (ActionSpec(action_id=custom_id("confirm", incident_id), label="Confirm Penalty", style="danger"),
+            ActionSpec(action_id=custom_id("dismiss", incident_id), label="Dismiss Incident"))
 
 
 def decision_view(incident_id: str) -> discord.ui.View:

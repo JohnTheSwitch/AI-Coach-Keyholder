@@ -110,4 +110,4 @@ class CommandRouter:
         None branch (no engine configured) needs this same fallback
         text; route() itself no longer produces it directly (RouteResult's
         matched=False leaves that decision to the caller)."""
-        return "I don't recognize that yet. Send `help` to see what I can do."
+        return "I don't recognize that yet. Ask me for help and I'll tell you what I can do."

@@ -136,7 +136,7 @@ class TestExistingCommandBehaviorUnaffected:
         result = service.handle_message(
             IncomingMessage(channel="discord", external_user_id="1", text="help", received_at=FIXED_TIME),
         )
-        assert "Available commands:" in result.text
+        assert "just talk to me" in result.text
 
     def test_status_command_unchanged(self, service: ApplicationService) -> None:
         self._onboard(service)

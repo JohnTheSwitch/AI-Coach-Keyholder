@@ -95,7 +95,7 @@ class TestLockStatus:
     def test_unknown_before_any_report(self, service: ApplicationService) -> None:
         _complete_onboarding(service)
         result = service.handle_message(_incoming("lock status", external_message_id="m1"))
-        assert "no lock report yet" in result.text.lower()
+        assert "haven't told me your lock status" in result.text.lower()
 
     def test_reports_locked(self, service: ApplicationService) -> None:
         _complete_onboarding(service)
@@ -121,7 +121,7 @@ class TestLockStatus:
         alone still gets the family-specific reply."""
         _complete_onboarding(service)
         result = service.handle_message(_incoming("lock", external_message_id="m1"))
-        assert "not a recognized `lock` command" in result.text.lower()
+        assert "lock status" in result.text.lower() and "didn't catch that" in result.text.lower()
 
     def test_lock_frobnicate_no_longer_gets_the_family_reply(self, service: ApplicationService) -> None:
         """Command Family Fallback Precision (Option A): a near-miss
@@ -153,7 +153,7 @@ class TestLockStatus:
         result_a = service.handle_message(_incoming("lock status", external_user_id="user-a", external_message_id="ma2"))
         result_b = service.handle_message(_incoming("lock status", external_user_id="user-b", external_message_id="mb1"))
         assert "locked" in result_a.text.lower()
-        assert "no lock report yet" in result_b.text.lower()
+        assert "haven't told me your lock status" in result_b.text.lower()
 
 
 class TestTaskActiveWithoutAssignment:
@@ -216,7 +216,7 @@ class TestTaskRequest:
         alone still gets the family-specific reply."""
         _complete_onboarding(service)
         result = service.handle_message(_incoming("task", external_message_id="m1"))
-        assert "not a recognized `task` command" in result.text.lower()
+        assert "your task" in result.text.lower() and "didn't catch that" in result.text.lower()
 
     def test_task_frobnicate_no_longer_gets_the_family_reply(self, service: ApplicationService) -> None:
         """Command Family Fallback Precision (Option A): see the

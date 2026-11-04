@@ -22,13 +22,18 @@ import re
 import discord
 
 from application.models import ActionSpec
+from peer_review.discord_buttons import CUSTOM_ID_TEMPLATE as PEER_REVIEW_TEMPLATE
+from peer_review.discord_buttons import PeerReviewDecisionButton
 
 logger = logging.getLogger("ai_coach_keyholder.bot.action_buttons")
 
-__all__ = ["REVIEW_CONSENT_TEMPLATE", "COACH_TEMPLATE", "ReviewConsentButton", "CoachButton", "actions_view", "REGISTERED_TEMPLATES"]
+__all__ = ["REVIEW_CONSENT_TEMPLATE", "COACH_TEMPLATE", "DM_ACTION_TEMPLATE", "ReviewConsentButton", "CoachButton", "DmActionButton", "actions_view",
+           "REGISTERED_TEMPLATES", "DM_ACTIONS_ATTRIBUTE"]
 
 REVIEW_CONSENT_TEMPLATE = r"review_consent:(?P<action>accept|decline|revoke):(?P<lock>[A-Za-z0-9_-]{1,64})"
 COACH_TEMPLATE = r"coach:(?P<action>accept|decline|kept|partly|missed):(?P<ident>[0-9a-f-]{36})"
+DM_ACTION_TEMPLATE = r"(?P<scope>exemption|infraction|hygiene|lock_report):(?P<action>[a-z0-9_]{1,20}):(?P<ident>[0-9a-f-]{36})"
+DM_ACTIONS_ATTRIBUTE = "dm_actions"              # the bot attribute: {scope: facade with press(discord_user_id=, action=, ident=) -> OutgoingMessage}
 HANDLER_ATTRIBUTE = "review_consent_dm"          # the bot attribute holding the ReviewConsentDm facade
 COACH_ATTRIBUTE = "coach_dm"                     # the bot attribute holding the CoachDm facade
 _STYLES = {"primary": discord.ButtonStyle.primary, "secondary": discord.ButtonStyle.secondary,
@@ -100,6 +105,40 @@ class CoachButton(discord.ui.DynamicItem[discord.ui.Button], template=COACH_TEMP
                 logger.warning("Could not update the coach buttons on the message.")
 
 
+class DmActionButton(discord.ui.DynamicItem[discord.ui.Button], template=DM_ACTION_TEMPLATE):
+    """One persistent button for the exemption, detector and lock report cards. The facade checks who pressed; the click is that person's explicit decision. The
+    answer may carry the next step's buttons. The card's own buttons go away, so a decision cannot be pressed twice."""
+
+    def __init__(self, scope: str, action: str, ident: str, *, label: str | None = None, style: str = "secondary") -> None:
+        super().__init__(discord.ui.Button(label=label or action.capitalize(), style=_STYLES.get(style, discord.ButtonStyle.secondary),
+                                           custom_id=f"{scope}:{action}:{ident}"))
+        self.scope, self.action, self.ident = scope, action, ident
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        return cls(match["scope"], match["action"], match["ident"], label=item.label, style=item.style.name)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        facade = (getattr(interaction.client, DM_ACTIONS_ATTRIBUTE, None) or {}).get(self.scope)
+        if facade is None:
+            await interaction.response.send_message("This isn't available right now.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            reply = await asyncio.to_thread(facade.press, discord_user_id=str(interaction.user.id), action=self.action, ident=self.ident)
+        except Exception:
+            logger.exception("A DM button failed (%s).", self.scope)
+            await interaction.followup.send("Something went wrong; please try again.")
+            return
+        view = actions_view(reply.actions) if reply.actions else None
+        await interaction.followup.send(reply.text, **({"view": view} if view is not None else {}))
+        if interaction.message is not None:
+            try:
+                await interaction.message.edit(view=None)
+            except Exception:
+                logger.warning("Could not remove the buttons from the message.")
+
+
 def remaining_actions(message: discord.Message, ident: str) -> tuple[ActionSpec, ...]:
     """The message's buttons without the card that was just decided."""
     return tuple(ActionSpec(action_id=button.custom_id, label=button.label or "", style=button.style.name)
@@ -111,6 +150,8 @@ def remaining_actions(message: discord.Message, ident: str) -> tuple[ActionSpec,
 REGISTERED_TEMPLATES = (
     (re.compile(REVIEW_CONSENT_TEMPLATE), lambda m, spec: ReviewConsentButton(m["action"], m["lock"], label=spec.label[:80], style=spec.style)),
     (re.compile(COACH_TEMPLATE), lambda m, spec: CoachButton(m["action"], m["ident"], label=spec.label[:80], style=spec.style)),
+    (re.compile(DM_ACTION_TEMPLATE), lambda m, spec: DmActionButton(m["scope"], m["action"], m["ident"], label=spec.label[:80], style=spec.style)),
+    (re.compile(PEER_REVIEW_TEMPLATE), lambda m, spec: PeerReviewDecisionButton(m["action"], m["incident"])),
 )
 
 

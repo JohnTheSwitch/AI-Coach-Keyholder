@@ -46,6 +46,9 @@ from trust_manager.repository import TrustManager
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 
+# Never a Penalty Window, never an Extension: the check-in escalation (supervision/escalation.py), pinned by a test because this package does not import supervision.
+WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE"})
+
 
 def active_hours_elapsed_from_row(row, now: datetime) -> float:
     """Same formula as penalty_engine.window.active_hours_elapsed(), but
@@ -210,6 +213,16 @@ class PenaltyEngine:
         already_consumed = tx.fetch_one("SELECT 1 FROM incident_consumption WHERE incident_id = ?", (incident_id,))
         if already_consumed is not None or tx.fetch_one("SELECT 1 FROM incident_warnings WHERE incident_id = ?", (incident_id,)):
             return None
+        if rule_group_id in WARNING_ONLY_RULE_GROUPS:
+            # Owner's safeguard (backlog_completion.md): a task or check-in failure is Trust and a Warning, whoever confirmed it. It can neither open a window nor extend one.
+            tx.execute("INSERT INTO incident_warnings (incident_id, trust_domain, rule_group_id, consumed_at) VALUES (?, ?, ?, ?)",
+                       (incident_id, trust_domain, rule_group_id, _iso(now)))
+            write_event(tx, DomainEvent(
+                event_type="penalty_warning.recorded", source_module="penalty_engine",
+                payload={"incident_id": incident_id, "trust_domain": trust_domain, "rule_group_id": rule_group_id},
+                occurred_at=now,
+            ))
+            return None
 
         window_row = tx.fetch_one(
             "SELECT * FROM penalty_windows WHERE status IN (?, ?) ORDER BY created_at DESC LIMIT 1",
@@ -353,7 +366,7 @@ class PenaltyEngine:
                 DomainEvent(
                     event_type="penalty_window.extended",
                     source_module="penalty_engine",
-                    payload={"penalty_window_id": window.id, "assigned_hours": decision.assigned_hours},
+                    payload={"penalty_window_id": window.id, "assigned_hours": decision.assigned_hours, "with_start": started},
                     occurred_at=now,
                 ),
             )

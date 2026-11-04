@@ -92,7 +92,8 @@ verified invariants.
   the model-generated conversational path.
 - **No external/hardware verification of any kind.** This module's
   entire epistemic ceiling is "what the user said" — nothing more.
-- **No Chaster or any other external provider integration.** A future,
+- **Reconciliation with Chaster lives in `infractions/lock_claims.py`** (`docs/architecture/backlog_completion.md`): a report is compared with what the provider observed, and
+  neither is ever presented as physical verification. This module itself still has no provider integration. Originally: a future,
   separate slice may add **external/provider-observed** state (a
   genuinely different kind of information than a user report) — that
   must never be silently presented as physical verification of keys

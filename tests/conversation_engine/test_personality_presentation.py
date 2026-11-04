@@ -11,6 +11,8 @@ re-verified with a real, non-neutral (Scarlett's) profile in play.
 
 from __future__ import annotations
 
+from application.natural_queries import CAPABILITIES_TEXT
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -175,7 +177,7 @@ class TestPersonalityIsPresentationOnly:
         _complete_onboarding_as_scarlett(service)
         result = service.handle_message(_incoming("lock status", external_message_id="m1"))
         assert "SHOULD NEVER BE SEEN" not in result.text
-        assert "no lock report yet" in result.text.lower()
+        assert "haven't told me your lock status" in result.text.lower()
 
     def test_personality_does_not_affect_lock_writes(self, tmp_path: Path) -> None:
         core, service = _fresh_scarlett_service(tmp_path)
@@ -338,7 +340,7 @@ class TestDeterministicCommandsUnaffectedByScarlett:
             service_b.handle_message(_incoming(text, external_message_id=f"onboard-b-{i}"))
         result_b = service_b.handle_message(_incoming("lock status", external_message_id="m1"))
 
-        assert result_a.text == result_b.text == "No lock report yet. Send `lock report locked` or `lock report unlocked`."
+        assert result_a.text == result_b.text == "You haven't told me your lock status yet."
 
     def test_help_reply_is_identical_regardless_of_selected_personality(self, tmp_path: Path) -> None:
         core, service = _fresh_scarlett_service(tmp_path)
@@ -346,8 +348,7 @@ class TestDeterministicCommandsUnaffectedByScarlett:
         result = service.handle_message(_incoming("help", external_message_id="m1"))
         # Exact contract text, unaffected by which personality is active --
         # the deterministic command path never reaches personality code.
-        assert "lock status" in result.text
-        assert "task request" in result.text
+        assert result.text == CAPABILITIES_TEXT
 
 
 # =============================================================================

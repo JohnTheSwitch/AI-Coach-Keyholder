@@ -236,7 +236,7 @@ class TestDeterministicCommandsRemainOutsidePersonality:
         _onboard_selecting_scarlett(service)
         result = service.handle_message(_incoming("lock status", external_message_id="m1"))
         assert len(model.calls) == 0
-        assert result.text == "No lock report yet. Send `lock report locked` or `lock report unlocked`."
+        assert result.text == "You haven't told me your lock status yet."
 
     def test_task_active_never_invokes_the_model(self, service: ApplicationService, model: _RecordingModel) -> None:
         _onboard_selecting_scarlett(service)

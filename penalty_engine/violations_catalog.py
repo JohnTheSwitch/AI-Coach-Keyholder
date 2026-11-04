@@ -3,7 +3,7 @@ penalty_engine/violations_catalog.py
 
 The rule-violation catalog by domain (v0.39, section 11.8). Declarative data only: no I/O, not wired yet. It records the
 owner-specified severity, the Trust drop of a first/warning offense, and side effects. Whether a code can be detected
-automatically depends on modules that do not exist yet (hygiene, status reports); those entries are marked `detectable=False`.
+automatically depends on modules that may not exist yet; those entries are marked `detectable=False`. `infractions/` detects HYGIENE_MISUSE and EPISTEMIC_MISREPRESENTATION.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _v(code, domain, severity, drop, description, side=(), detectable=True) -> V
 CATALOG: tuple[Violation, ...] = (
     # Owner decision (2026-11-03, Phase J2, philosophy 3.8 / 3.9): the only hygiene infraction is misuse of a DISCRETIONARY break.
     # Mandatory Hygiene/Health Access and the Emergency Override never create an Incident or a penalty, and have no entry here.
-    _v("HYGIENE_MISUSE", "hygiene", S.SEVERE, None, "Discretionary hygiene break used for an unauthorized purpose", detectable=False),
+    _v("HYGIENE_MISUSE", "hygiene", S.SEVERE, None, "Discretionary hygiene break used for an unauthorized purpose, or past its allowed length or number"),
     _v("CHECKIN_MISSED_FIRST", "supervision", S.MINOR, "0.02", "First missed check-in (warning)"),
     _v("CHECKIN_INSUFFICIENT", "supervision", S.MINOR, "0.01", "Insufficient check-in response after the grace window"),
     _v("CHECKIN_REPEATED_NONCOMPLIANCE", "supervision", S.MINOR, "0.06",
@@ -51,7 +51,7 @@ CATALOG: tuple[Violation, ...] = (
        detectable=False),
     _v("LOCK_RENEWAL_DELAYED", "integrity", S.MODERATE, None, "Delayed lock renewal after session completion", detectable=False),
     _v("EPISTEMIC_MISREPRESENTATION", "integrity", S.SEVERE, None,
-       "Claimed locked while the provider reports unlocked", detectable=False),
+       "Claimed locked while the provider reports unlocked"),
 )
 
 _BY_CODE = {v.code: v for v in CATALOG}

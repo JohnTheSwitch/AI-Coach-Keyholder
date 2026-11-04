@@ -37,6 +37,8 @@ class ManagedLock:
     wearer_username: str | None
     keyholder_chaster_id: str | None
     keyholder_username: str | None
+    unlocked_at: str | None = None              # `unlockedAt`: when the lock ended, the only fact that says a report was false when it was made
+    emergency_unlocked: bool | None = None
 
 
 def _str(value: Any) -> str | None:
@@ -67,4 +69,5 @@ def parse_lock(raw: Any, role: LockRole) -> ManagedLock | None:
         is_frozen=_bool(raw.get("isFrozen")), is_test_lock=_bool(raw.get("isTestLock")),
         wearer_chaster_id=wearer_id, wearer_username=wearer_name,
         keyholder_chaster_id=holder_id, keyholder_username=holder_name,
+        unlocked_at=_str(raw.get("unlockedAt")), emergency_unlocked=_bool(raw.get("emergencyUnlocked")),
     )

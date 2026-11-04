@@ -63,7 +63,17 @@ from infrastructure.database import Database as CoreDatabase
 from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
+from exemptions.service import ExemptionService, is_exemption_request
+from infractions.wiring import build_detectors, detector_loop
+from notifications.delivery import NotificationDelivery
+from notifications.dispatcher import NotificationDispatcher, notification_loop
+from notifications.queue import NotificationQueue
+from schedule_windows.windows import WindowKind, classify
 from system.composition import build_rules_and_execution, research_export_loop_for
+from system.composition import window_config_from as quiet_config_from
+from system.dm_actions import ExemptionDm, HygieneDm, InfractionDm, discord_user_resolver
+from system.penalty_notices import penalty_notice_handlers
+from system.penalty_policy import make_penalty_engine
 from chaster.api_budget import ApiBudget, BudgetedTokenManager, Lane
 from chaster.conversation_client import ChasterConversationClient
 from tenancy.services import open_platform_services
@@ -133,6 +143,13 @@ class CoachKeyholderBot(discord.Client):
         self.review_consent_dm = None            # Phase J1: system.review_consent_dm.ReviewConsentDm (owner's consent buttons)
         self.coach_dm = None                     # Phase J3: system.coach_dm.CoachDm (the wearer's Accept / Decline / outcome buttons)
         self._peer_review_task: asyncio.Task | None = None
+        self.notifications = None                # notifications.dispatcher.notification_loop coroutine
+        self._notification_task: asyncio.Task | None = None
+        self.detectors = None                    # infractions.wiring.detector_loop coroutine when a watch is active
+        self._detector_task: asyncio.Task | None = None
+        self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
+        self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
+        self.penalty_notices = None              # system.penalty_notices handlers, registered as outbox consumers
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -150,7 +167,7 @@ class CoachKeyholderBot(discord.Client):
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
                               interval_seconds=interval, supervision=supervision,
                               release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
-                              penalty_barrier=self.penalty_barrier)
+                              penalty_barrier=self.penalty_barrier, exemptions=self.exemptions, penalty_notices=self.penalty_notices)
             )
         if self.tenant_supervisor is not None:
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
@@ -160,6 +177,13 @@ class CoachKeyholderBot(discord.Client):
             self._research_task = asyncio.create_task(self.research_export, name="research-export")
         if self.peer_reviews is not None:
             self._peer_review_task = asyncio.create_task(self.peer_reviews, name="peer-review-watch")
+        if self.notifications is not None:
+            self._notification_task = asyncio.create_task(self.notifications, name="notifications")
+        if self.detectors is not None:
+            self._detector_task = asyncio.create_task(self.detectors, name="detectors")
+        if self.dm_actions:
+            from bot.action_buttons import DmActionButton
+            self.add_dynamic_items(DmActionButton)
         if self.peer_review_buttons is not None:
             from peer_review.discord_buttons import PeerReviewDecisionButton
             self.add_dynamic_items(PeerReviewDecisionButton)    # persistent: buttons on older notices keep working after a restart
@@ -487,6 +511,7 @@ def main() -> None:
         logger.info("Shared Chaster request budget: %d per minute for the keyholder account.", api_budget.limit)
     chat_tokens = background_tokens or chaster_token_manager
     check_in_sender = DiscordCheckInSender(config.db_path, core=core)
+    notification_queue = NotificationQueue(config.db_path, core=core)
 
     def check_in_complete(system_prompt: str, user_message: str) -> str:
         # The language model is used ONLY as a rubric classifier here (supervision/checkin_evaluator.py).
@@ -501,7 +526,7 @@ def main() -> None:
         lock_client=chaster_lock_client, token_manager=chaster_token_manager,
         check_in_sender=check_in_sender, check_in_complete=check_in_complete,
         keyholder_token_manager=essential_tokens,
-        halt_source=platform.halt if platform is not None else None,
+        halt_source=platform.halt if platform is not None else None, notifications=notification_queue,
     )
     if wiring.release_engine is not None:
         # The only release datum the model ever sees: a coarse enum (never a time).
@@ -558,6 +583,15 @@ def main() -> None:
     review_consent_dm = build_review_consent_dm(config, core, token_manager=chaster_token_manager, lock_client=chaster_lock_client,
                                                 connections=chaster_connections,
                                                 owner_discord_id=owner_discord_id(core, config.owner_user_id), clock=clock)
+    exemption_dm = exemption_reply = None
+    resolve_user = discord_user_resolver(core)
+    if config.enable_exemptions and config.owner_user_id:
+        wearer = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
+        exemption_dm = ExemptionDm(ExemptionService(config.db_path, core=core, owner_user_id=config.owner_user_id, penalties=make_penalty_engine(core)),
+                                   resolve_user=resolve_user, now=clock.now)
+
+        def exemption_reply(user_id, text, now):
+            return exemption_dm.service.start(user_id, now) if user_id == wearer and is_exemption_request(text) else None
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
@@ -568,9 +602,13 @@ def main() -> None:
         telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
         owner_user_id=config.owner_user_id,
         review_consent_reply=(lambda: render_overview(review_consent_dm.overview())) if review_consent_dm is not None else None,
-        coach=coach_dm,
+        coach=coach_dm, exemption_reply=exemption_reply, clock=clock,
     )
     bot = build_bot(config, db, clock, application_service)
+    bot.dm_actions["lock_report"] = application_service
+    if exemption_dm is not None:
+        bot.dm_actions["exemption"] = exemption_dm
+        bot.exemptions = exemption_dm.service
     bot.review_consent_dm = review_consent_dm
     bot.coach_dm = coach_dm
     check_in_sender.attach(bot)
@@ -641,17 +679,45 @@ def main() -> None:
     for note in peer.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if peer.watch is not None:
-        from peer_review.discord_buttons import PeerReviewButtonHandler, decision_view
-        from peer_review.wiring import build_peer_review_decisions
+        from peer_review.discord_buttons import PeerReviewButtonHandler, decision_actions
+        from peer_review.wiring import build_peer_review_decisions, queued_send
         bot.peer_review_buttons = PeerReviewButtonHandler(build_peer_review_decisions(config, core), owner_user_id=config.owner_user_id,
                                                           owner_discord_id=peer.owner_target, now=clock.now)
-        bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds, send=discord_adapter.send_message,
-                                            owner_target=peer.owner_target, view_for=decision_view, embed_for=_build_discord_embed)
+        bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds,
+                                            send=queued_send(notification_queue, user_id=config.owner_user_id, clock=clock),
+                                            owner_target=peer.owner_target, view_for=decision_actions, embed_for=lambda spec: spec)
     if bot.research_export is not None:
         logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
+    # The two detectors: read-only towards Chaster, UNCONFIRMED records only, and the keyholder's button is the only way further.
+    detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
+                                connections=chaster_connections, vacation=wiring.vacation)
+    for note in detectors.notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if detectors.signals is not None:
+        bot.dm_actions["infraction"] = InfractionDm(detectors.signals, resolve_user=resolve_user, now=clock.now)
+    if detectors.hygiene is not None:
+        bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
+    if detectors.active:
+        bot.detectors = detector_loop(detectors, clock)
+    # One outbound queue for every proactive notice: retries, quiet hours and the channel preference live here.
+    notice_user = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
+    bot.penalty_notices = penalty_notice_handlers(notice_user) if notice_user else None
+    try:
+        quiet_windows = quiet_config_from(config)
+    except ValueError:
+        quiet_windows = None
+
+    def is_quiet(now):
+        return quiet_windows is not None and classify(quiet_windows, now) is WindowKind.QUIET
+
+    bot.notifications = notification_loop(
+        NotificationDispatcher(notification_queue, is_quiet=is_quiet, deliver=NotificationDelivery(
+            discord=discord_adapter, discord_id_for=message_routes.discord_id_for, router=bot.messaging_router, embed_for=_build_discord_embed, view_for=actions_view)),
+        clock)
     # Phase J2: the watch can produce confirmed Incidents, so the outbox must be drained continuously, not only at start.
     bot.penalty_barrier = wiring.penalty_barrier
-    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, peer.watch)):
+    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, peer.watch,
+                                   bot.exemptions, detectors.signals)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, wiring.telemetry)
     bot.run(config.discord_token, log_handler=None)

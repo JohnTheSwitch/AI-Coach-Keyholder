@@ -18,6 +18,8 @@ this layer's to call).
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import functools
 import logging
 from dataclasses import replace
@@ -36,13 +38,14 @@ from advanced_mode.models import (
     OperatingMode,
 )
 from advanced_mode.repository import AdvancedMode, AdvancedModeAdministration
-from application.models import EmbedField, EmbedSpec, IncomingMessage, OutgoingMessage
+from application.models import ActionSpec, EmbedField, EmbedSpec, IncomingMessage, OutgoingMessage
 from application.onboarding_service import OnboardingService
 from application.router import CommandRouter, RequestContext
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.progress import is_progress_query, read_progress, render_progress
+from application.natural_queries import CAPABILITIES_TEXT, read_only_command
 from application.review_consent_query import is_review_consent_query
 from application.terms_notice import TERMS_NOTICE
 from application.user_service import UserService
@@ -119,7 +122,7 @@ class ApplicationService:
         check_in_listener=None,
         channel_service=None,
         coaching_memory=None, conditioning=None, telemetry=None, research=None, iron_contract=None, vacation=None,
-        owner_user_id: str | None = None, review_consent_reply=None, coach=None,
+        owner_user_id: str | None = None, review_consent_reply=None, coach=None, exemption_reply=None, clock=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -147,6 +150,10 @@ class ApplicationService:
         self._review_consent_reply = review_consent_reply
         # Phase J3: system.coach_dm.CoachDm by injection: `guidance(...)` for a turn, `present(...)` for its cards. A coach failure never touches a reply.
         self._coach = coach
+        # Callable(user_id, text, now) -> OutgoingMessage | None: the exemption entry point (exemptions/service.py, injected by the bot). The word opens the
+        # buttons; the buttons commit. Deterministic and BEFORE any model.
+        self._exemption_reply = exemption_reply
+        self._clock = clock                                  # only a button press needs it: a message brings its own time
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -268,6 +275,18 @@ class ApplicationService:
             # Phase J1 slice 2: "who can see my photos?" / "stop community review" -> the consent overview with buttons (owner only).
             if self._review_consent_reply is not None and self._is_owner(context) and is_review_consent_query(incoming.text):
                 return self._answer_review_consent()
+
+            if self._exemption_reply is not None:
+                exemption = self._exemption_reply(user.id, incoming.text, incoming.received_at)
+                if exemption is not None:
+                    return exemption
+
+            # Zero-Command UX: a natural question for a read-only command gets that command's own answer, from real records.
+            command = read_only_command(incoming.text)
+            if command is not None:
+                routed = self.router.route(command, context)
+                if routed.matched:
+                    return routed.outgoing
 
             check_in_reply = self._notify_check_in(user.id, incoming.text, incoming.received_at)
 
@@ -444,7 +463,7 @@ class ApplicationService:
         return OutgoingMessage(text=render_progress(snapshot))
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
-        return OutgoingMessage(text=self.router.help_text())
+        return OutgoingMessage(text=CAPABILITIES_TEXT)
 
     def _handle_status(self, ctx: RequestContext) -> OutgoingMessage:
         """
@@ -708,17 +727,30 @@ class ApplicationService:
         _handle_mode_invalid. Deterministic, never falls through to
         Conversation Engine."""
         return OutgoingMessage(
-            text="That's not a recognized `lock` command. Try `lock status`, `lock report locked`, "
-                 "or `lock report unlocked`."
+            text="I didn't catch that. Ask me what your lock status is, and you can update it with a button."
         )
 
     def _handle_lock_status(self, ctx: RequestContext) -> OutgoingMessage:
         state = self.lock_state.get_current_knowledge_state(ctx.user.id)
+        token = str(uuid4())                        # a fresh audit reference for each card; a press is a new report, made when it is pressed
+        actions = (ActionSpec(action_id=f"lock_report:locked:{token}", label="I'm locked"), ActionSpec(action_id=f"lock_report:unlocked:{token}", label="I'm unlocked"))
         if state == LockKnowledgeState.UNKNOWN:
-            return OutgoingMessage(text="No lock report yet. Send `lock report locked` or `lock report unlocked`.")
+            return OutgoingMessage(text="You haven't told me your lock status yet.", actions=actions)
         if state == LockKnowledgeState.LOCKED_USER_REPORTED:
-            return OutgoingMessage(text="Locked (as you reported).")
-        return OutgoingMessage(text="Unlocked (as you reported).")
+            return OutgoingMessage(text="Locked (as you reported).", actions=actions)
+        return OutgoingMessage(text="Unlocked (as you reported).", actions=actions)
+
+    def press(self, *, discord_user_id: str, action: str, ident: str) -> OutgoingMessage:
+        """The `lock_report:<locked|unlocked>:<token>` buttons. The presser's own account decides who reported; the same write as the exact phrases."""
+        if action not in ("locked", "unlocked") or self._clock is None:
+            return OutgoingMessage(text="That isn't one of the options.")
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = ?", (discord_user_id,))
+        if row is None:
+            return OutgoingMessage(text="This isn't yours to answer.")
+        status = LockReportStatus.LOCKED_USER_REPORTED if action == "locked" else LockReportStatus.UNLOCKED_USER_REPORTED
+        self.lock_state_admin.report_status(user_id=row["user_account_id"], status=status, reported_via_consent_id=f"discord_button:{ident}", now=self._clock.now())
+        return OutgoingMessage(text=f"Recorded: you reported yourself as {action}.")
 
     def _handle_lock_report_locked(self, ctx: RequestContext) -> OutgoingMessage:
         return self._report_lock_status(ctx, status=LockReportStatus.LOCKED_USER_REPORTED)
@@ -742,8 +774,7 @@ class ApplicationService:
 
     def _handle_task_invalid(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(
-            text="That's not a recognized `task` command. Try `task request`, `task active`, "
-                 "`task complete`, or `task cancel`."
+            text="I didn't catch that. Ask me what your task is, or tell me if you'd like a new one (`task request`)."
         )
 
     def _handle_chaster_connect(self, ctx: RequestContext) -> OutgoingMessage:

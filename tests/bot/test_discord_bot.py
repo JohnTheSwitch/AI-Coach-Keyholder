@@ -155,7 +155,7 @@ class TestAdapterLevelErrorHandling:
         _run(bot.on_message(message))
 
         reply_text = message.channel.send.call_args[0][0]
-        assert "available commands" in reply_text.lower()  # the REAL reply, not the fallback
+        assert "just talk to me" in reply_text.lower()  # the REAL reply, not the fallback
 
     def test_a_failure_reaching_the_application_service_yields_a_safe_reply(self, bot) -> None:
         """Simulates a failure in the adapter's own call into the

@@ -9,6 +9,7 @@ Channel-neutral messaging layer (v0.39 dual-role, Phase B). See `docs/architectu
   `handle_incoming_message` that calls an injected handler and replies with its answer (a failing handler gets a fixed neutral text).
 - `routes.py` + migration 032 (`message_routes`): per-user default channel and optional per-Chaster-lock override; no row means Discord; a `chaster` route
   must carry the conversation id (`POST /conversations/{id}`). Domain-service writes only; nothing here is reachable from a model.
+- `send_dm` (`discord_adapter.py`) is the only code that opens a DM. Proactive notices reach it through `notifications/`, check-in prompts directly (`bot/checkin_sender.py`).
 - `router.py`: `MessageRouter.send_to_user(user_id, text, chaster_lock_id=None)` picks the adapter from the stored route; a preference whose adapter is not
   registered is NOT silently redirected (opt in with `fallback_to_discord`); `send_blocking(...)` bridges worker threads (the periodic cycle).
 

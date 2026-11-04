@@ -4,7 +4,7 @@ system/periodic.py
 The periodic cycle (approved: every ~60 seconds), guarded by the same
 single-instance lease as startup so two processes never run it at once:
 
-    end a Penalty Window whose time is up -> drain the outbox -> Rules Engine evaluates pending triggers -> executor pass
+    end a Penalty Window whose time is up -> apply exemptions -> drain the outbox -> Rules Engine evaluates pending triggers -> executor pass
     -> penalty barrier queue (Phase J2) -> behavioral telemetry (Phase G1)
 
 A failure in any step is logged and never raises out of the loop.
@@ -34,7 +34,7 @@ CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
 def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
-                       release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None) -> bool:
+                       release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -43,12 +43,14 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
     try:
         penalties = make_penalty_engine(core)
         penalties.ensure_current_state(now)          # Phase J2: a window whose time is up ends here, and its event is drained below
+        if exemptions is not None:
+            exemptions.tick(now)                     # before the drain, so the barrier hears about a pause in this same cycle
         registry = build_consumer_registry(
             TrustManager(core.db_path, core=core), penalties,
             RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
             release_engine=None if release_task is None else release_task.engine,
             release_user_id=None if release_task is None else release_task.user_id,
-            conditioning=getattr(release_task, "conditioning", None),
+            conditioning=getattr(release_task, "conditioning", None), penalty_notices=penalty_notices,
         )
         process_pending_events(core, registry, claimant=process_id, now=now)
         if rules_engine is not None:
@@ -82,13 +84,13 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
                         interval_seconds: int = 60, supervision=None,
-                        release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None) -> None:
+                        release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
                 supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
-                penalty_barrier=penalty_barrier,
+                penalty_barrier=penalty_barrier, exemptions=exemptions, penalty_notices=penalty_notices,
             )
         except asyncio.CancelledError:
             raise

@@ -18,7 +18,7 @@ exactly ONE Incident that stays UNCONFIRMED until the keyholder decides (philoso
 5. Claimed Incidents are registered through `TrustManager.register_incident_report(incident_id=...)` (rule group `peer_review_rejection`,
    Trust domain `PEER_REVIEW_TRUST_DOMAIN`, evidence: impact LOW, confidence LOW). The id is chosen in advance, so a retry after a crash
    fails on the primary key instead of duplicating the Incident.
-6. The owner gets a Discord DM (once; retried until the channel accepts it) naming the incident id and the CLI to decide.
+6. The owner gets a Discord DM through the notification queue (`notifications/`), naming the incident id, with the buttons to decide.
 
 ## No double jeopardy
 

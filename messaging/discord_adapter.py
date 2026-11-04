@@ -16,6 +16,7 @@ DiscordMessagingAdapter (Phase B): the Discord side of the messaging layer. It w
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import Awaitable, Callable
 
 from messaging.adapter import BaseMessagingAdapter
@@ -23,7 +24,7 @@ from messaging.models import ChannelType, UnifiedMessage
 
 logger = logging.getLogger("ai_coach_keyholder.messaging.discord")
 
-__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY"]
+__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY", "DmOutcome", "send_dm"]
 
 DISCORD_MAX_MESSAGE_CHARS = 2000
 FAILURE_REPLY = "Something went wrong handling that. It's been logged."
@@ -43,6 +44,32 @@ def split_message(text: str, limit: int = DISCORD_MAX_MESSAGE_CHARS) -> list[str
     return [c for c in chunks if c.strip()]
 
 
+class DmOutcome(StrEnum):
+    DELIVERED = "delivered"
+    UNDELIVERABLE = "undeliverable"                # provably not sent: DMs closed, or no such user
+    UNKNOWN = "unknown"                            # a timeout or server error: it may or may not have arrived
+
+
+async def send_dm(client, discord_id: int, content: str, *, view=None, embed=None) -> DmOutcome:
+    """The only place in the project that opens a DM. Everything proactive ends here, the check-in prompts included. The exception names are compared because
+    this package stays free of `discord` imports; a chunked message that fails half way is UNKNOWN, since part of it arrived."""
+    try:
+        user = await client.fetch_user(discord_id)
+        if embed is not None:                      # Phase J1: the embed carries the whole message; `content` is the fallback text
+            await user.send(embed=embed, **({"view": view} if view is not None else {}))
+            return DmOutcome.DELIVERED
+        chunks = split_message(content)
+        for i, chunk in enumerate(chunks):
+            if view is not None and i == len(chunks) - 1:
+                await user.send(chunk, view=view)
+            else:
+                await user.send(chunk)
+        return DmOutcome.DELIVERED
+    except Exception as exc:
+        logger.warning("Discord delivery failed (%s).", type(exc).__name__)
+        return DmOutcome.UNDELIVERABLE if type(exc).__name__ in ("Forbidden", "NotFound") else DmOutcome.UNKNOWN
+
+
 class DiscordMessagingAdapter(BaseMessagingAdapter):
     channel_type = ChannelType.DISCORD
 
@@ -59,28 +86,17 @@ class DiscordMessagingAdapter(BaseMessagingAdapter):
         return self._client
 
     async def send_message(self, target_id: str, content: str, *, view=None, embed=None) -> bool:
+        return await self.send_outcome(target_id, content, view=view, embed=embed) is DmOutcome.DELIVERED
+
+    async def send_outcome(self, target_id: str, content: str, *, view=None, embed=None) -> DmOutcome:
         client = self._client
         if client is None or not client.is_ready() or not isinstance(content, str) or not content.strip():
-            return False
+            return DmOutcome.UNKNOWN                # not ready yet is a matter of time, not a closed door
         try:
             discord_id = int(target_id)
         except (TypeError, ValueError):
-            return False
-        try:
-            user = await client.fetch_user(discord_id)
-            if embed is not None:                  # Phase J1: the embed carries the whole message; `content` is the fallback text
-                await user.send(embed=embed, **({"view": view} if view is not None else {}))
-                return True
-            chunks = split_message(content)
-            for i, chunk in enumerate(chunks):
-                if view is not None and i == len(chunks) - 1:
-                    await user.send(chunk, view=view)
-                else:
-                    await user.send(chunk)
-            return True
-        except Exception as exc:       # Forbidden (DMs closed), NotFound, HTTP failures: all simply "not delivered"
-            logger.warning("Discord delivery failed (%s).", type(exc).__name__)
-            return False
+            return DmOutcome.UNDELIVERABLE
+        return await send_dm(client, discord_id, content, view=view, embed=embed)
 
     def unify(self, message, user_id: str) -> UnifiedMessage:
         async def respond(text: str) -> bool:

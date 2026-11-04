@@ -58,6 +58,7 @@ LOCKS_URL = "https://api.chaster.app/locks"
 KEYHOLDER_SEARCH_URL = "https://api.chaster.app/keyholder/locks/search"      # POST, scope `keyholder`
 TASK_HISTORY_URL = "https://api.chaster.app/extensions/tasks/{lock_id}/history"          # GET, Phase I4
 VERIFICATION_PICTURES_URL = "https://api.chaster.app/locks/{lock_id}/verification-pictures"  # GET, Phase I4
+TEMPORARY_OPENING_URL = "https://api.chaster.app/extensions/temporary-opening/{lock_id}"       # GET, read-only: is the lock open right now
 _LOCK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 KEYHOLDER_PAGE_SIZE = 50                                                      # the documented maximum
 KEYHOLDER_MAX_PAGES = 20                                                       # safety bound (1000 locks)
@@ -165,6 +166,31 @@ class ChasterLockClient:
         """READ-ONLY (Phase I4): `GET /locks/{lockId}/verification-pictures` (VerificationPictureController_getVerificationPictures,
         scope `locks`), a list of VerificationPictureHistoryEntry. Raises ChasterLockApiError on any failure."""
         return self._get_list(access_token, lock_id, VERIFICATION_PICTURES_URL, "verification picture history")
+
+    def get_temporary_opening(self, *, access_token: str, lock_id: str) -> dict:
+        """READ-ONLY: `GET /extensions/temporary-opening/{lockId}`, a TemporaryOpeningStatusDto (`openedAt`, null when the lock is not open). Raises
+        ChasterLockApiError on any failure; a lock without the extension answers with a status_code of 404."""
+        if not access_token or not access_token.strip():
+            raise ValueError("access_token must be a non-empty string.")
+        if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id):
+            raise ValueError("lock_id must be 1-64 characters of letters, digits, '-' or '_'.")
+        try:
+            response = send_with_ordered_headers(
+                "GET", TEMPORARY_OPENING_URL.format(lock_id=lock_id),
+                headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT},
+                timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+            )
+        except requests.RequestException as exc:
+            raise ChasterLockApiError("Network error contacting Chaster's temporary-opening endpoint.") from exc
+        if response.status_code != 200:
+            raise ChasterLockApiError(f"Chaster's temporary-opening endpoint returned HTTP {response.status_code}.", status_code=response.status_code)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChasterLockApiError("Chaster's temporary-opening endpoint returned a response this application could not parse.") from exc
+        if not isinstance(body, dict):
+            raise ChasterLockApiError("Chaster's temporary-opening endpoint returned an unexpected response shape (expected an object).")
+        return body
 
     def _get_list(self, access_token: str, lock_id: str, url_template: str, what: str) -> list[dict]:
         if not access_token or not access_token.strip():

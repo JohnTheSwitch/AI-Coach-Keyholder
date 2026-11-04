@@ -71,7 +71,7 @@ Status: COMPLETE (owner, 2026-11-04). J1 slices 1 and 2 (sections 3.1, 3.2), J2 
   incident id, how to decide) with the Confirm / Dismiss buttons; the watch alert (red) and recovery note (green) are embeds too. The
   plain text stays the fallback. `DiscordMessagingAdapter.send_message(..., embed=)` sends the embed and the buttons as one message.
 
-### 3.3 J1 slices carried forward (not built)
+### 3.3 J1 slices carried forward (BUILT 2026-11-04, see `backlog_completion.md`)
 
 - **Zero-command migration.** Replace `help`'s command list with a short natural description of what the bot can do; accept natural
   phrasings for the read-only commands ("what's my task?", "am I on vacation?"); keep exact, deterministic phrases (or buttons) for every
@@ -89,7 +89,7 @@ The owner's conflict review (six decisions) supersedes the earlier raw-hours des
 | Event | Consequence |
 |---|---|
 | Task or goal failure | Trust and token earning ONLY. Never a Penalty Window, a freeze or a Chaster change. The shipped `DEFAULT_RULESET` has no `ADD_TIME` rule. |
-| Missed check-ins | Trust (per-miss evidence) and, at 3 (consecutive, or within 48 h), a Warning DM. Never a release veto. The escalation's Incident stays UNCONFIRMED; only the keyholder's `check-in-escalations confirm` could take it further. |
+| Missed check-ins | Trust (per-miss evidence) and, at 3 (consecutive, or within 48 h), a Warning DM. Never a release veto. The escalation's Incident stays UNCONFIRMED; the keyholder's `check-in-escalations confirm` records a Warning and nothing more (`backlog_completion.md` 5). |
 | Confirmed infraction (rejected photo; `HYGIENE_MISUSE`; lying about lock status) | Trust drops; the Penalty Engine alone decides: a first minor offense is a Warning, a repeated or severe one a Penalty Window. |
 | Emergency Override, Mandatory Health Access | NEVER an Incident or a penalty (philosophy 3.8, 3.9). The hygiene catalog holds only `HYGIENE_MISUSE`. |
 
@@ -134,10 +134,9 @@ Diagnostics: `python -m cli penalty-status --owner-id <id>`. Switches: `ENABLE_P
 
 ### 4.4 Not built, or for the owner to decide
 
-- Nothing in production approves an exemption yet: `PenaltyEngine.freeze()` has no caller, so the exemption release is ready but has no trigger.
-- `EPISTEMIC_MISREPRESENTATION` and `HYGIENE_MISUSE` have no detector; a confirmed photo rejection is the only working infraction today.
-- The escalation's unconfirmed Incident is kept for the keyholder's manual review (owner decision, 2026-11-04): `check-in-escalations confirm` can lead
-  to a Warning or Window through that decision and in no other way.
+- Exemptions and both detectors: built, `backlog_completion.md`.
+- The escalation's unconfirmed Incident is kept for the keyholder's manual review (owner decision, 2026-11-04): `check-in-escalations confirm` leads
+  to a Warning and never further (superseded 2026-11-04, `backlog_completion.md` 5).
 - The Release Engine stays off (`ENABLE_RELEASE_ENGINE`, it needs `CHASTER_EXECUTION_WEARER_USER_ID`), so tokens and releases are not live yet.
 
 ### 4.5 Zero-Time-Modification (owner, 2026-11-04)
@@ -258,7 +257,7 @@ the model's own notes.
 
 ### 6.2 Carried forward, outside Phase J
 
-The zero-command migration and the notification engine (section 3.3), with the numbered questions below that belong to them.
+Questions 1 to 3 are closed by `backlog_completion.md`, which also lists what stays open for the owner.
 
 1. **Which text commands are retired?** Proposed: keep every consent/safety phrase exactly (`forget all`/`yes`, `mode ...`, `research ...`,
    `conditioning ...`, `vacation ...`, `halt`, `resume`, `leave confirm`, `accept`, `decline`, `chaster connect/disconnect`) but stop

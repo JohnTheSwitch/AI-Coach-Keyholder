@@ -275,8 +275,8 @@ class OnboardingService:
         entry = get_identity(preferences.identity_id) if preferences.identity_id else None
         name = entry.display_name(preferences.language or "en") if entry else "your AI"
         return (
-            f"All set! You're paired with {name}. Send `help` to see what I can do.\n\n{TERMS_NOTICE}"
+            f"All set! You're paired with {name}. Just ask me what I can do.\n\n{TERMS_NOTICE}"
         )
 
     def _welcome_back_text(self, preferences: UserPreferences) -> str:
-        return "You're all set up already. Send `help` to see what I can do."
+        return "You're all set up already. Just ask me what I can do."

@@ -100,7 +100,7 @@ class TestFactory:
         runtime = w.factory.build(t.id)
         assert runtime.db_path == w.platform.tenant_dir / f"{t.id}.sqlite" and runtime.db_path.exists()
         with runtime.core.transaction() as tx:
-            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 46
+            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 47
             identity = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = '2000002'")
         assert identity["user_account_id"] == runtime.wearer_user_id
 
@@ -166,7 +166,7 @@ class TestIsolation:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM user_channel_identities WHERE external_id = '3000003'")["n"] == 0
         assert any("ZEBRA" in p for p in w.model.prompts)                                            # A's own text did reach the model for A
         seen_before = len(w.model.prompts)
-        for text in ("first", "english", "neutral", "alex", "what do you know about me?"):
+        for text in ("first", "english", "neutral", "alex", "how should I plan my week?"):
             w.say(rb, "3000003", text)
         assert len(w.model.prompts) > seen_before                                                    # B really produced model prompts ...
         assert not any("ZEBRA" in p for p in w.model.prompts[seen_before:])                          # ... and none contains A's text
@@ -437,4 +437,4 @@ class TestImportBoundaries:
         assert offenders == []
 
     def test_the_main_database_schema_is_unchanged_by_phase_e2(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 46
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 47
