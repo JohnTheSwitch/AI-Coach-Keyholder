@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**4551 passing tests** across the whole repository (`pytest`), including
+**4601 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -117,8 +117,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Forty-seven sequential database migrations are applied so far
-(`database/migrations/001` through `047`), covering the initial Phase 0
+Forty-eight sequential database migrations are applied so far
+(`database/migrations/001` through `048`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application

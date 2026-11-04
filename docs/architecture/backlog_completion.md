@@ -93,6 +93,7 @@ ends by time or "I'm back" -> resume -> freeze intent -> barrier
 - **Who decides:** the keyholder's button. Never a model, and nothing under `conversation_engine` or `coach` can import this.
 - **I7:** `decide()` reads the request only, and the keyholder's card does not mention a window. Applying is a separate step, `tick()`, which also pauses a window that starts during
   an exemption.
+- **It opens the lock (owner, 2026-11-04):** an approval also triggers a hygiene opening on `EXEMPTION_LOCK_ID` (default `PENALTY_FREEZE_LOCK_ID`), with or without a Penalty Window, because lifting a freeze leaves a lock locked. It raises `openingTime` to the approved length and clears the cooldown first, and puts both back. **"I'm back" is checked, not believed:** still open keeps the exemption running; a relock is compared with the approved time using Chaster's own log. Late goes to `infraction_signals` (health answer first, then the keyholder), and with no `hygiene` domain the keyholder gets a plain note. Chaster can show that the lock was relocked, not that the device is on. Never past the runtime halt: a halted approval opens when the halt clears, or not at all once its time is over. The combination never passes through the bot.
 - **Time:** no hour moves anywhere. Only the frozen flag and the Penalty Window's own countdown, and the redemption hold stays on.
 - **Safety:** every message says an urgent health or safety matter needs none of this.
 - **Length:** 6 h, 24 h, 3 days or 7 days. Longer is what a vacation is for.

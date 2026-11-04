@@ -14,7 +14,7 @@ What this system can do on Chaster, from three sources, on 2026-11-04: the offic
 | The list is the whole truth | A slug left out is removed. A new slug is added. |
 | A slug that stays is updated in place | `_id`, `createdAt` and `userData` survive. Resending an identical list changes nothing at all, not even `updatedAt`. |
 | Config edit | Applied at once. Does not touch cooldowns. |
-| `regularity` edit | Applied at once. `nextActionDate` did not move. |
+| `regularity` edit | Applied at once. `nextActionDate` is the last action plus `regularity`, so **a shorter regularity brings the next action forward** (verified with a cooldown running). |
 | Removing, then adding back | A new `_id` (verified on `pillory`, which holds no state). So expect **`userData` to be lost**: for `tasks` that would be the wearer's task list, for `verification-picture` the history. Deliberately not tested on those two. |
 | Invalid request | 400 with a clear message, and nothing is applied: a bad item does not half-apply the list. A mode the extension does not offer: "The selected mode is not supported by this extension." Unknown slug: "Extension x not found". |
 | A frozen lock | Editable. The frozen state, the end date and the status were unaffected. |
@@ -82,13 +82,19 @@ the old value stays (verified on `simon-memory-game`). Its config lives behind i
 | `POST /locks/{id}/permissions/proposal` (+ accept, reject, withdraw) | Change the permission contract. Parts that only widen the other party apply at once | Spec. A `critical_change` in spirit |
 | `POST /conversations/{id}` | Chat | In use (Chaster channel) |
 
+### Hygiene opening as an exemption (owner's design, 2026-11-04, built)
+
+Verified live on `6aca95c...`, frozen, as keyholder: `POST /extensions/temporary-opening/{id}/open` with `{}` answers 201. The lock stays `locked` and frozen, `openedAt` is set, and the cooldown starts. The wearer relocks in Chaster (here from the second account), which clears `openedAt`. The log gets `temporary_opening_opened` and `temporary_opening_locked` with exact times, which is the proof the exemption's "I'm back" uses. Raising `openingTime` to 21600 worked. Removing and re-adding the extension restarts the cooldown from now, so don't.
+
+The owner lifted the ban on `/open` for this purpose: only `chaster_execution/temporary_opening.py` calls it, only for an approved exemption, and never past the runtime halt. Resuming needs a `combinationId` (`POST /combinations/code`); the bot does not do that, the wearer relocks in Chaster.
+
 ### Never, for the reasons given
 
 | Endpoint | Why |
 |---|---|
 | `POST /locks/{id}/unlock`, `/emergency-unlock` | Owner's ban. It would also mean setting the lock up again |
 | `POST /locks/{id}/update-time` | Zero-Time-Modification |
-| `POST /extensions/temporary-opening/{id}/open`, `/resume`, `/combination` | Physically opens the lock and hands out the combination |
+| `POST /extensions/temporary-opening/{id}/resume`, `/combination` | The combination stays between the wearer and Chaster. `/open` has one narrow use, above |
 | `POST /locks/{id}/archive`, `/resign`, `/convert-to-self-lock`, `/trust-keyholder`, `/max-limit-date`, `PUT .../deserted-combination-recovery-policy` | Irreversible, or end the keyholding |
 
 ## 3. Permissions

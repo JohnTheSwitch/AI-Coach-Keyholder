@@ -172,6 +172,29 @@ def plan_extension_policy(config: LockConfiguration) -> ReviewPlan:
     return _plan(config, enforce, require_review_extensions=False)
 
 
+def plan_opening_settings(config: LockConfiguration, *, opening_seconds, regularity) -> ReviewPlan:
+    """The hygiene opening's length and regularity, for an approved exemption and for putting them back. The late-relock penalty stays as REQUIRED_SETTINGS says, and everything else is sent back as read."""
+
+    def settings(ext, cfg: dict) -> list[FieldChange]:
+        if ext.slug != "temporary-opening":
+            return []
+        changes = []
+        for name, value in ((*REQUIRED_SETTINGS[ext.slug].items(), ("openingTime", opening_seconds))):
+            if cfg.get(name) != value:
+                changes.append(FieldChange(slug=ext.slug, field=name, before=str(cfg.get(name)), after=str(value)))
+                cfg[name] = value
+        return changes
+
+    plan = _plan(config, settings, require_review_extensions=False)
+    extension = config.extension("temporary-opening")
+    if extension is None or plan.refusal is not None or extension.regularity == regularity:
+        return plan
+    body = copy.deepcopy(plan.body)
+    next(e for e in body["extensions"] if e["slug"] == "temporary-opening")["regularity"] = int(regularity) if float(regularity).is_integer() else regularity
+    return ReviewPlan(lock_id=plan.lock_id, plan_id=canonical_digest(body), unchanged=plan.unchanged, refusal=None, body=body,
+                      changes=(*plan.changes, FieldChange(slug="temporary-opening", field="regularity", before=str(extension.regularity), after=str(regularity))))
+
+
 def _plan(config: LockConfiguration, transform, *, remove: tuple[str, ...] = (), require_review_extensions: bool = True) -> ReviewPlan:
     """The complete body: every extension in its read order, each config deep-copied and changed only by `transform(ext, cfg)`, which
     mutates `cfg` and returns the FieldChanges it made. An extension whose config ends up equal to what was read is `unchanged`; a slug in

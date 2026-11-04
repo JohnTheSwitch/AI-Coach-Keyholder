@@ -192,6 +192,31 @@ class ChasterLockClient:
             raise ChasterLockApiError("Chaster's temporary-opening endpoint returned an unexpected response shape (expected an object).")
         return body
 
+    def get_lock_history(self, *, access_token: str, lock_id: str, limit: int = 50) -> list[dict]:
+        """READ-ONLY, though a POST by Chaster's own design: `POST /locks/{lockId}/history` (`limit`, at most 100). Returns its `results`, newest first. Raises ChasterLockApiError on any failure."""
+        if not access_token or not access_token.strip():
+            raise ValueError("access_token must be a non-empty string.")
+        if not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id):
+            raise ValueError("lock_id must be 1-64 characters of letters, digits, '-' or '_'.")
+        try:
+            response = send_with_ordered_headers(
+                "POST", f"{LOCKS_URL}/{lock_id}/history", json={"limit": min(limit, 100)},
+                headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT, "Content-Type": "application/json"},
+                timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+            )
+        except requests.RequestException as exc:
+            raise ChasterLockApiError("Network error contacting Chaster's history endpoint.") from exc
+        if response.status_code not in (200, 201):
+            raise ChasterLockApiError(f"Chaster's history endpoint returned HTTP {response.status_code}.", status_code=response.status_code)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChasterLockApiError("Chaster's history endpoint returned a response this application could not parse.") from exc
+        results = body.get("results") if isinstance(body, dict) else None
+        if not isinstance(results, list):
+            raise ChasterLockApiError("Chaster's history endpoint returned an unexpected response shape.")
+        return [entry for entry in results if isinstance(entry, dict)]
+
     def _get_list(self, access_token: str, lock_id: str, url_template: str, what: str) -> list[dict]:
         if not access_token or not access_token.strip():
             raise ValueError("access_token must be a non-empty string.")

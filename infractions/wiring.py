@@ -21,6 +21,7 @@ from chaster.lock_directory import LockDirectory
 from chaster.managed_locks import ManagedLock
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.time_format import parse_iso
 from infractions.excuses import Excuses
 from infractions.hygiene import HygieneWatch, OpeningNotAvailable
 from infractions.lock_claims import LockClaimWatch
@@ -30,7 +31,7 @@ from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.infractions.wiring")
 
-__all__ = ["DetectorWiring", "build_detectors", "detector_loop"]
+__all__ = ["DetectorWiring", "build_detectors", "detector_loop", "overrun_signal"]
 
 
 @dataclass
@@ -40,10 +41,16 @@ class DetectorWiring:
     lock_claims: LockClaimWatch | None = None
     interval_seconds: int = 120
     notes: list[str] = field(default_factory=list)
+    core: CoreDatabase | None = None
 
     @property
     def active(self) -> bool:
-        return self.hygiene is not None or self.lock_claims is not None
+        return self.signals is not None
+
+    def _exemption_window(self, signal: Signal) -> tuple[datetime, datetime]:
+        with self.core.transaction() as tx:
+            row = tx.fetch_one("SELECT expires_at, relocked_at FROM wear_exemptions WHERE id = ?", (signal.subject_id,))
+        return parse_iso(row["expires_at"]), parse_iso(row["relocked_at"])
 
     def run(self, now: datetime) -> list[str]:
         """One pass. Each step on its own, so one failure never silences the other, and a read problem is only reported."""
@@ -61,17 +68,32 @@ class DetectorWiring:
         return problems
 
     def _window_of(self, signal: Signal) -> tuple[datetime, datetime]:
+        if signal.kind is SignalKind.EXEMPTION_OVERRUN:
+            return self._exemption_window(signal)
         watch = self.lock_claims if signal.kind is SignalKind.LOCK_CLAIM else self.hygiene
         if watch is None:
             return signal.review_after, signal.review_after
         return watch.signal_window(signal.subject_id)
 
 
+def overrun_signal(signals: InfractionSignals, *, trust_domain: str):
+    """`raise_overrun` for ExemptionService: a late relock takes the same path as every detection, health answer first."""
+
+    def raise_overrun(tx, row: dict, _relocked_at: datetime, now: datetime) -> bool:
+        return signals.raise_in_transaction(tx, user_id=row["user_id"], kind=SignalKind.EXEMPTION_OVERRUN, subject_id=row["id"], trust_domain=trust_domain, now=now,
+                                            detail="An exemption's lock was relocked after the approved time.",
+                                            wearer_text="You relocked after your exemption's approved time. If it was a health or safety need, tell me below and that's the end of it. "
+                                                        "Otherwise it goes to your keyholder to look at.")
+
+    return raise_overrun
+
+
 def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, connections, vacation=None) -> DetectorWiring:
-    out = DetectorWiring(interval_seconds=max(60, int(getattr(config, "detector_poll_seconds", 120) or 120)))
+    out = DetectorWiring(interval_seconds=max(60, int(getattr(config, "detector_poll_seconds", 120) or 120)), core=core)
     want_hygiene = bool(getattr(config, "enable_hygiene_watch", False))
     want_claims = bool(getattr(config, "enable_lock_claim_watch", False))
-    if not want_hygiene and not want_claims:
+    want_signals = bool(getattr(config, "enable_exemptions", False))        # a late exemption relock takes the signals path even with both watches off
+    if not want_hygiene and not want_claims and not want_signals:
         return out
     account = getattr(config, "chaster_execution_keyholder_user_id", None)
     owner = getattr(config, "owner_user_id", None)

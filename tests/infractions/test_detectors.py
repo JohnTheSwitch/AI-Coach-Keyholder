@@ -572,7 +572,7 @@ class TestWiring:
 
     def test_the_only_new_chaster_call_is_a_get(self) -> None:
         source = (ROOT / "chaster" / "lock_client.py").read_text(encoding="utf-8")
-        body = source[source.index("def get_temporary_opening"):source.index("def _get_list")]
+        body = source[source.index("def get_temporary_opening"):source.index("def get_lock_history")]
         assert '"GET", TEMPORARY_OPENING_URL' in body and "POST" not in body
 
 

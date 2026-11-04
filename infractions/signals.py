@@ -51,11 +51,14 @@ class SignalKind(StrEnum):
     HYGIENE_DURATION = "hygiene_duration"
     HYGIENE_FREQUENCY = "hygiene_frequency"
     LOCK_CLAIM = "lock_claim"
+    EXEMPTION_OVERRUN = "exemption_overrun"
 
 
-RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION"}
+RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
+               SignalKind.EXEMPTION_OVERRUN: "HYGIENE_MISUSE"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious.
-EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE}
+EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
+            SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE}
 
 
 class Decision(StrEnum):
@@ -118,7 +121,8 @@ class InfractionSignals:
         for signal in map(_signal, rows):
             try:
                 start, end = window_of(signal)
-                reason = self._excuses.reason(signal.user_id, start, end)
+                # An overrun's own exemption is what was overrun: it cannot also excuse it.
+                reason = self._excuses.reason(signal.user_id, start, end, ignore_exemption=signal.subject_id if signal.kind is SignalKind.EXEMPTION_OVERRUN else None)
                 if reason is not None:
                     self._clear(signal.id, reason, now, statuses=("waiting",))
                     continue

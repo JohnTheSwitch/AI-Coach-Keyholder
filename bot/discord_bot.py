@@ -64,12 +64,13 @@ from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from exemptions.service import ExemptionService, is_exemption_request
-from infractions.wiring import build_detectors, detector_loop
+from infractions.wiring import build_detectors, detector_loop, overrun_signal
+from trust_manager.repository import TrustManager
 from notifications.delivery import NotificationDelivery
 from notifications.dispatcher import NotificationDispatcher, notification_loop
 from notifications.queue import NotificationQueue
 from schedule_windows.windows import WindowKind, classify
-from system.composition import build_extension_guard, build_rules_and_execution, extension_guard_loop, research_export_loop_for
+from system.composition import build_exemption_opening, build_extension_guard, build_rules_and_execution, extension_guard_loop, research_export_loop_for
 from system.composition import window_config_from as quiet_config_from
 from system.dm_actions import ExemptionDm, HygieneDm, InfractionDm, discord_user_resolver
 from system.penalty_notices import penalty_notice_handlers
@@ -591,7 +592,10 @@ def main() -> None:
     resolve_user = discord_user_resolver(core)
     if config.enable_exemptions and config.owner_user_id:
         wearer = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
-        exemption_dm = ExemptionDm(ExemptionService(config.db_path, core=core, owner_user_id=config.owner_user_id, penalties=make_penalty_engine(core)),
+        exemption_opening = build_exemption_opening(config, core, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
+                                                    halt_source=platform.halt if platform is not None else None, clock=clock)
+        logger.info("Exemptions enabled: %s.", f"an approval opens lock {exemption_opening.lock_id}" if exemption_opening is not None else "no lock configured, an approval opens nothing")
+        exemption_dm = ExemptionDm(ExemptionService(config.db_path, core=core, owner_user_id=config.owner_user_id, penalties=make_penalty_engine(core), opening=exemption_opening),
                                    resolve_user=resolve_user, now=clock.now)
 
         def exemption_reply(user_id, text, now):
@@ -703,6 +707,10 @@ def main() -> None:
         bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
     if detectors.active:
         bot.detectors = detector_loop(detectors, clock)
+    if exemption_dm is not None and detectors.signals is not None:
+        domain = config.hygiene_trust_domain or "hygiene"
+        if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:
+            exemption_dm.service.set_overrun_signal(overrun_signal(detectors.signals, trust_domain=domain))
     # The bot keeps the owner's required lock settings true on Chaster by itself, never past a halt.
     extension_guard = build_extension_guard(config, core, notifications=notification_queue, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
                                             connections=chaster_connections, halt_source=platform.halt if platform is not None else None, clock=clock)

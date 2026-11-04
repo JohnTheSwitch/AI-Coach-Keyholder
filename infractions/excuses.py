@@ -21,14 +21,14 @@ class Excuses:
         self._core = core
         self._on_vacation = on_vacation
 
-    def reason(self, user_id: str, start: datetime, end: datetime) -> str | None:
+    def reason(self, user_id: str, start: datetime, end: datetime, *, ignore_exemption: str | None = None) -> str | None:
         """Why `[start, end]` needs no judgment, or None. A failed read excuses: a doubt never counts against the wearer (2.12)."""
         try:
             with self._core.transaction() as tx:
                 emergency = tx.fetch_one("SELECT 1 FROM freeze_periods WHERE reason = 'emergency_override' AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)",
                                          (_iso(end), _iso(start)))
                 exemption = tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND decided_at IS NOT NULL AND decided_at <= ? AND status IN ('approved', 'ended') "
-                                         "AND expires_at IS NOT NULL AND COALESCE(ended_at, expires_at) >= ?", (user_id, _iso(end), _iso(start)))
+                                         "AND expires_at IS NOT NULL AND COALESCE(ended_at, expires_at) >= ? AND id != ?", (user_id, _iso(end), _iso(start), ignore_exemption or ""))
             if emergency is not None:
                 return "emergency_override"
             if exemption is not None:

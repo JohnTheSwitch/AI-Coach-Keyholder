@@ -162,6 +162,23 @@ def build_extension_guard(config, core, *, notifications, token_manager, lock_cl
                           account_user_id=account, list_lock_ids=list_lock_ids, notify=notify)
 
 
+def build_exemption_opening(config, core, *, token_manager, lock_client, halt_source=None, clock: Clock | None = None):
+    """What opens the lock for an approved exemption, or None when no lock is configured. Reached through this wiring layer only."""
+    from chaster._http import send_with_ordered_headers
+    from chaster.extension_config import LockConfigurationReader
+    from chaster_execution.temporary_opening import ExemptionOpening
+
+    lock_id = getattr(config, "exemption_lock_id", None) or getattr(config, "penalty_freeze_lock_id", None)
+    account = getattr(config, "chaster_execution_keyholder_user_id", None)
+    if not lock_id or not account or token_manager is None or lock_client is None:
+        return None
+    source = clock or SystemClock()
+    return ExemptionOpening(lock_id=lock_id, account_user_id=account, control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source),
+                            reader=LockConfigurationReader(token_manager=token_manager, lock_client=lock_client),
+                            transport=ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=account, clock=source),
+                            token_manager=token_manager, lock_client=lock_client, send=send_with_ordered_headers, clock=source)
+
+
 def _warning_notifier(notifications, sender, user_id: str, clock: Clock | None):
     """`notify(text) -> accepted`. With the queue, "accepted" means durably queued, and the queue owns the retries; a tenant has no queue and sends directly."""
     if notifications is None:
