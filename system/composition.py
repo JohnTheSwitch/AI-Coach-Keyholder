@@ -32,6 +32,7 @@ from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
 from supervision.repository import SupervisionService
 from system.daily_evaluation import DailyEvaluationTask
+from system.release_notice import ReleaseNotifier
 from system.release_tick import ReleaseEnginePeriodicTask
 from trust_manager.models import (
     BreachDirectness,
@@ -338,7 +339,6 @@ def build_rules_and_execution(
             else:
                 penalties = PenaltyEngine(config.db_path, core=core)      # read-only use (window state)
                 supervision = out.supervision
-                check_ins = out.check_ins
                 out.release_engine = engine
                 out.release_user_id = wearer_id
                 out.release_task = ReleaseEnginePeriodicTask(
@@ -346,10 +346,13 @@ def build_rules_and_execution(
                     get_observation=get_obs, refresh_observation=refresh_obs,
                     penalty_window_active=lambda: penalties.get_active_or_frozen_penalty_window() is not None or out.penalty_hold.is_active(),
                     supervision_active=(lambda: supervision.is_active()) if supervision is not None else (lambda: False),
-                    last_check_in_missed=(lambda: check_ins.last_check_in_missed()) if check_ins is not None else (lambda: False),
                     is_halted=control.is_halted, can_execute=out.executor is not None,
                     max_hold=timedelta(hours=config.max_barrier_hold_hours),
                 )
+                if check_in_sender is not None:
+                    out.release_task.notifier = ReleaseNotifier(
+                        core, user_id=wearer_id, send=lambda text, u=wearer_id: check_in_sender.send(user_id=u, text=text),
+                        today=lambda now: window_cfg.local(now).date(), check_ins=out.check_ins)
                 conditioning = None
                 if getattr(config, "enable_slave_training", False):
                     from release_engine.conditioning import ProgressiveConditioning

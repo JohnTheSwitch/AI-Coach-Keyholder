@@ -17,8 +17,10 @@ the plan id and every reason a real write would be refused. It sends nothing, wr
   6. lock         the lock is `locked` and the account's role on it holds `lock.extensions.edit`;
   7. plan         the body could be rebuilt faithfully, there is something to change, and its plan id equals the one from the dry run
                   (so exactly what was reviewed is sent, and a lock that changed since the dry run is refused).
-  8. consent      (Phase I3, community direction only) the latest consent record for this lock approves the CURRENT notice
-                  (chaster_execution/review_consent.py); without it nothing that widens who sees the photos is sent.
+  8. consent      (community direction only, chaster_execution/review_consent.py) an explicit decline or revocation refuses. A lock the
+                  connected account wears needs nothing more (the notice is informational); a lock worn by another account still needs
+                  that wearer's approval, or the owner's attestation that the account is the owner's own, because that wearer may never
+                  have seen any notice.
 A real attempt is audited FIRST as `attempting` (migration 042), then sent once (never retried), then the lock is read again: `applied`
 only when the review settings now match and the same extensions are still on the lock, otherwise `applied_unverified`.
 
@@ -84,7 +86,7 @@ class ExtensionReviewOutcome(StrEnum):
     NOT_PERMITTED = "not_permitted"
     PLAN_REFUSED = "plan_refused"
     PLAN_MISMATCH = "plan_mismatch"
-    NO_CONSENT = "no_consent"                  # Phase I3: the wearer has not approved the current notice for this lock
+    NO_CONSENT = "no_consent"                  # an explicit no, or another account's lock without approval or the owner's attestation
     # attempts that did not apply
     NOT_SENT = "not_sent"
     UNAUTHORIZED = "unauthorized"
@@ -190,7 +192,7 @@ class ExtensionReviewService:
             (f"the {config.role.value if config.role else 'unknown'} role may not edit extensions on this lock", not config.can_edit_extensions),
             (f"plan refused: {plan.refusal}", plan.refusal is not None),
             (f"the wearer's consent to community review is {consent.state.value} (python -m cli review-consent {lock_id} ...)",
-             not revert and plan.has_changes and not consent.approved),
+             not revert and plan.has_changes and self._consent_blocks(config, consent)),
         ) if on]
         outcome = ExtensionReviewOutcome.PLANNED if plan.has_changes else (
             ExtensionReviewOutcome.NOTHING_TO_REVERT if revert else ExtensionReviewOutcome.ALREADY_ON_TARGET)
@@ -234,7 +236,7 @@ class ExtensionReviewService:
         if plan_id is not None and not hmac.compare_digest(plan.plan_id, plan_id):
             return refuse(ExtensionReviewOutcome.PLAN_MISMATCH, config=config, plan=plan)
         consent = self._consents.state(lock_id)
-        if not revert and not consent.approved:
+        if not revert and self._consent_blocks(config, consent):
             return refuse(ExtensionReviewOutcome.NO_CONSENT, config=config, plan=plan, consent=consent)
 
         audit_id = self._audit(actor_text, lock_text, plan.plan_id, plan.changes, ExtensionReviewOutcome.ATTEMPTING)  # claim BEFORE the call
@@ -295,6 +297,12 @@ class ExtensionReviewService:
         return {lock_id: self._consents.state(lock_id) for lock_id in lock_ids}
 
     # ------------------------------------------------------------------ internals
+
+    def _consent_blocks(self, config: LockConfiguration, consent: ReviewConsent) -> bool:
+        if consent.refused:
+            return True
+        worn_by_owner = config.role is not None and config.role.value == "wearer"
+        return not (worn_by_owner or consent.approved or self._consents.owner_attested(config.lock_id))
 
     def _identity(self, actor: str) -> ExtensionReviewOutcome | None:
         if self._owner is None:

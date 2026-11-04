@@ -25,7 +25,6 @@ from infrastructure.clock import FrozenClock
 from infrastructure.database import Database as CoreDatabase
 from system.composition import build_rules_and_execution
 from system.periodic import run_periodic_cycle
-from tests.rules_engine.test_engine import ENGINE_TEST_RULESET
 from trust_manager.repository import TrustManager
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -35,14 +34,6 @@ ROOT = Path(__file__).parent.parent.parent
 class FakeTransport:
     def __init__(self) -> None:
         self.calls = []
-
-    def add_time(self, *, lock_id, seconds):
-        self.calls.append(("add", lock_id, seconds))
-        return TransportResult(outcome=TransportOutcome.OK, http_status=204)
-
-    def remove_time(self, *, lock_id, seconds):
-        self.calls.append(("remove", lock_id, seconds))
-        return TransportResult(outcome=TransportOutcome.OK, http_status=204)
 
 
 @pytest.fixture
@@ -207,25 +198,6 @@ def _statuses(core):
 
 
 class TestPeriodicCycleEndToEnd:
-    def test_missed_goal_to_executed_decision_through_the_whole_pipeline(self, core) -> None:
-        transport = FakeTransport()
-        parts = _chaster_parts(core)
-        wiring = build_rules_and_execution(_config(core, enable_chaster_execution=True), core,
-                                           transport=transport, **parts)
-        wiring.rules_engine._ruleset = ENGINE_TEST_RULESET       # the execution pipeline itself; the shipped ruleset never adds time (below)
-        ExecutionControl(core.db_path, core=core).set_halted(False, reason="test", now=NOW)
-        _world_with_missed_goal(core)
-        _record_observation(core)
-        clock = FrozenClock(NOW + timedelta(minutes=1))
-
-        assert run_periodic_cycle(core, "p1", clock, rules_engine=wiring.rules_engine, executor=wiring.executor)
-        assert transport.calls == [("add", "lock-9", 3600)]
-        assert _statuses(core) == ["executed"]
-
-        run_periodic_cycle(core, "p2", FrozenClock(NOW + timedelta(minutes=2)),
-                           rules_engine=wiring.rules_engine, executor=wiring.executor)
-        assert len(transport.calls) == 1
-
     def test_with_the_shipped_ruleset_a_missed_goal_never_changes_the_lock(self, core) -> None:
         transport = FakeTransport()
         wiring = build_rules_and_execution(_config(core, enable_chaster_execution=True), core, transport=transport, **_chaster_parts(core))
@@ -300,10 +272,10 @@ class TestIsolationGuards:
             for name in self._imports(path):
                 assert name.split(".")[0] != "chaster_execution", f"{rel} imports chaster_execution"
 
-    def test_transport_interface_has_only_time_and_barrier_methods(self) -> None:
+    def test_transport_interface_has_only_the_barrier_method(self) -> None:
         from chaster_execution.models import LockActionTransport
         methods = {m for m in vars(LockActionTransport) if not m.startswith("_")}
-        assert methods == {"add_time", "remove_time", "set_frozen"}
+        assert methods == {"set_frozen"}
 
     def test_no_tls_weakening_anywhere_in_the_new_code(self) -> None:
         for pkg in ("chaster_execution", "rules_engine", "system"):

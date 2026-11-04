@@ -42,12 +42,6 @@ class FakeTransport:
             raise self.raises
         return self.result
 
-    def add_time(self, *, lock_id, seconds):
-        return self._do("add", lock_id, seconds)
-
-    def remove_time(self, *, lock_id, seconds):
-        return self._do("remove", lock_id, seconds)
-
     def set_frozen(self, *, lock_id, frozen):
         return self._do("freeze" if frozen else "unfreeze", lock_id, 0)
 
@@ -71,7 +65,7 @@ def obs(**kw) -> ChasterProviderObservation:
 
 class World:
     def __init__(self, core, transport, *, enabled=True, halted=False, observation="default", scopes=("locks",),
-                 refresh=None, max_per_run=5, allow_barrier=False, window_check=None):
+                 refresh=None, max_per_run=5, allow_barrier=True, window_check=None):
         self.core = core
         self.transport = transport
         self.control = ExecutionControl(core.db_path, core=core)
@@ -93,7 +87,7 @@ class World:
             allow_barrier_actions=allow_barrier, window_check=window_check,
         )
 
-    def decision(self, *, action="add_time", hours=1, status="dry_run", age_minutes=1, now=NOW, rule_id="r") -> str:
+    def decision(self, *, action="freeze", hours=0, status="dry_run", age_minutes=1, now=NOW, rule_id="barrier.freeze") -> str:
         did, tid = str(uuid.uuid4()), str(uuid.uuid4())
         created = iso(now - timedelta(minutes=age_minutes))
         with self.core.transaction() as tx:
@@ -160,19 +154,13 @@ class TestSwitches:
 
 
 class TestHappyPath:
-    def test_add_time_executes_once_with_seconds(self, core) -> None:
+    def test_a_barrier_decision_executes_once(self, core) -> None:
         w = World(core, FakeTransport())
-        d = w.decision(hours=2)
+        d = w.decision()
         w.run()
-        assert w.transport.calls == [("add", "lock-1", 7200)]
+        assert w.transport.calls == [("freeze", "lock-1", 0)]
         assert w.status(d) == "executed"
         assert w.audit(d) == [("dry_run", "pending"), ("pending", "executing"), ("executing", "executed")]
-
-    def test_remove_time(self, core) -> None:
-        w = World(core, FakeTransport())
-        d = w.decision(action="remove_time", hours=1)
-        w.run()
-        assert w.transport.calls == [("remove", "lock-1", 3600)] and w.status(d) == "executed"
 
     def test_second_run_never_executes_again(self, core) -> None:
         w = World(core, FakeTransport())
@@ -200,12 +188,36 @@ class TestHappyPath:
         assert n == 3
 
 
-class TestOnlyTimeActionsExecute:
-    @pytest.mark.parametrize("action", ["no_action", "freeze", "unfreeze"])
-    def test_other_actions_are_never_touched(self, core, action) -> None:
+class TestOnlyBarrierActionsExecute:
+    @pytest.mark.parametrize("action", ["no_action", "add_time", "remove_time"])
+    def test_anything_else_is_never_touched(self, core, action) -> None:
+        """Even a leftover time decision in an old database: it is not selected, and the transport has no way to carry it out."""
         w = World(core, FakeTransport())
-        d = w.decision(action=action, hours=0)
+        d = w.decision(action=action, hours=1, rule_id="r")
         assert w.run() == [] and w.status(d) == "dry_run" and not w.transport.calls
+
+    def test_a_leftover_time_decision_never_breaks_the_history_read(self, core) -> None:
+        w = World(core, FakeTransport())
+        old = w.decision(action="add_time", hours=1, rule_id="r", status="executed", age_minutes=30)
+        with core.transaction() as tx:
+            tx.execute("INSERT INTO lock_decision_executions (id, decision_id, from_status, to_status, created_at, detail) "
+                       "VALUES (?, ?, 'pending', 'executing', ?, 'x')", (str(uuid.uuid4()), old, iso(NOW - timedelta(minutes=30))))
+        d = w.decision()
+        w.run()
+        assert w.status(d) == "executed"
+
+    def test_without_barrier_management_nothing_runs(self, core) -> None:
+        w = World(core, FakeTransport(), allow_barrier=False)
+        d = w.decision()
+        assert w.run() == [] and w.status(d) == "dry_run"
+
+    def test_the_transport_has_no_time_method(self) -> None:
+        from chaster_execution.models import LockActionTransport
+        from chaster_execution.transport import ChasterHttpTransport
+        for cls in (LockActionTransport, ChasterHttpTransport):
+            assert not hasattr(cls, "add_time") and not hasattr(cls, "remove_time") and not hasattr(cls, "_update_time")
+        text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")
+        assert '"update-time"' not in text
 
 
 class TestStaleness:
@@ -286,8 +298,8 @@ class TestPreflight:
         (dict(observation=obs(status=ChasterProviderStatus.DESERTED)), "not in a locked state"),
         (dict(observation=obs(has_keyholder=False)), "keyholder"),
         (dict(observation=obs(has_keyholder=None)), "keyholder"),
-        (dict(observation=obs(is_frozen=True)), "frozen"),
-        (dict(observation=obs(is_frozen=None)), "frozen"),
+        (dict(observation=obs(is_frozen=True)), "expects"),
+        (dict(observation=obs(is_frozen=None)), "expects"),
         (dict(observation=obs(chaster_lock_id=None)), "no lock id"),
         (dict(observation=obs(fetched_at=NOW + timedelta(minutes=5))), "stale"),
     ])
@@ -321,40 +333,19 @@ class TestPreflight:
 
 
 class TestLimitsOnExecutedHistory:
-    def test_cooldown_after_a_real_execution_blocks_the_next(self, core) -> None:
-        w = World(core, FakeTransport())
-        a = w.decision(age_minutes=3)
-        b = w.decision(age_minutes=2)
+    def test_cooldown_after_a_real_release_blocks_the_next(self, core) -> None:
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True))
+        a = w.decision(action="unfreeze", rule_id="barrier.release", age_minutes=3)
+        b = w.decision(action="unfreeze", rule_id="barrier.release", age_minutes=2)
         w.run()
         assert w.status(a) == "executed" and w.status(b) == "blocked" and "cooldown" in w.detail(b)
         assert len(w.transport.calls) == 1
 
-    def test_daily_add_cap_uses_executed_history(self, core) -> None:
-        w = World(core, FakeTransport())
-        old = w.decision(status="executed", hours=6, age_minutes=300)
-        old2 = w.decision(status="executed", hours=6, age_minutes=400)
-        for did, mins in ((old, 300), (old2, 400)):
-            with core.transaction() as tx:
-                tx.execute("INSERT INTO lock_decision_executions (id, decision_id, from_status, to_status, created_at, detail) "
-                           "VALUES (?, ?, 'pending', 'executing', ?, 'x')",
-                           (str(uuid.uuid4()), did, iso(NOW - timedelta(minutes=mins))))
-        d = w.decision(hours=1)
-        w.run()
-        assert w.status(d) == "blocked" and not w.transport.calls
-
-    def test_dry_run_history_does_not_consume_the_live_budget(self, core) -> None:
-        w = World(core, FakeTransport())
-        for i in range(3):
-            w.decision(status="dry_run", hours=6, age_minutes=100 + i * 60)   # all too old to be picked up
-        d = w.decision(hours=1)
-        w.run()
-        assert w.status(d) == "executed"
-
     def test_failed_and_blocked_do_not_consume_the_budget(self, core) -> None:
-        w = World(core, FakeTransport())
-        w.decision(status="failed", age_minutes=30)
-        w.decision(status="blocked", age_minutes=30)
-        d = w.decision(hours=1)
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True))
+        w.decision(action="unfreeze", rule_id="barrier.release", status="failed", age_minutes=30)
+        w.decision(action="unfreeze", rule_id="barrier.release", status="blocked", age_minutes=30)
+        d = w.decision(action="unfreeze", rule_id="barrier.release")
         w.run()
         assert w.status(d) == "executed"
 

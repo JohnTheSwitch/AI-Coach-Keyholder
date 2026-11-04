@@ -182,7 +182,6 @@ class TestCommitAuthorization:
     @pytest.mark.parametrize("gates,reason", [
         (ReleaseGates(lock_barrier_confirmed=True, penalty_window_active=True), "penalty_window_active"),
         (ReleaseGates(lock_barrier_confirmed=True, supervision_active=True), "supervision_active"),
-        (ReleaseGates(lock_barrier_confirmed=True, last_check_in_missed=True), "check_in_missed"),
     ])
     def test_hard_vetoes_cancel_the_plan_and_keep_the_token(self, core, gates, reason) -> None:
         eng = make(core)
@@ -320,7 +319,7 @@ class TestBackstop:
         eng = make(core)
         ready(core, eng)
         now = local(MON, 19)
-        gates = ReleaseGates(lock_barrier_confirmed=True, supervision_active=True, last_check_in_missed=True)
+        gates = ReleaseGates(lock_barrier_confirmed=True, penalty_window_active=True, supervision_active=True)
         out = eng.commit_backstop(user_id=U, barrier_since=now - timedelta(days=5), gates=gates, now=now)
         assert out.status is C.AUTHORIZED and plan_status(core) == ["authorized"] and eng.get_balance(U) == 1
 

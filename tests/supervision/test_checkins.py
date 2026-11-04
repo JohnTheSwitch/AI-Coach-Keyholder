@@ -195,7 +195,7 @@ class TestDelivery:
         e.svc.tick(local(MON, 9))
         e.svc.tick(e.first_due())
         e.svc.tick(e.first_due() + timedelta(hours=3))
-        assert e.statuses()[0] == "undeliverable" and not e.events("check_in.missed") and not e.svc.last_check_in_missed()
+        assert e.statuses()[0] == "undeliverable" and not e.events("check_in.missed")
 
     @pytest.mark.parametrize("sender", [Sender(SendOutcome.UNKNOWN), Sender(raises=RuntimeError("boom"))])
     def test_ambiguous_delivery_is_needs_review_and_never_resent(self, tmp_path, sender) -> None:
@@ -339,22 +339,6 @@ class TestVerdictConsequences:
         assert e.statuses()[0] == "missed" and len(e.events("check_in.missed")) == 1
         e.svc.tick(e.due + timedelta(hours=4))
         assert len(e.events("check_in.missed")) == 1
-
-    def test_last_check_in_missed_is_cleared_by_the_next_concluded_one(self, tmp_path) -> None:
-        e = sent_env(tmp_path)
-        e.svc.tick(e.due + RESPONSE_TIMEOUT + timedelta(minutes=1))
-        assert e.svc.last_check_in_missed() is True
-        second_due = datetime.fromisoformat(e.rows()[1]["due_at"].replace("Z", "+00:00"))
-        e.svc.tick(second_due)
-        e.svc.on_user_message(U, "all good, finished my tasks", second_due + timedelta(minutes=5))
-        e.svc.tick(second_due + timedelta(minutes=6))
-        assert e.svc.last_check_in_missed() is False
-
-    def test_a_pending_insufficient_does_not_count_as_missed(self, tmp_path) -> None:
-        e = sent_env(tmp_path, verdict=Verdict.INSUFFICIENT)
-        e.svc.on_user_message(U, "ok", e.due + timedelta(minutes=1))
-        e.svc.tick(e.due + timedelta(minutes=2))
-        assert e.svc.last_check_in_missed() is False
 
 
 class TestTrustConsequences:

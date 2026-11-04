@@ -102,8 +102,8 @@ class ReviewConsentDm:
         return text
 
 
-_STATE_TEXT = {ConsentState.APPROVED: "you agreed", ConsentState.STALE: "you agreed to an older notice, please decide again",
-               ConsentState.DECLINED: "you declined", ConsentState.REVOKED: "you revoked it", ConsentState.NONE: "not decided yet"}
+_STATE_TEXT = {ConsentState.APPROVED: "you agreed", ConsentState.DECLINED: "you declined", ConsentState.REVOKED: "you revoked it",
+               ConsentState.NONE: "covered by this notice"}
 
 
 def render_overview(views: list[LockConsentView]) -> OutgoingMessage:
@@ -118,12 +118,10 @@ def render_overview(views: list[LockConsentView]) -> OutgoingMessage:
             continue
         exposure = "community review is ON" if v.exposed else "only the keyholder reviews"
         fields.append(EmbedField(name=f"Lock {short}… ({v.role})", value=f"Consent: {_STATE_TEXT[v.state]}; {exposure}."))
-        if v.state is ConsentState.APPROVED:
+        if v.state in (ConsentState.DECLINED, ConsentState.REVOKED):         # only a refusal has anything to undo
+            actions.append(ActionSpec(action_id=action_id("accept", v.lock_id), label=f"Allow again · {short}", style="success"))
+        else:                                                                # nothing to accept: only the way out
             actions.append(ActionSpec(action_id=action_id("revoke", v.lock_id), label=f"Revoke · {short}", style="danger"))
-        else:
-            actions.append(ActionSpec(action_id=action_id("accept", v.lock_id), label=f"Accept · {short}", style="success"))
-            if v.state is ConsentState.NONE or v.state is ConsentState.STALE:
-                actions.append(ActionSpec(action_id=action_id("decline", v.lock_id), label=f"Decline · {short}", style="secondary"))
     text = NOTICE_TEXT + "\n\n" + "\n".join(f"{f.name}: {f.value}" for f in fields)
     return OutgoingMessage(text=text, embed=EmbedSpec(title="Community photo review", description=NOTICE_TEXT, color="blue",
                                                       fields=tuple(fields)),

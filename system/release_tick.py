@@ -8,9 +8,10 @@ through injected, read-only callables; the domain rules stay in `release_engine/
 One pass (`run`):
   1. sync provider states from the execution plane (decision status -> release state);
   2. if a release is in flight, stop;
-  3. hard vetoes (penalty window, supervision, missed check-in) cancel any plan and stop;
+  3. hard vetoes (penalty window, supervision) cancel any plan and stop;
   4. requirement met (balance >= 1) and the barrier confirmed up -> ensure the secret plan;
-  5. plan due -> commit_authorization() (spends the token) -> record an UNFREEZE decision
+  5. plan due -> the user is told first and any incomplete check-in is requested (system/release_notice.py) ->
+     commit_authorization() (spends the token) -> record an UNFREEZE decision
      under rule `barrier.release` for the executor;
   2b. re-freeze: once a confirmed release session is over (its discretionary window ended, the day
      changed) and no token backs an open barrier, record a FREEZE decision (`barrier.freeze`);
@@ -66,7 +67,6 @@ class ReleaseEnginePeriodicTask:
         refresh_observation: Callable[[datetime], None],
         penalty_window_active: Callable[[], bool],
         supervision_active: Callable[[], bool],
-        last_check_in_missed: Callable[[], bool],
         is_halted: Callable[[], bool],
         can_execute: bool,
         max_hold: timedelta,
@@ -78,13 +78,14 @@ class ReleaseEnginePeriodicTask:
         self._refresh = refresh_observation
         self._penalty_active = penalty_window_active
         self._supervision_active = supervision_active
-        self._missed = last_check_in_missed
         self._halted = is_halted
         self._can_execute = can_execute
         self._max_hold = max_hold
         # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
         # `release.provider_confirmed` (system/startup.py) uses it. None = Progressive Conditioning is off.
         self.conditioning = None
+        # Phase J2: system.release_notice.ReleaseNotifier when messages can be sent: the user is told before a release, never left wondering.
+        self.notifier = None
 
     @property
     def engine(self) -> ReleaseEngine:
@@ -108,7 +109,7 @@ class ReleaseEnginePeriodicTask:
 
         veto = ReleaseGates(
             lock_barrier_confirmed=True, penalty_window_active=bool(self._penalty_active()),
-            supervision_active=bool(self._supervision_active()), last_check_in_missed=bool(self._missed()),
+            supervision_active=bool(self._supervision_active()),
         ).hard_veto()
         if veto is not None:
             if self._engine.cancel_plan(user_id=self._user, reason=veto, now=now):
@@ -129,11 +130,18 @@ class ReleaseEnginePeriodicTask:
         if planned and self._can_execute and not self._halted() and self._engine.plan_is_due(self._user, now):
             obs = self._fresh_observation(now)
             gates = self._gates(obs, now)
+            if (self.notifier is not None and self._engine.release_ready(self._user, gates, now)
+                    and not self.notifier.clear_to_release(now)):
+                report.add("release_waiting_for_check_in")       # told, not silent; nothing spent
+                self._maybe_backstop(now, report)
+                return report
             outcome = self._engine.commit_authorization(user_id=self._user, gates=gates, now=now)
             report.add(f"commit:{outcome.status.value}")
             if outcome.status is CommitStatus.AUTHORIZED:
                 self._record_unfreeze(outcome.authorization_id, "Release authorized by the release engine", now)
                 return report
+            if outcome.status is CommitStatus.RETARGETED and self.notifier is not None:
+                self.notifier.window_closed(now)
 
         self._maybe_backstop(now, report)
         return report
@@ -247,7 +255,6 @@ class ReleaseEnginePeriodicTask:
         return ReleaseGates(
             lock_barrier_confirmed=self._barrier_confirmed(obs, now),
             penalty_window_active=bool(self._penalty_active()), supervision_active=bool(self._supervision_active()),
-            last_check_in_missed=bool(self._missed()),
         )
 
     @staticmethod

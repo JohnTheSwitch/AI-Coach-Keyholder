@@ -269,10 +269,12 @@ class TestPreview:
     def test_it_lists_every_blocker(self, tmp_path) -> None:
         raw = raw_lock(status="unlocked", role="wearer")
         raw["extensions"][0]["isPartner"] = True
-        result = World(tmp_path, reader=FakeReader(raw), consent=False).service.preview(actor=OWNER, lock_id=LOCK)
+        world = World(tmp_path, reader=FakeReader(raw), consent=False)
+        world.ledger.record(lock_id=LOCK, decision=ConsentDecision.REVOKED, comment="t", now=NOW)
+        result = world.service.preview(actor=OWNER, lock_id=LOCK)
         assert result.blockers == ("lock status is unlocked, not locked", "the wearer role may not edit extensions on this lock",
                                    "plan refused: partner_extension:pillory",
-                                   f"the wearer's consent to community review is none (python -m cli review-consent {LOCK} ...)")
+                                   f"the wearer's consent to community review is revoked (python -m cli review-consent {LOCK} ...)")
 
     def test_a_lock_on_target(self, tmp_path) -> None:
         result = World(tmp_path, reader=FakeReader(on_target(raw_lock()))).service.preview(actor=OWNER, lock_id=LOCK)

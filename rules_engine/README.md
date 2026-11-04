@@ -12,7 +12,7 @@ Engine. **It executes nothing: no Chaster call exists anywhere in it.**
 - Order: (1) absolute safety gates, (2) first matching rule, (3) the action
   must be valid for the lock's state, (4) hard limits. Every outcome, including
   `NO_ACTION`, has a non-empty reason (DEC-2).
-- **Actions:** `NO_ACTION`, `ADD_TIME`, `REMOVE_TIME`, `FREEZE`, `UNFREEZE`.
+- **Actions:** `NO_ACTION`, `FREEZE`, `UNFREEZE`. No time action exists (owner decision, Zero-Time-Modification).
   FREEZE/UNFREEZE are valid but **dormant** (no shipped rule uses them) and are
   checked against `isFrozen`. There is no code-reveal action (excluded by the
   owner).
@@ -22,14 +22,10 @@ Engine. **It executes nothing: no Chaster call exists anywhere in it.**
   lock data older than 15 minutes (or timestamped in the future); status not
   `locked`; not confirmed a keyholder lock; `isFrozen` unknown; a time change on
   a frozen lock.
-- **Hard limits (`limits.py`, outside the ruleset, cannot be raised by it):**
-  1-hour unit, max 6 hours per action, max 12 hours added and 6 removed per
-  rolling 24 hours, max 2 actions per 24 hours, 4 hours minimum between actions.
-  Amounts are clamped to the remaining cap; below one hour left is a refusal.
-- **Rulesets (`ruleset.py`)** are system-configured data validated fail-fast
-  (unique ids, bounded hours, thresholds in [0, 1], no unconditional rule). No
-  runtime mutation and no model path. `DEFAULT_RULESET` thresholds are
-  `BOOTSTRAP_DEFAULT` placeholders.
+- **Limits (`limits.py`, outside the ruleset, cannot be raised by it):** at most 2 releases per rolling 24 hours, 4 hours between releases. A freeze
+  only restrains and is never limited.
+- **Rulesets (`ruleset.py`)** are system-configured data validated fail-fast (unique ids, thresholds in [0, 1], no unconditional rule, no
+  action carries hours). No runtime mutation and no model path. The shipped `DEFAULT_RULESET` is EMPTY: goals and Trust never touch a lock.
 
 ## Triggers and persistence (migration 025)
 
@@ -38,8 +34,6 @@ Engine. **It executes nothing: no Chaster call exists anywhere in it.**
   Penalty Window), and no incident ever becomes raw hours on a lock.
 - `penalty_hold.py` (Phase J2) only RECORDS state from `penalty_window.*` events: the global
   token redemption hold and the barrier intents. It evaluates nothing.
-- The shipped `DEFAULT_RULESET` has no `ADD_TIME` rule (owner decision, Phase J2): a missed
-  goal or falling Trust never changes the lock.
 - The outbox handler (`record_trigger_in_transaction`) only writes a
   `lock_decision_triggers` row (id = event id, idempotent). `evaluate_pending()`
   runs afterwards, reads trust state and the optional lock snapshot through

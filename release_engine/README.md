@@ -24,7 +24,7 @@ the periodic cycle behind `ENABLE_RELEASE_ENGINE`; the barrier is lowered throug
   - `ensure_plan()` — requirement met (balance ≥ 1) never unlocks immediately; it
     stores one `planned` plan (secret `target_at` + `seed`) per user.
   - `commit_authorization()` — the commit point (D8). In one transaction: due? →
-    hard vetoes (penalty window, supervision, missed check-in cancel the plan) →
+    hard vetoes (penalty window, supervision cancel the plan) →
     lock barrier confirmed (else retry later) → window must be DISCRETIONARY (else
     re-target) → binding balance re-check → SPEND exactly one token → `authorized`.
   - `commit_backstop()` — `MAX_BARRIER_HOLD_HOURS` safety release: no token, ignores
@@ -38,7 +38,7 @@ the periodic cycle behind `ENABLE_RELEASE_ENGINE`; the barrier is lowered throug
 
 ## Phase 2: the periodic tick (`system/release_tick.py`)
 One pass per cycle: sync provider states from the execution plane -> stop if a release is in flight -> hard
-vetoes (penalty window, supervision, missed check-in) cancel any plan -> requirement met (balance >= 1) and the
+vetoes (penalty window, supervision) cancel any plan -> requirement met (balance >= 1) and the
 barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorization()` (spends the token) and record an
 `UNFREEZE` decision under rule `barrier.release` -> backstop when the barrier has been up `MAX_BARRIER_HOLD_HOURS`
 (72, placeholder; ignores vetoes, spends nothing, still needs a valid window and a confirmed barrier).
@@ -76,3 +76,11 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
 The pool pays a token at `base(mode) * factor` (base 1.0 Standard, 2.0 Advanced). The hidden factor (1.000 .. 1.500, +0.025) rises only through the consumer of
 `release.provider_confirmed` for a `token` authorization, with the owner's per-database switch on and the wearer's `conditioning` on (off freezes it). Never in events,
 logs, prompts or wearer replies. See docs/architecture/phase_f_proposal.md section 9.
+
+## Phase J2: Communication-First release (`system/release_notice.py`, migration 045)
+
+A missed check-in is no veto. When every release condition is met, and only then (the plan's timing stays secret), the user is told they are
+eligible before anything else happens. If today's check-in is incomplete, that same message requests it and the release waits; the reply releases
+them on the next cycle (at most `CHASTER_EXECUTION_INTERVAL_SECONDS`), whatever a rubric makes of it. No token is spent while waiting. An unanswered
+prompt expires as `skipped` with no Trust effect; an undeliverable prompt never holds a release; a window that closes meanwhile is explained once.
+The backstop never passes through this.

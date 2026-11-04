@@ -1,5 +1,8 @@
 # Phase 3 — Physical Chaster Execution: Design Proposal (v0.1)
 
+> **Superseded in part (2026-11-04): Zero-Time-Modification.** Time changes were removed from the system by owner decision: everything below about
+> adding or removing time is historical. See `phase_j_proposal.md` section 4.5.
+
 > **Status: proposal for owner review. No code, no migration, no OAuth change
 > has been made.** High-risk phase: this introduces the project's first Chaster
 > *write* path. Everything below marked **VERIFY** must be confirmed by a direct

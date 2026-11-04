@@ -23,13 +23,12 @@ def new_id() -> str:
 
 class ActionType(StrEnum):
     NO_ACTION = "no_action"
-    ADD_TIME = "add_time"
-    REMOVE_TIME = "remove_time"
     FREEZE = "freeze"
     UNFREEZE = "unfreeze"
     # Deliberately absent: any code / combination reveal (excluded from
     # Phase 2 by owner decision; irreversible and in tension with
-    # philosophy.md 4.2).
+    # philosophy.md 4.2), and any time change: the system never adds to or
+    # removes from a lock's duration (owner decision, Zero-Time-Modification).
 
 
 class EntitlementClass(StrEnum):

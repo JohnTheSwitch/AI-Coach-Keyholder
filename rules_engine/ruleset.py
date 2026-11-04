@@ -12,7 +12,6 @@ is dry-run only.
 
 from __future__ import annotations
 
-from rules_engine.limits import HOURS_UNIT, MAX_SINGLE_ACTION_HOURS
 from rules_engine.models import ActionType, GoalDirection, Rule, Ruleset
 
 __all__ = ["RulesetValidationError", "validate_ruleset", "DEFAULT_RULESET"]
@@ -42,14 +41,7 @@ def validate_ruleset(ruleset: Ruleset) -> Ruleset:
             raise RulesetValidationError(f"rule {rule.id!r}: description must be non-empty")
         if not isinstance(rule.action, ActionType) or rule.action == ActionType.NO_ACTION:
             raise RulesetValidationError(f"rule {rule.id!r}: action must be an actionable ActionType")
-        if rule.action in (ActionType.ADD_TIME, ActionType.REMOVE_TIME):
-            if isinstance(rule.hours, bool) or not isinstance(rule.hours, int):
-                raise RulesetValidationError(f"rule {rule.id!r}: hours must be an int")
-            if rule.hours % HOURS_UNIT != 0 or not (HOURS_UNIT <= rule.hours <= MAX_SINGLE_ACTION_HOURS):
-                raise RulesetValidationError(
-                    f"rule {rule.id!r}: hours must be between {HOURS_UNIT} and {MAX_SINGLE_ACTION_HOURS}"
-                )
-        elif rule.hours != 0:
+        if rule.hours != 0:
             raise RulesetValidationError(f"rule {rule.id!r}: {rule.action.value} takes no hours")
         if rule.direction is not None and not isinstance(rule.direction, GoalDirection):
             raise RulesetValidationError(f"rule {rule.id!r}: direction must be a GoalDirection")
@@ -69,19 +61,6 @@ def validate_ruleset(ruleset: Ruleset) -> Ruleset:
     return ruleset
 
 
-# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
-# Placeholder thresholds and step sizes pending owner tuning.
-# Priority order; the first match wins. No FREEZE/UNFREEZE rule is shipped:
-# those actions are supported by the engine but dormant by default.
-# Owner decision (2026-11-03, Phase J2): no rule ever adds time. A missed goal or a falling Trust score affects Trust and token
-# earning only; incidents are resolved by the Penalty Engine (Warning or Penalty Window), never as raw hours.
-DEFAULT_RULESET = validate_ruleset(Ruleset(
-    version="1",
-    rules=(
-        Rule(id="trust_rose_above_ceiling", description="Trust rose above the ceiling",
-             action=ActionType.REMOVE_TIME, hours=1, crossed_above=0.7, min_confidence=0.3),
-        Rule(id="progress_high_trust", description="Goal met while trust is high",
-             action=ActionType.REMOVE_TIME, hours=1, direction=GoalDirection.PROGRESS, trust_at_least=0.7,
-             min_confidence=0.3),
-    ),
-))
+# Owner decision (Zero-Time-Modification): the shipped ruleset is EMPTY. A goal or Trust change never touches a lock; progression is governed
+# purely by the frozen state and the Release Engine. An action type for changing time no longer exists, so no ruleset can add one.
+DEFAULT_RULESET = validate_ruleset(Ruleset(version="2", rules=()))

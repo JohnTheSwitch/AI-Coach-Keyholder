@@ -70,15 +70,12 @@ class ReleaseGates:
     lock_barrier_confirmed: bool       # a FRESH observation: locked, keyholder lock, isFrozen is True
     penalty_window_active: bool = False
     supervision_active: bool = False
-    last_check_in_missed: bool = False
 
     def hard_veto(self) -> str | None:
         if self.penalty_window_active:
             return "penalty_window_active"
         if self.supervision_active:
             return "supervision_active"
-        if self.last_check_in_missed:
-            return "check_in_missed"
         return None
 
 
@@ -178,6 +175,13 @@ class ReleaseEngine:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT target_at FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,))
         return row is not None and now >= _parse_iso(row["target_at"])
+
+    def release_ready(self, user_id: str, gates: ReleaseGates, now: datetime) -> bool:
+        """True when commit_authorization() would authorize right now. Read-only and a boolean only: it lets the caller tell the user first
+        (system/release_notice.py). The commit itself re-validates everything."""
+        if not self.plan_is_due(user_id, now) or gates.hard_veto() is not None or not gates.lock_barrier_confirmed:
+            return False
+        return classify(self._cfg, now) is WindowKind.DISCRETIONARY and self.get_balance(user_id) >= TOKEN_COST
 
     def open_authorizations(self, user_id: str) -> list[tuple[str, ProviderState]]:
         """Releases still in flight (authorized / provider_requested / physical_state_unknown)."""

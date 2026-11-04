@@ -1,6 +1,6 @@
 # Phase J: Zero-Command Conversational UX, Live Consequences, Local Coach
 
-Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2) and J2 (section 4) BUILT; the rest awaits the owner's decisions in section 6.
+Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2) and J2 with its refinements (section 4) BUILT; the rest awaits the owner's decisions in section 6.
 
 ## 1. Design principles (owner, 2026-11-03)
 
@@ -82,14 +82,14 @@ Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2) and J2 (section 4) BUILT
 
 ## 4. J2: Penalty Engine, Release Engine and the barrier (BUILT 2026-11-04, owner's aligned ruleset)
 
-The owner's conflict review (six decisions) supersedes the earlier raw-hours design. Nothing in J2 adds or removes time on Chaster.
+The owner's conflict review (six decisions) supersedes the earlier raw-hours design. Sections 4.5 to 4.7 record the refinements that followed.
 
 ### 4.1 Ruleset
 
 | Event | Consequence |
 |---|---|
 | Task or goal failure | Trust and token earning ONLY. Never a Penalty Window, a freeze or a Chaster change. The shipped `DEFAULT_RULESET` has no `ADD_TIME` rule. |
-| 3 missed check-ins (consecutive, or within 48 h) | Trust drops through the per-miss evidence; a Warning is issued (event `check_in.warning_issued`, DM); the Incident stays UNCONFIRMED. Only the keyholder's confirmation (`python -m cli check-in-escalations confirm`) can lead further. |
+| Missed check-ins | Trust (per-miss evidence) and, at 3 (consecutive, or within 48 h), a Warning DM. Never a release veto. The escalation's Incident stays UNCONFIRMED; only the keyholder's `check-in-escalations confirm` could take it further. |
 | Confirmed infraction (rejected photo; `HYGIENE_MISUSE`; lying about lock status) | Trust drops; the Penalty Engine alone decides: a first minor offense is a Warning, a repeated or severe one a Penalty Window. |
 | Emergency Override, Mandatory Health Access | NEVER an Incident or a penalty (philosophy 3.8, 3.9). The hygiene catalog holds only `HYGIENE_MISUSE`. |
 
@@ -136,10 +136,38 @@ Diagnostics: `python -m cli penalty-status --owner-id <id>`. Switches: `ENABLE_P
 
 - Nothing in production approves an exemption yet: `PenaltyEngine.freeze()` has no caller, so the exemption release is ready but has no trigger.
 - `EPISTEMIC_MISREPRESENTATION` and `HYGIENE_MISUSE` have no detector; a confirmed photo rejection is the only working infraction today.
-- `DEFAULT_RULESET` still removes time on goal progress and high Trust (`REMOVE_TIME`): the decision named rules that ADD hours, so these stayed.
-- A missed check-in still vetoes a release (`ReleaseGates.last_check_in_missed`), so it can keep a barrier up for a while.
-- The I3 consent notice does not mention that a confirmed rejection can freeze the lock.
-- The Release Engine itself stays off (`ENABLE_RELEASE_ENGINE`, it needs `CHASTER_EXECUTION_WEARER_USER_ID`), so tokens are not earned or spent live yet.
+- The escalation's unconfirmed Incident is kept, so `check-in-escalations confirm` can still lead to a Warning or Window through the keyholder's own
+  decision. "Missed check-ins affect ONLY Trust and a Warning DM" read literally would remove that path too; it needs the owner's word.
+- The Release Engine stays off (`ENABLE_RELEASE_ENGINE`, it needs `CHASTER_EXECUTION_WEARER_USER_ID`), so tokens and releases are not live yet.
+
+### 4.5 Zero-Time-Modification (owner, 2026-11-04)
+
+The bot never changes a lock's duration, up or down. Removed, not merely unused: `ActionType.ADD_TIME` / `REMOVE_TIME`, the time limits, the executor's
+time branch, and the transport's `add_time` / `remove_time` and its `update-time` call. `DEFAULT_RULESET` is empty. Lock progression is governed
+purely by the frozen state and the Release Engine. A leftover time row in an old database is never selected. Chaster's own extensions (`pillory`,
+`link`) can still change time by themselves, on Chaster's side; that is not the bot.
+
+### 4.6 Communication-First release (owner, 2026-11-04)
+
+A release is never held back silently (`system/release_notice.py`, migration 045):
+
+1. When every condition is met (plan due, no veto, barrier confirmed, discretionary window, a token), and only then, so the plan's timing stays
+   secret, the user is told they are eligible, before anything else happens.
+2. If today's check-in is incomplete, that same message says: "You're eligible for release today! Please complete your quick daily check-in first
+   to execute the unfreeze." The release waits and no token is spent.
+3. The reply triggers the release on the next periodic cycle (at most `CHASTER_EXECUTION_INTERVAL_SECONDS`, 60 s), whatever a rubric makes of it.
+
+Never a trap: an unanswered prompt expires as `skipped` with no Trust effect. Never a silent wait: if no check-in applies today (no check-ins, Trust
+level 4, a vacation) or the prompt cannot be delivered, the release goes ahead; if the day's window closes while it waits, the user is told once.
+The 72-hour backstop never passes through this. No text carries a time or a token count.
+
+### 4.7 Simplified consent (owner, 2026-11-04)
+
+A personal workflow: the I3 notice is informational (proceeding implies agreement, with a link to the repository), shown at the end of onboarding, in
+the `chaster connect` reply (`application/terms_notice.py`) and in the consent overview. There is no re-acceptance when its wording changes; `stale` is
+gone. Kept on purpose: an explicit decline or revocation still refuses (2.5: revocable), and a lock worn by ANOTHER account still needs that wearer's
+approval or the owner's attestation, because that wearer may never have seen any notice. Multi-wearer invitations keep their explicit `accept`.
+`philosophy.md` was not changed; 2.5 says consent is "specific", so implied agreement rests on this being the owner's own use.
 
 ## 5. J3: local Ollama coach (proposal)
 

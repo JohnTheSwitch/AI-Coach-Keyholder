@@ -84,8 +84,6 @@ def evaluate(inputs: RuleInputs, ruleset: Ruleset) -> DecisionOutcome:
         return _no_action(ruleset, EntitlementClass.GUARANTEED, "No action: no rule applies to this situation.")
 
     frozen = inputs.lock.is_frozen
-    if rule.action in (ActionType.ADD_TIME, ActionType.REMOVE_TIME) and frozen:
-        return _no_action(ruleset, EntitlementClass.ABSOLUTE, "No action: the lock is frozen.", rule.id)
     if rule.action == ActionType.FREEZE and frozen:
         return _no_action(ruleset, EntitlementClass.ABSOLUTE, "No action: the lock is already frozen.", rule.id)
     if rule.action == ActionType.UNFREEZE and not frozen:

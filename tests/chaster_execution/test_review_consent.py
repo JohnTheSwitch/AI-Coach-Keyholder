@@ -13,8 +13,8 @@ from chaster.extension_config import community_exposed, parse_lock_configuration
 from chaster.extension_plan import plan_review_revert, plan_review_update
 from chaster_execution.extension_review import ConsentOutcome as C
 from chaster_execution.extension_review import ExtensionReviewOutcome as O
-from chaster_execution.review_consent import (NOTICE_TEXT, NOTICE_VERSION, ConsentDecision, ConsentState, ReviewConsentLedger,
-                                              consent_target)
+from chaster_execution.review_consent import (NOTICE_TEXT, NOTICE_VERSION, OWNER_ATTESTATION, REPOSITORY_URL, ConsentDecision, ConsentState,
+                                              ReviewConsentLedger, consent_target)
 from cli.main import main, render_configuration
 from tests.chaster_execution.test_extension_review import (LOCK, NOW, OWNER, FakeReader, World, on_target, plan_for,  # noqa: F401
                                                            raw_lock)
@@ -84,17 +84,24 @@ class TestLedger:
         assert (row["target_type"], row["target_version"], row["explanation_shown"], row["action"]) == \
                ("integration", NOTICE_VERSION, NOTICE_TEXT, "approved")
 
-    def test_consent_to_an_older_notice_is_stale(self, tmp_path) -> None:
+    def test_an_older_notice_needs_no_re_acceptance(self, tmp_path) -> None:
         w = World(tmp_path, consent=False)
         with w.core.transaction() as tx:
             tx.execute("INSERT INTO consent_log (id, created_at, target_type, target_id, target_version, action) "
                        "VALUES ('x', '2026-11-01T00:00:00+00:00', 'integration', ?, 'oldversion00', 'approved')", (consent_target(LOCK),))
         state = w.ledger.state(LOCK)
-        assert state.state is ConsentState.STALE and not state.approved
+        assert state.state is ConsentState.APPROVED and state.approved and state.notice_version == "oldversion00"
+
+    def test_an_explicit_no_is_the_only_refusal(self, tmp_path) -> None:
+        w = World(tmp_path, consent=False)
+        assert not w.ledger.state(LOCK).refused
+        for decision, refused in ((ConsentDecision.REVOKED, True), (ConsentDecision.APPROVED, False), (ConsentDecision.REJECTED, True)):
+            w.ledger.record(lock_id=LOCK, decision=decision, comment="t", now=NOW + timedelta(seconds=decision.value == "rejected"))
+            assert w.ledger.state(LOCK).refused is refused
 
     def test_the_notice_says_what_matters(self) -> None:
-        for phrase in ("Any logged-in Chaster member", "no longer adds time", "UNCONFIRMED incident", "revoke it at any time",
-                       "this lock only", "stops asking for photos", "verification picture extension is removed"):
+        for phrase in ("Any logged-in Chaster member", "no longer adds time", "UNCONFIRMED incident", "revoke this at any time",
+                       "stops asking for photos", "verification picture extension is removed", REPOSITORY_URL, "Proceeding means you agree"):
             assert phrase in NOTICE_TEXT
         assert len(NOTICE_VERSION) == 12
 
@@ -175,6 +182,23 @@ class TestConsentGate:
         result = w.apply()
         assert result.outcome is O.NO_CONSENT and result.refused and w.transport.calls == []
         assert [r["outcome"] for r in w.audit()] == ["no_consent"]
+
+    def test_a_lock_the_owner_wears_needs_no_acceptance(self, tmp_path) -> None:
+        raw = wearer(raw_lock())
+        w = World(tmp_path, consent=False, reader=FakeReader(raw, on_target(raw)))
+        assert w.apply(plan_id=plan_review_update(parse_lock_configuration(raw)).plan_id).outcome is O.APPLIED
+
+    def test_an_explicit_no_still_stops_the_owners_own_lock(self, tmp_path) -> None:
+        raw = wearer(raw_lock())
+        w = World(tmp_path, consent=False, reader=FakeReader(raw))
+        w.ledger.record(lock_id=LOCK, decision=ConsentDecision.REVOKED, comment="t", now=NOW)
+        assert w.apply(plan_id=plan_review_update(parse_lock_configuration(raw)).plan_id).outcome is O.NO_CONSENT and w.transport.calls == []
+
+    def test_another_accounts_lock_keeps_its_check_until_the_owner_attests(self, tmp_path) -> None:
+        w = World(tmp_path, consent=False, reader=FakeReader(raw_lock(), on_target(raw_lock())))      # role keyholder
+        assert w.apply().outcome is O.NO_CONSENT and w.transport.calls == []
+        w.ledger.record(lock_id=LOCK, decision=ConsentDecision.APPROVED, comment=f"owner cli: approved; {OWNER_ATTESTATION}", now=NOW)
+        assert w.service.preview(actor=OWNER, lock_id=LOCK).blockers == ()
 
     def test_the_halt_still_comes_first(self, tmp_path) -> None:
         w = World(tmp_path, consent=False, halted=True)
@@ -350,7 +374,7 @@ class TestCli:
     def test_the_forward_apply_without_consent_is_refused(self, tmp_path) -> None:
         w = World(tmp_path, consent=False)
         code, text = self._run(w, "extension-review", LOCK, "--owner-id", OWNER, "--apply", "--plan", plan_for().plan_id, "--yes")
-        assert code == 3 and "has not approved community review" in text and w.transport.calls == []
+        assert code == 3 and "declined or revoked community review" in text and w.transport.calls == []
 
     def test_every_consent_outcome_has_a_description(self) -> None:
         from cli.main import _CONSENT_TEXT
@@ -363,10 +387,10 @@ class TestCli:
         report = ConfigurationReport()
         report.configurations.append(parse_lock_configuration(on_target(raw_lock())))
         text = render_configuration(LockListing(), report, w.service.consent_states([LOCK]))
-        assert "wearer consent to community review: none" in text and "WARNING: community review is ON without" in text
-        w.ledger.record(lock_id=LOCK, decision=ConsentDecision.APPROVED, comment="t", now=NOW)
+        assert "wearer consent to community review: none" in text and "WARNING" not in text
+        w.ledger.record(lock_id=LOCK, decision=ConsentDecision.REVOKED, comment="t", now=NOW)
         text = render_configuration(LockListing(), report, w.service.consent_states([LOCK]))
-        assert "consent to community review: approved" in text and "WARNING" not in text
+        assert "consent to community review: revoked" in text and "WARNING: community review is ON although the wearer refused it" in text
 
 
 class TestIsolation:

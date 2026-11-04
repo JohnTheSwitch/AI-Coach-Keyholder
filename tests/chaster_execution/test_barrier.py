@@ -56,12 +56,6 @@ class TestOnlyBarrierDecisionsMayFreezeOrUnfreeze:
         d = w.decision(action="unfreeze", hours=0, rule_id=RULE)
         assert w.run() == [] and w.status(d) == "dry_run" and not w.transport.calls
 
-    def test_time_actions_still_work_alongside(self, core) -> None:
-        w = bw(core, observation=obs(is_frozen=False))
-        d = w.decision(action="add_time", hours=1)
-        w.run()
-        assert w.transport.calls == [("add", "lock-1", 3600)] and w.status(d) == "executed"
-
 
 class TestBarrierPreflight:
     @pytest.mark.parametrize("action,observation,text", [
@@ -158,21 +152,6 @@ class TestSeparateLimitPools:
         assert apply_limits(A.FREEZE, 0, freezes, NOW) == (0, None)
         assert apply_limits(A.UNFREEZE, 0, freezes, NOW) == (0, None)
 
-    def test_time_actions_do_not_consume_the_barrier_pool(self, core) -> None:
-        time_actions = (
-            RecentAction(created_at=NOW - timedelta(hours=5), action_type=A.ADD_TIME, hours=1),
-            RecentAction(created_at=NOW - timedelta(hours=9), action_type=A.REMOVE_TIME, hours=1),
-        )
-        assert apply_limits(A.UNFREEZE, 0, time_actions, NOW) == (0, None)
-        assert apply_limits(A.FREEZE, 0, time_actions, NOW) == (0, None)
-
-    def test_barrier_actions_do_not_consume_the_time_pool(self, core) -> None:
-        barrier = (
-            RecentAction(created_at=NOW - timedelta(hours=1), action_type=A.UNFREEZE, hours=0),
-            RecentAction(created_at=NOW - timedelta(hours=2), action_type=A.FREEZE, hours=0),
-        )
-        assert apply_limits(A.ADD_TIME, 2, barrier, NOW) == (2, None)
-
     def test_executor_applies_the_barrier_pool_to_executed_history(self, core) -> None:
         w = bw(core)
         first = w.decision(action="unfreeze", hours=0, rule_id=RULE, status="executed", age_minutes=300)
@@ -188,11 +167,3 @@ class TestSeparateLimitPools:
         d = w.decision(action="unfreeze", hours=0, rule_id=RULE)
         w.run()
         assert w.status(d) == "blocked" and "cooldown" in w.detail(d)
-
-    def test_executor_time_action_ignores_a_recent_barrier_action(self, core) -> None:
-        w = bw(core, observation=obs(is_frozen=False))
-        first = w.decision(action="unfreeze", hours=0, rule_id=RULE, status="executed", age_minutes=10)
-        _executing_row(w, first, 10)
-        d = w.decision(action="add_time", hours=1)
-        w.run()
-        assert w.status(d) == "executed"

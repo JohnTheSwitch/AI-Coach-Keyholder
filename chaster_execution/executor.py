@@ -4,12 +4,12 @@ chaster_execution/executor.py
 The ONLY component that can reach a LockActionTransport. It consumes persisted
 `lock_decisions` rows produced by the Rules Engine and nothing else: there is no
 entry point that accepts free text, a Discord message, a model output or ad-hoc
-parameters. Only add_time / remove_time can execute (Phase 3).
+parameters. Only barrier actions can execute; a time change no longer exists anywhere.
 
 Guarantees (see docs/architecture/chaster_execution_phase3_proposal.md):
 - master switch + runtime halt are checked before every run and again before
   every call; a missing/unreadable halt row means halted;
-- barrier management (v0.39): freeze/unfreeze execute ONLY when `allow_barrier_actions` is on AND the
+- barrier management (v0.39): freeze/unfreeze are the only actions, and execute ONLY when `allow_barrier_actions` is on AND the
   decision comes from a barrier rule id (BARRIER_RULE_IDS); they draw on their own limit pool
   (rules_engine.limits) and an UNFREEZE additionally needs the barrier to be up and, if a
   `window_check` is supplied, a discretionary window at the moment of the call;
@@ -37,7 +37,6 @@ from chaster_execution.models import (
     BARRIER_ACTIONS,
     BARRIER_RULE_IDS,
     DECISION_MAX_AGE_MINUTES,
-    EXECUTABLE_ACTIONS,
     ExecStatus,
     LockActionTransport,
     TransportOutcome,
@@ -103,15 +102,13 @@ class ChasterExecutor:
             return []
         results: list[tuple[str, ExecStatus]] = []
         self._reconcile_orphans(now, results)
+        if not self._allow_barrier:              # nothing else can execute
+            return results
 
         cutoff = _iso(now - timedelta(minutes=DECISION_MAX_AGE_MINUTES))
-        marks = ",".join("?" for _ in EXECUTABLE_ACTIONS)
-        eligible = f"action_type IN ({marks})"
-        args: list = sorted(EXECUTABLE_ACTIONS)
-        if self._allow_barrier:
-            bmarks = ",".join("?" for _ in BARRIER_RULE_IDS)
-            eligible = f"({eligible} OR (action_type IN ('freeze', 'unfreeze') AND rule_id IN ({bmarks})))"
-            args += sorted(BARRIER_RULE_IDS)
+        marks = ",".join("?" for _ in BARRIER_RULE_IDS)
+        eligible = f"action_type IN ('freeze', 'unfreeze') AND rule_id IN ({marks})"
+        args: list = sorted(BARRIER_RULE_IDS)
         with self._core.transaction() as tx:
             rows = tx.fetch_all(
                 f"SELECT * FROM lock_decisions WHERE {eligible} AND "
@@ -153,12 +150,11 @@ class ChasterExecutor:
     def _execute(self, row, now: datetime) -> ExecStatus | None:
         decision_id = row["id"]
         action = ActionType(row["action_type"])
-        hours = int(row["hours"])
 
         if self._control.is_halted():   # also checked before every call, not only at run start
             return None
 
-        refusal, lock_id, end_before = self._preflight(decision_id, action, hours, now, row["rule_id"])
+        refusal, lock_id, end_before = self._preflight(decision_id, action, now, row["rule_id"])
         if refusal is not None:
             self._transition(decision_id, ExecStatus.PENDING, ExecStatus.BLOCKED, now, refusal)
             return ExecStatus.BLOCKED
@@ -170,14 +166,8 @@ class ChasterExecutor:
         ):
             return ExecStatus.PENDING   # lost the claim; someone else owns it
 
-        seconds = hours * 3600
         try:
-            if action in (ActionType.FREEZE, ActionType.UNFREEZE):
-                result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
-            elif action == ActionType.ADD_TIME:
-                result = self._transport.add_time(lock_id=lock_id, seconds=seconds)
-            else:
-                result = self._transport.remove_time(lock_id=lock_id, seconds=seconds)
+            result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
         except Exception:
             logger.exception("Transport raised for decision %s; outcome unknown.", decision_id)
             self._transition(decision_id, ExecStatus.EXECUTING, ExecStatus.NEEDS_REVIEW, now, "transport error; outcome unknown")
@@ -195,16 +185,12 @@ class ChasterExecutor:
                          _FAILURE_DETAIL.get(result.outcome, "failed"), http_status=http)
         return ExecStatus.FAILED
 
-    def _preflight(self, decision_id: str, action: ActionType, hours: int, now: datetime, rule_id: str | None = None):
+    def _preflight(self, decision_id: str, action: ActionType, now: datetime, rule_id: str | None = None):
         def refuse(reason: str):
             return reason, None, None
 
-        is_barrier = action.value in BARRIER_ACTIONS
-        if is_barrier:
-            if not self._allow_barrier or rule_id not in BARRIER_RULE_IDS:
-                return refuse("barrier actions execute only for barrier management")
-        elif action.value not in EXECUTABLE_ACTIONS or hours < 1:
-            return refuse("action is not executable in Phase 3")
+        if action.value not in BARRIER_ACTIONS or not self._allow_barrier or rule_id not in BARRIER_RULE_IDS:
+            return refuse("barrier actions execute only for barrier management")
         scopes = self._get_scopes()
         if not scopes or REQUIRED_SCOPE not in scopes:
             return refuse("keyholder connection lacks the required scope; re-authorisation needed")
@@ -225,21 +211,18 @@ class ChasterExecutor:
             return refuse("lock is not in a locked state")
         if obs.has_keyholder is not True:
             return refuse("lock is not confirmed to be a keyholder lock")
-        if is_barrier:
-            want_frozen = action == ActionType.UNFREEZE       # an unfreeze needs the barrier to be up
-            if obs.is_frozen is not want_frozen:
-                return refuse("lock is not in the state this barrier action expects")
-            if action == ActionType.UNFREEZE and self._window_check is not None and not self._window_check(now):
-                return refuse("barrier release outside a discretionary window")
-        elif obs.is_frozen is not False:
-            return refuse("lock is frozen or its frozen state is unknown")
+        want_frozen = action == ActionType.UNFREEZE           # an unfreeze needs the barrier to be up
+        if obs.is_frozen is not want_frozen:
+            return refuse("lock is not in the state this barrier action expects")
+        if action == ActionType.UNFREEZE and self._window_check is not None and not self._window_check(now):
+            return refuse("barrier release outside a discretionary window")
         if not obs.chaster_lock_id or not obs.chaster_lock_id.strip():
             return refuse("no lock id")
 
         recent = self._recent_executed(decision_id, now)
-        allowed, why = apply_limits(action, hours, recent, now)
-        if why is not None or allowed < hours:       # barrier actions carry 0 hours: allowed == hours == 0
-            return refuse(f"limits re-check refused: {why or 'amount exceeds remaining cap'}")
+        _, why = apply_limits(action, 0, recent, now)
+        if why is not None:
+            return refuse(f"limits re-check refused: {why}")
         return None, obs.chaster_lock_id, None if obs.end_date is None else _iso(obs.end_date)
 
     def _recent_executed(self, decision_id: str, now: datetime) -> tuple[RecentAction, ...]:
@@ -248,7 +231,7 @@ class ChasterExecutor:
             rows = tx.fetch_all(
                 "SELECT d.action_type, d.hours, e.created_at FROM lock_decisions d "
                 "JOIN lock_decision_executions e ON e.decision_id = d.id AND e.to_status = 'executing' "
-                f"WHERE d.status IN ({marks}) AND d.id != ? AND e.created_at >= ?",
+                f"WHERE d.action_type IN ('freeze', 'unfreeze') AND d.status IN ({marks}) AND d.id != ? AND e.created_at >= ?",
                 (*_COUNTED_STATUSES, decision_id, _iso(now - ROLLING_WINDOW)),
             )
         return tuple(

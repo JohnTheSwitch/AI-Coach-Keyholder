@@ -184,9 +184,13 @@ class TestWholePeriodicCycle:
         assert transport.calls == []
         record_obs(core, t - timedelta(minutes=1))
         cycle(core, w, t, "p2")
+        assert transport.calls == [] and w.release_engine.get_balance("w") == 1       # told first, and today's check-in is requested
+        assert w.check_ins.on_user_message("w", "all good today", t + timedelta(minutes=1))
+        record_obs(core, t + timedelta(minutes=1))
+        cycle(core, w, t + timedelta(minutes=2), "p3")
         assert transport.calls == [("unfreeze", "lock-5")]
         assert w.release_engine.get_balance("w") == 0
-        cycle(core, w, t + timedelta(minutes=1), "p3")
+        cycle(core, w, t + timedelta(minutes=3), "p4")
         assert len(transport.calls) == 1
 
     def test_without_a_fresh_observation_nothing_is_ever_sent(self, core) -> None:
@@ -207,7 +211,7 @@ class TestWholePeriodicCycle:
         cycle(core, w, t, "p2")
         assert transport.calls == [] and w.release_engine.get_balance("w") == 1
 
-    def test_a_missed_check_in_vetoes_a_pending_release(self, core) -> None:
+    def test_a_missed_check_in_never_vetoes_a_pending_release(self, core) -> None:
         w, transport = self._setup(core)
         w.release_engine.earn_tokens(user_id="w", amount=1, reason_code="goal", source_event_id="e1", now=local(MON, 9))
         now = local(MON, 10)
@@ -219,7 +223,7 @@ class TestWholePeriodicCycle:
                        "VALUES ('c', 'w', '2026-10-12', 9, 2, ?, 'missed', ?, ?)", ((now - timedelta(hours=1)).isoformat(),) * 3)
         record_obs(core, now + timedelta(minutes=5))
         cycle(core, w, now + timedelta(minutes=5), "p2")
-        assert not w.release_engine.has_planned_release("w") and transport.calls == []
+        assert w.release_engine.has_planned_release("w")
 
     def test_check_ins_and_release_run_in_the_same_cycle_without_interference(self, core) -> None:
         w, transport = self._setup(core)
@@ -276,7 +280,7 @@ class TestPhase3EndToEnd:
         cycle(core, w, late + timedelta(minutes=6), "p5")
         assert len(transport.calls) == 2
 
-    def test_unanswered_check_ins_warn_without_a_window_and_block_the_release(self, core) -> None:
+    def test_unanswered_check_ins_warn_without_a_window_and_never_block_a_release(self, core) -> None:
         w, transport = self._world(core)
         t = local(MON, 16, 30)
         while t < local(MON + timedelta(days=1), 23, 45):      # slots are random: two a day, each missed an hour after it is sent
@@ -292,9 +296,7 @@ class TestPhase3EndToEnd:
         assert [r["state"] for r in ledger] == ["registered"]
         with core.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM penalty_windows")["n"] == 0 and tx.fetch_one("SELECT COUNT(*) AS n FROM penalty_holds")["n"] == 0
-        assert w.check_ins.last_check_in_missed()
         w.release_engine.earn_tokens(user_id="w", amount=1, reason_code="goal", source_event_id="e1", now=t)
         record_obs(core, t)
         cycle(core, w, t, "after")
-        assert not w.release_engine.has_planned_release("w")                          # vetoed: no plan, nothing spent
-        assert transport.calls == [] and w.release_engine.get_balance("w") == 1
+        assert w.release_engine.has_planned_release("w")                              # missed check-ins affect Trust and a Warning only

@@ -44,6 +44,7 @@ from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.progress import is_progress_query, read_progress, render_progress
 from application.review_consent_query import is_review_consent_query
+from application.terms_notice import TERMS_NOTICE
 from application.user_service import UserService
 from chaster.models import ConnectionStatus
 from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
@@ -746,7 +747,7 @@ class ApplicationService:
         return OutgoingMessage(
             text=f"{intro}\n\n"
                  f"This link is single-use and expires in 10 minutes. If you run `chaster connect` "
-                 f"again before finishing, this link will stop working."
+                 f"again before finishing, this link will stop working.\n\n{TERMS_NOTICE}"
         )
 
     def _chaster_chat_context(self, text: str, ctx: RequestContext) -> str | None:

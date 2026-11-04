@@ -17,6 +17,10 @@ Lifecycle (compare-and-set transitions, every one idempotent):
   (strict Supervision Mode, Trust < 0.40: the deadline is 30 minutes and the follow-up window 15)
   scheduled --too late / wrong window / level now 4--> skipped          (never a penalty)
 
+The RELEASE check-in (Phase J2, slot RELEASE_SLOT): opened on demand by the Communication-First release flow (system/release_notice.py). The
+same lifecycle, except that it can never cost anything: submitting a reply is what counts (a verdict is recorded but cannot fail it), and
+left unanswered it expires as `skipped`, never `missed`, so ignoring a release has no Trust effect.
+
 Never a penalty: UNCERTAIN / NOT_EVALUATED verdicts, undeliverable or skipped prompts, a
 crash while sending (needs_review). Events carry ids and the Trust domain only, never the
 user's text. The reply text is stored locally for evaluation only.
@@ -48,7 +52,7 @@ logger = logging.getLogger("ai_coach_keyholder.supervision.checkins")
 
 __all__ = [
     "CheckInService", "CheckInSender", "SendOutcome", "RESPONSE_TIMEOUT", "FOLLOW_UP_WINDOW", "MAX_LATE", "PROMPTS",
-    "STRICT_RESPONSE_TIMEOUT", "STRICT_FOLLOW_UP_WINDOW",
+    "STRICT_RESPONSE_TIMEOUT", "STRICT_FOLLOW_UP_WINDOW", "RELEASE_SLOT", "RELEASE_CHECK_IN_VALIDITY",
 ]
 
 RESPONSE_TIMEOUT = timedelta(minutes=60)     # CHECKIN_RESPONSE_TIMEOUT_MINUTES
@@ -57,6 +61,8 @@ STRICT_RESPONSE_TIMEOUT = timedelta(minutes=30)   # strict Supervision Mode (Tru
 STRICT_FOLLOW_UP_WINDOW = timedelta(minutes=15)
 MAX_LATE = timedelta(minutes=30)             # a slot that is this overdue is skipped, not sent
 _STALE_SENDING = timedelta(minutes=5)
+RELEASE_SLOT = 100                           # above any scheduled slot index: one release check-in per local day
+RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
 
 PROMPTS = {
@@ -201,15 +207,49 @@ class CheckInService:
 
     # ------------------------------------------------------------------ reads
 
-    def last_check_in_missed(self) -> bool:
-        """True when the most recent concluded check-in was missed (cleared by the next concluded one)."""
+    def release_check_in_required(self, now: datetime) -> bool:
+        """A check-in stands between an eligible user and a release only on a day check-ins apply at all."""
+        if self._is_paused(now):
+            return False
+        level = self._level()
+        return level is not None and PROMPTS.get(level) is not None
+
+    def daily_check_in_complete(self, now: datetime) -> bool:
+        """Today's check-in is done: a scheduled one was answered, or the release check-in got a reply."""
         with self._core.transaction() as tx:
-            row = tx.fetch_one(
-                "SELECT status FROM check_ins WHERE user_id = ? AND status IN "
-                "('answered', 'answered_uncertain', 'missed', 'insufficient') ORDER BY due_at DESC LIMIT 1",
-                (self._user,),
-            )
-        return row is not None and row["status"] == "missed"
+            return tx.fetch_one(
+                "SELECT 1 FROM check_ins WHERE user_id = ? AND local_date = ? AND (status IN ('answered', 'answered_uncertain') "
+                "OR (slot_index = ? AND responded_at IS NOT NULL)) LIMIT 1",
+                (self._user, self._cfg.local(now).date().isoformat(), RELEASE_SLOT)) is not None
+
+    def open_release_check_in(self, text: str, now: datetime) -> SendOutcome:
+        """Asks for today's check-in with `text`, at most once a day, claimed before the send. The reply lands here because it is the newest
+        open check-in. UNKNOWN (a delivery that may have worked) stays open like a delivered one: a late reply still counts."""
+        day = self._cfg.local(now).date().isoformat()
+        with self._core.transaction() as tx:
+            existing = tx.fetch_one("SELECT status FROM check_ins WHERE user_id = ? AND local_date = ? AND slot_index = ?",
+                                    (self._user, day, RELEASE_SLOT))
+        if existing is not None:
+            return SendOutcome.UNDELIVERABLE if existing["status"] == "undeliverable" else SendOutcome.DELIVERED
+        check_in_id = str(uuid.uuid4())
+        level = self._level()
+
+        def write(tx: Transaction, _s: object) -> None:
+            tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, prompt_text, created_at, updated_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 'sending', ?, ?, ?)",
+                       (check_in_id, self._user, day, RELEASE_SLOT, int(level) if level is not None else 3, _iso(now), text, _iso(now), _iso(now)))
+
+        apply_transition(self._core, write=write)
+        try:
+            outcome = self._sender.send(user_id=self._user, text=text)
+        except Exception:
+            logger.exception("Release check-in delivery raised; outcome unknown.")
+            outcome = SendOutcome.UNKNOWN
+        if outcome is SendOutcome.UNDELIVERABLE:
+            self._cas(check_in_id, ("sending",), "undeliverable", now)
+        else:
+            self._cas(check_in_id, ("sending",), "sent", now, sent_at=_iso(now), deadline_at=_iso(now + RELEASE_CHECK_IN_VALIDITY))
+        return outcome
 
     def list_recent(self, limit: int = 20) -> list[CheckInRow]:
         with self._core.transaction() as tx:
@@ -292,7 +332,9 @@ class CheckInService:
             except Exception:
                 verdict = Verdict.NOT_EVALUATED
             common = dict(verdict=verdict.value, rubric_version=RUBRIC_VERSION)
-            if verdict is Verdict.SUFFICIENT:
+            if row["slot_index"] == RELEASE_SLOT and verdict is not Verdict.SUFFICIENT:      # submitting is what counts: it cannot fail
+                self._cas(row["id"], ("responded",), "answered_uncertain", now, **common)
+            elif verdict is Verdict.SUFFICIENT:
                 self._cas(row["id"], ("responded",), "answered", now, **common)
             elif verdict is Verdict.INSUFFICIENT:
                 follow_up = row["follow_up_until"] or _iso(now + self._follow_up_window())
@@ -302,11 +344,14 @@ class CheckInService:
 
     def _apply_deadlines(self, now: datetime) -> None:
         with self._core.transaction() as tx:
-            missed = tx.fetch_all("SELECT id, due_at FROM check_ins WHERE user_id = ? AND status = 'sent' AND deadline_at < ?",
+            missed = tx.fetch_all("SELECT id, due_at, slot_index FROM check_ins WHERE user_id = ? AND status = 'sent' AND deadline_at < ?",
                                   (self._user, _iso(now)))
             insufficient = tx.fetch_all("SELECT id FROM check_ins WHERE user_id = ? AND status = 'insufficient_pending' "
                                         "AND follow_up_until < ?", (self._user, _iso(now)))
         for r in sorted(missed, key=lambda row: row["due_at"]):
+            if r["slot_index"] == RELEASE_SLOT:           # ignoring a release offer costs nothing
+                self._cas(r["id"], ("sent",), "skipped", now)
+                continue
             streak = self._miss_streak(r["id"], r["due_at"])
             self._cas(r["id"], ("sent",), "missed", now, event="check_in.missed", payload={"streak": streak})
         for r in insufficient:

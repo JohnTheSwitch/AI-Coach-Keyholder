@@ -53,12 +53,6 @@ class FakeTransport:
             raise self.raises
         return self.result
 
-    def add_time(self, **kw):                      # never used here
-        raise AssertionError
-
-    def remove_time(self, **kw):
-        raise AssertionError
-
 
 class World:
     def __init__(self, tmp_path: Path, *, directory=None, transport=None, owner=OWNER, halted=False) -> None:

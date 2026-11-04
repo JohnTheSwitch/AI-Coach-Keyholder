@@ -95,17 +95,19 @@ class TestFacade:
 
 
 class TestRender:
-    def test_buttons_follow_the_state(self) -> None:
+    def test_nothing_needs_accepting_only_a_refusal_can_be_undone(self) -> None:
         out = render_overview([
             LockConsentView(lock_id="aaaaaaaaaaaa", role="wearer", state=ConsentState.NONE, exposed=False),
             LockConsentView(lock_id="bbbbbbbbbbbb", role="keyholder", state=ConsentState.APPROVED, exposed=True),
+            LockConsentView(lock_id="dddddddddddd", role="wearer", state=ConsentState.REVOKED, exposed=False),
             LockConsentView(lock_id="cccccccccccc", role="unknown", state=None, exposed=None),
         ])
-        assert [a.action_id for a in out.actions] == [action_id("accept", "aaaaaaaaaaaa"), action_id("decline", "aaaaaaaaaaaa"),
-                                                      action_id("revoke", "bbbbbbbbbbbb")]
+        assert [a.action_id for a in out.actions] == [action_id("revoke", "aaaaaaaaaaaa"), action_id("revoke", "bbbbbbbbbbbb"),
+                                                      action_id("accept", "dddddddddddd")]
         assert out.embed.description == NOTICE_TEXT and out.embed.color == "blue"
-        assert [f.value for f in out.embed.fields] == ["Consent: not decided yet; only the keyholder reviews.",
-                                                        "Consent: you agreed; community review is ON.", "Could not be read right now."]
+        assert [f.value for f in out.embed.fields] == ["Consent: covered by this notice; only the keyholder reviews.",
+                                                        "Consent: you agreed; community review is ON.",
+                                                        "Consent: you revoked it; only the keyholder reviews.", "Could not be read right now."]
         assert NOTICE_TEXT in out.text and "trust" not in out.text.lower()
 
     def test_no_locked_lock(self) -> None:

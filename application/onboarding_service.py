@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ai.identity_catalog import IDENTITY_CATALOG, IdentityGroup, get_identity
 from application.models import OnboardingStep, OutgoingMessage, UserPreferences
+from application.terms_notice import TERMS_NOTICE
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
@@ -274,7 +275,7 @@ class OnboardingService:
         entry = get_identity(preferences.identity_id) if preferences.identity_id else None
         name = entry.display_name(preferences.language or "en") if entry else "your AI"
         return (
-            f"All set! You're paired with {name}. Send `help` to see what I can do."
+            f"All set! You're paired with {name}. Send `help` to see what I can do.\n\n{TERMS_NOTICE}"
         )
 
     def _welcome_back_text(self, preferences: UserPreferences) -> str:

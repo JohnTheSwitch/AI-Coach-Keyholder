@@ -22,7 +22,6 @@ from chaster.token_encryptor import TokenEncryptor
 from chaster.token_manager import ChasterTokenManager
 from chaster_execution.models import TransportOutcome as O
 from chaster_execution.transport import (
-    UPDATE_TIME_REQUEST_BODY_CONFIRMED,
     ChasterHttpTransport,
     build_keyholder_transport,
 )
@@ -76,61 +75,18 @@ def transport(parts, send) -> ChasterHttpTransport:
 
 
 class TestRequestShape:
-    def test_add_time_posts_positive_duration(self, parts) -> None:
-        send = FakeSend(204)
-        r = transport(parts, send).add_time(lock_id="64a1b2c3d4e5f60718293a4b", seconds=3600)
-        (c,) = send.calls
-        assert r.outcome == O.OK and r.http_status == 204
-        assert c["method"] == "POST" and c["url"] == "https://api.chaster.app/locks/64a1b2c3d4e5f60718293a4b/update-time"
-        assert c["json"] == {"duration": 3600}
-        assert c["headers"]["Authorization"] == f"Bearer {FAKE_TOKEN}"
-
-    def test_remove_time_posts_negative_duration(self, parts) -> None:
-        send = FakeSend(204)
-        transport(parts, send).remove_time(lock_id="abc123", seconds=7200)
-        assert send.calls[0]["json"] == {"duration": -7200}
-
     def test_timeouts_are_set(self, parts) -> None:
         send = FakeSend(204)
-        transport(parts, send).add_time(lock_id="abc", seconds=3600)
+        transport(parts, send).set_frozen(lock_id="abc", frozen=True)
         assert isinstance(send.calls[0]["timeout"], tuple)
-
-    def test_real_wire_format_json_body_content_type_and_header_order(self, parts, monkeypatch) -> None:
-        captured = {}
-
-        def fake_session_send(self, prepared, **kw):
-            captured["prepared"] = prepared
-            captured["kw"] = kw
-            return Resp(204)
-
-        monkeypatch.setattr(requests.Session, "send", fake_session_send)
-        t = ChasterHttpTransport(token_manager=parts[2], keyholder_user_id="k", clock=FrozenClock(NOW))
-        assert t.remove_time(lock_id="abc123", seconds=3600).outcome == O.OK
-        p = captured["prepared"]
-        assert p.method == "POST" and p.url == "https://api.chaster.app/locks/abc123/update-time"
-        assert json.loads(p.body) == {"duration": -3600}
-        assert p.headers["Content-Type"] == "application/json"
-        assert list(p.headers.keys())[:2] == ["Authorization", "User-Agent"]
-        assert "verify" not in captured["kw"]            # TLS verification untouched
 
 
 class TestInputValidation:
     @pytest.mark.parametrize("lock_id", ["", " ", "a/b", "a?x=1", "../x", "a b", "a#b", None, 5, "x" * 65])
     def test_bad_lock_ids_never_send(self, parts, lock_id) -> None:
         send = FakeSend(204)
-        r = transport(parts, send).add_time(lock_id=lock_id, seconds=3600)
+        r = transport(parts, send).set_frozen(lock_id=lock_id, frozen=True)
         assert r.outcome == O.NOT_SENT and not send.calls
-
-    @pytest.mark.parametrize("seconds", [0, -1, -3600, 6 * 3600 + 1, 1.5, True, None, "3600"])
-    def test_bad_amounts_never_send(self, parts, seconds) -> None:
-        send = FakeSend(204)
-        for fn in (transport(parts, send).add_time, transport(parts, send).remove_time):
-            assert fn(lock_id="abc", seconds=seconds).outcome == O.NOT_SENT
-        assert not send.calls
-
-    def test_the_single_action_ceiling_itself_is_allowed(self, parts) -> None:
-        send = FakeSend(204)
-        assert transport(parts, send).add_time(lock_id="abc", seconds=6 * 3600).outcome == O.OK
 
 
 class TestOutcomeMapping:
@@ -140,19 +96,19 @@ class TestOutcomeMapping:
         (500, O.UNKNOWN), (502, O.UNKNOWN), (503, O.UNKNOWN), (418, O.UNKNOWN),
     ])
     def test_status_mapping(self, parts, status, outcome) -> None:
-        r = transport(parts, FakeSend(status)).add_time(lock_id="abc", seconds=3600)
+        r = transport(parts, FakeSend(status)).set_frozen(lock_id="abc", frozen=True)
         assert r.outcome == outcome and r.http_status == status
 
     def test_connect_timeout_is_not_sent(self, parts) -> None:
-        assert transport(parts, FakeSend(requests.ConnectTimeout())).add_time(lock_id="abc", seconds=3600).outcome == O.NOT_SENT
+        assert transport(parts, FakeSend(requests.ConnectTimeout())).set_frozen(lock_id="abc", frozen=True).outcome == O.NOT_SENT
 
     @pytest.mark.parametrize("exc", [requests.ReadTimeout(), requests.ConnectionError(), requests.RequestException()])
     def test_other_network_errors_are_ambiguous(self, parts, exc) -> None:
-        assert transport(parts, FakeSend(exc)).add_time(lock_id="abc", seconds=3600).outcome == O.UNKNOWN
+        assert transport(parts, FakeSend(exc)).set_frozen(lock_id="abc", frozen=True).outcome == O.UNKNOWN
 
     def test_a_rejected_request_is_never_resent_for_ambiguous_errors(self, parts) -> None:
         send = FakeSend(500)
-        transport(parts, send).add_time(lock_id="abc", seconds=3600)
+        transport(parts, send).set_frozen(lock_id="abc", frozen=True)
         assert len(send.calls) == 1
 
 
@@ -160,7 +116,7 @@ class TestAuthHandling:
     def test_no_keyholder_connection_is_not_sent(self, parts) -> None:
         send = FakeSend(204)
         t = ChasterHttpTransport(token_manager=parts[2], keyholder_user_id="nobody", clock=FrozenClock(NOW), send=send)
-        assert t.add_time(lock_id="abc", seconds=3600).outcome == O.NOT_SENT and not send.calls
+        assert t.set_frozen(lock_id="abc", frozen=True).outcome == O.NOT_SENT and not send.calls
 
     def test_a_401_refreshes_once_and_retries_with_the_new_token(self, parts) -> None:
         conns, oauth, _ = parts
@@ -169,7 +125,7 @@ class TestAuthHandling:
             refresh_expires_in=86400, granted_scopes=("locks",),
         )
         send = FakeSend(401, 204)
-        r = transport(parts, send).add_time(lock_id="abc", seconds=3600)
+        r = transport(parts, send).set_frozen(lock_id="abc", frozen=True)
         assert r.outcome == O.OK and len(send.calls) == 2
         assert send.calls[0]["headers"]["Authorization"] == f"Bearer {FAKE_TOKEN}"
         assert send.calls[1]["headers"]["Authorization"] == "Bearer fake-new-access-token"
@@ -181,14 +137,14 @@ class TestAuthHandling:
             refresh_expires_in=86400, granted_scopes=("locks",),
         )
         send = FakeSend(401)
-        r = transport(parts, send).add_time(lock_id="abc", seconds=3600)
+        r = transport(parts, send).set_frozen(lock_id="abc", frozen=True)
         assert r.outcome == O.UNAUTHORIZED and len(send.calls) == 2
 
     def test_refresh_endpoint_down_is_not_sent(self, parts) -> None:
         oauth = parts[1]
         oauth.refresh_tokens.side_effect = ChasterTokenExchangeError("down", status_code=503, transient=True)
         send = FakeSend(401)
-        r = transport(parts, send).add_time(lock_id="abc", seconds=3600)
+        r = transport(parts, send).set_frozen(lock_id="abc", frozen=True)
         assert r.outcome == O.NOT_SENT and len(send.calls) == 1
 
     def test_expired_token_is_refreshed_before_sending(self, parts) -> None:
@@ -199,7 +155,7 @@ class TestAuthHandling:
             access_token="fake-new-access-token", refresh_token="fake-new-refresh", expires_in=3600,
             refresh_expires_in=86400, granted_scopes=("locks",),
         )
-        assert late.add_time(lock_id="abc", seconds=3600).outcome == O.OK
+        assert late.set_frozen(lock_id="abc", frozen=True).outcome == O.OK
         assert late._send.calls[0]["headers"]["Authorization"] == "Bearer fake-new-access-token"
 
 
@@ -207,19 +163,18 @@ class TestSecrets:
     def test_token_is_never_logged_returned_or_in_the_result(self, parts, caplog) -> None:
         caplog.set_level(logging.DEBUG)
         for status in (204, 403, 500):
-            r = transport(parts, FakeSend(status)).add_time(lock_id="abc", seconds=3600)
+            r = transport(parts, FakeSend(status)).set_frozen(lock_id="abc", frozen=True)
             assert FAKE_TOKEN not in repr(r)
-        transport(parts, FakeSend(RuntimeError("boom"))).add_time(lock_id="abc", seconds=3600)
+        transport(parts, FakeSend(RuntimeError("boom"))).set_frozen(lock_id="abc", frozen=True)
         assert FAKE_TOKEN not in caplog.text
 
     def test_unexpected_error_is_ambiguous_not_a_crash(self, parts) -> None:
-        r = transport(parts, FakeSend(ValueError("weird"))).add_time(lock_id="abc", seconds=3600)
+        r = transport(parts, FakeSend(ValueError("weird"))).set_frozen(lock_id="abc", frozen=True)
         assert r.outcome == O.UNKNOWN
 
 
 class TestFactoryAndInterface:
     def test_factory_builds_the_real_transport(self, parts) -> None:
-        assert UPDATE_TIME_REQUEST_BODY_CONFIRMED is True
         t = build_keyholder_transport(token_manager=parts[2], keyholder_user_id="k", clock=FrozenClock(NOW))
         assert isinstance(t, ChasterHttpTransport)
 
@@ -227,9 +182,9 @@ class TestFactoryAndInterface:
         with pytest.raises(ValueError):
             ChasterHttpTransport(token_manager=parts[2], keyholder_user_id=" ", clock=FrozenClock(NOW))
 
-    def test_public_surface_is_only_time_and_barrier_methods(self, parts) -> None:
+    def test_public_surface_is_only_barrier_and_extension_methods(self, parts) -> None:
         public = {n for n in dir(ChasterHttpTransport) if not n.startswith("_")}
-        assert public == {"add_time", "remove_time", "set_frozen", "set_extensions"}       # set_extensions: Phase I2, CLI only
+        assert public == {"set_frozen", "set_extensions"}       # set_extensions: Phase I2, CLI only
 
     def test_module_never_disables_tls_verification(self) -> None:
         text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")

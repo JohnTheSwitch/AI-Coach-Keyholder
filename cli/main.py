@@ -142,8 +142,8 @@ def render_configuration(listing: LockListing, report, consents: dict | None = N
         if consent is not None:
             lines.append(f"  wearer consent to community review: {consent.state.value}"
                          + (f" (notice {consent.notice_version}, {consent.decided_at})" if consent.decided_at else ""))
-            if community_exposed(c) and not consent.approved:
-                lines.append("  WARNING: community review is ON without the wearer's recorded consent "
+            if community_exposed(c) and consent.refused:
+                lines.append("  WARNING: community review is ON although the wearer refused it "
                              f"(python -m cli extension-review {c.lock_id} --owner-id <id> --revert)")
         gaps = review_gaps(c)
         if c.status != "locked":
@@ -243,7 +243,8 @@ _REVIEW_TEXT = {
     "planned": "DRY RUN: nothing was sent.",
     "already_on_target": "Nothing to do: the review settings already match (community review, no Chaster punishments).",
     "nothing_to_revert": "Nothing to do: no review extension has community review.",
-    "no_consent": "Refused: the wearer has not approved community review for this lock (python -m cli review-consent LOCK_ID ...).",
+    "no_consent": "Refused: the wearer declined or revoked community review, or another account wears this lock without their approval "
+                  "(python -m cli review-consent LOCK_ID ...).",
     "applied": "Done: Chaster accepted the update and a fresh read shows community review with the same extensions.",
     "applied_unverified": "CHECK THE LOCK ON CHASTER: the update was accepted, but a fresh read does not confirm it.",
     "attempting": "UNKNOWN: the attempt was not completed.",

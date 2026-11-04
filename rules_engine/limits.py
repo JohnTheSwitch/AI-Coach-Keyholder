@@ -14,13 +14,7 @@ from datetime import datetime, timedelta
 from rules_engine.models import ActionType, RecentAction
 
 __all__ = [
-    "HOURS_UNIT",
-    "MAX_SINGLE_ACTION_HOURS",
-    "MAX_ADDED_HOURS_PER_WINDOW",
-    "MAX_REMOVED_HOURS_PER_WINDOW",
-    "MAX_ACTIONS_PER_WINDOW",
     "ROLLING_WINDOW",
-    "ACTION_COOLDOWN",
     "BARRIER_MAX_ACTIONS_PER_WINDOW",
     "BARRIER_COOLDOWN",
     "BARRIER_ACTIONS",
@@ -28,16 +22,10 @@ __all__ = [
     "apply_limits",
 ]
 
-HOURS_UNIT = 1                                   # time changes are whole hours
-MAX_SINGLE_ACTION_HOURS = 6
-MAX_ADDED_HOURS_PER_WINDOW = 12
-MAX_REMOVED_HOURS_PER_WINDOW = 6
-MAX_ACTIONS_PER_WINDOW = 2
 ROLLING_WINDOW = timedelta(hours=24)
-ACTION_COOLDOWN = timedelta(hours=4)
 LOCK_DATA_MAX_AGE = timedelta(minutes=15)
 
-# v0.39 barrier pool (freeze / unfreeze): independent of the time-adjustment pool above.
+# The barrier pool (freeze / unfreeze). There is no time-adjustment pool: the system never changes a lock's duration.
 BARRIER_ACTIONS = (ActionType.FREEZE, ActionType.UNFREEZE)
 BARRIER_MAX_ACTIONS_PER_WINDOW = 2
 BARRIER_COOLDOWN = timedelta(hours=4)
@@ -47,49 +35,17 @@ def apply_limits(
     action: ActionType, hours: int, recent: tuple[RecentAction, ...], now: datetime,
 ) -> tuple[int, str | None]:
     """
-    Returns (allowed_hours, refusal_reason). A refusal means NO_ACTION.
-    For ADD_TIME / REMOVE_TIME the amount is clamped down to what the
-    rolling-window cap still allows (whole hours); if less than one hour
-    remains, it is a refusal. FREEZE / UNFREEZE carry no hours but still
-    count against the frequency and cooldown limits.
+    Returns (0, refusal_reason); a refusal means NO_ACTION. `hours` is always 0 and stays in the signature only because decisions keep their
+    `hours` column. Raising the barrier only restrains: it is never blocked by the pool or the cooldown and does not use up the release
+    budget (otherwise a release followed by its re-freeze would block the next day's release). The pool limits RELEASES (unfreezes).
     """
     if action is ActionType.FREEZE:
-        # Raising the barrier only restrains: it is never blocked by the pool or the cooldown, and it does
-        # not use up the release budget (otherwise a release followed by its re-freeze would block the
-        # next day's release).
         return 0, None
-    is_barrier = action in BARRIER_ACTIONS
-    # Two independent pools. The barrier pool limits RELEASES (unfreezes); time adjustments are counted
-    # only against time adjustments.
-    if is_barrier:
-        recent = tuple(a for a in recent if a.action_type is ActionType.UNFREEZE)
-    else:
-        recent = tuple(a for a in recent if a.action_type not in BARRIER_ACTIONS)
-    max_actions = BARRIER_MAX_ACTIONS_PER_WINDOW if is_barrier else MAX_ACTIONS_PER_WINDOW
-    cooldown = BARRIER_COOLDOWN if is_barrier else ACTION_COOLDOWN
-
+    releases = tuple(a for a in recent if a.action_type is ActionType.UNFREEZE)
     window_start = now - ROLLING_WINDOW
-    in_window = [a for a in recent if window_start <= a.created_at <= now]
-
-    if len(in_window) >= max_actions:
-        return 0, f"action limit reached ({max_actions} per 24 hours)"
-
-    if recent:
-        last = max(a.created_at for a in recent)
-        if now - last < cooldown:
-            return 0, "cooldown active (minimum 4 hours between actions)"
-
-    if action in (ActionType.FREEZE, ActionType.UNFREEZE):
-        return 0, None
-
-    if action == ActionType.ADD_TIME:
-        used = sum(a.hours for a in in_window if a.action_type == ActionType.ADD_TIME)
-        cap = MAX_ADDED_HOURS_PER_WINDOW
-    else:
-        used = sum(a.hours for a in in_window if a.action_type == ActionType.REMOVE_TIME)
-        cap = MAX_REMOVED_HOURS_PER_WINDOW
-
-    allowed = min(hours, MAX_SINGLE_ACTION_HOURS, cap - used)
-    if allowed < HOURS_UNIT:
-        return 0, "24-hour time cap reached"
-    return allowed, None
+    in_window = [a for a in releases if window_start <= a.created_at <= now]
+    if len(in_window) >= BARRIER_MAX_ACTIONS_PER_WINDOW:
+        return 0, f"action limit reached ({BARRIER_MAX_ACTIONS_PER_WINDOW} per 24 hours)"
+    if releases and now - max(a.created_at for a in releases) < BARRIER_COOLDOWN:
+        return 0, "cooldown active (minimum 4 hours between actions)"
+    return 0, None

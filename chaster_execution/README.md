@@ -1,43 +1,25 @@
 # chaster_execution — Phase 3 (execution plane)
 
 Canonical: `docs/architecture/chaster_execution_phase3_proposal.md` (approved).
-Applies Rules Engine decisions to a Chaster lock. **Built, tested and wired; the real
-transport exists but `ENABLE_CHASTER_EXECUTION` stays false until live testing.**
+Carries out barrier decisions on a Chaster lock. **Zero-Time-Modification (owner decision, 2026-11-04): the system never changes a lock's duration,
+up or down.** No time method exists on the transport or the executor, and no action type or limit for one exists in `rules_engine`. Lock
+progression is governed purely by the frozen state and the Release Engine. `ENABLE_CHASTER_EXECUTION` stays false until live testing.
 
 ## The Chaster transport (`ChasterHttpTransport`, Route A)
 
-`POST https://api.chaster.app/locks/{lockId}/update-time`, authenticated with the
-KEYHOLDER connection's access token (the existing token manager: transparent
-refresh, one refresh-and-retry on a 401), JSON body `{"duration": <integer
-seconds>}`, positive = add time, negative = remove time.
+`POST https://api.chaster.app/locks/{lockId}/freeze` with `{"isFrozen": <bool>}`, authenticated with the KEYHOLDER connection's access token (the
+existing token manager: transparent refresh, one refresh-and-retry on a 401), and `set_extensions` for the guarded CLI.
 
-**This request contract is owner-supplied, not documented by Chaster.** Chaster's
-OpenAPI (v0.35.0) defines the endpoint (scope `locks`; permissions
-`lock.time.add` / `lock.time.remove`; 204 / 400 / 401 / 403 / 404) but leaves its
-request schema `UpdateTimeDto` with no properties. Before trusting it:
-the first live use must be one 1-hour change on a test lock, comparing the lock's
-end date before and after (`lock_decision_executions.end_date_before` records the
-"before"). A wrong sign convention would otherwise move time the wrong way
-without any error.
-
-- Outcomes: 204 OK; 400 not eligible; 403 forbidden; 404 not found; 401 refresh
-  once then unauthorised. Any other status (including any other 2xx and every
-  5xx), a read timeout or a dropped connection is **unknown** and ends as
-  `needs_review`, never retried. Only a connect timeout, a missing/unrefreshable
-  connection or rejected input is "not sent".
-- Defence in depth: the lock id must match `[A-Za-z0-9_-]{1,64}` (it is placed in
-  the URL), and the amount must be a positive int of at most 6 hours.
-- The token lives only in the Authorization header of the single request; it is
-  never logged, stored or returned. TLS verification is untouched. Tests inject a
-  fake `send` or patch `requests.Session.send`; nothing touches the network.
-- `chaster/_http.py::send_with_ordered_headers` gained an optional `json=`
-  parameter (header order and TLS behaviour unchanged).
+- Outcomes: 204 OK; 400 not eligible; 403 forbidden; 404 not found; 401 refresh once then unauthorised. Any other status (including any other 2xx
+  and every 5xx), a read timeout or a dropped connection is **unknown** and ends as `needs_review`, never retried. Only a connect timeout, a
+  missing/unrefreshable connection or rejected input is "not sent".
+- Defence in depth: the lock id must match `[A-Za-z0-9_-]{1,64}` (it is placed in the URL).
+- The token lives only in the Authorization header of the single request; it is never logged, stored or returned. TLS verification is untouched.
+  Tests inject a fake `send` or patch `requests.Session.send`; nothing touches the network.
 
 ## What is implemented
 
-- **`LockActionTransport`**: exactly `add_time` and `remove_time`. No freeze
-  method (disabled by decision), and never anything for combination / recovery /
-  unlock.
+- **`LockActionTransport`**: exactly `set_frozen`. Never anything for time, combination, recovery or unlock.
 - **`ChasterExecutor`** (`executor.py`): the only caller of the transport and the
   only writer of `lock_decisions.status`. Consumes persisted decisions only.
   - Status flow `dry_run -> pending -> executing -> executed | failed |
@@ -52,9 +34,9 @@ without any error.
   - Pre-flight, on fresh data: the keyholder connection's granted scopes contain
     `locks`; the observation is at most 15 minutes old (one read-only refresh if
     not); the lock is `locked`, a keyholder lock, and `isFrozen` is exactly
-    `False`; a lock id exists; the hard limits are re-applied against executed
+    the state the barrier action expects; a lock id exists; the release limits are re-applied against executed
     history only (executed / executing / needs_review).
-  - Only `add_time` / `remove_time` execute. Hours are sent as `hours * 3600`.
+  - Only freeze / unfreeze execute, and only for barrier rule ids.
 - **Switches**: `ENABLE_CHASTER_EXECUTION` (default false) and the runtime halt
   `execution_control` (migration 026), which is seeded **halted**, treats a missing
   or unreadable row as halted, and is changed only by
@@ -136,10 +118,12 @@ Community review (`all_members`) lets any logged-in Chaster member see a lock's 
 needs the wearer's consent (philosophy 2.5, 2.6). `review_consent.py` holds one fixed English notice (who sees the photos, that Chaster adds no
 time on a rejection, that a rejection here is at most an UNCONFIRMED incident for the owner, that consent covers one lock and is revocable) and
 `ReviewConsentLedger`: append-only rows in `consent_log` (`target_type` `integration`, `target_id` `community_photo_review:<lock id>`,
-`target_version` = the first 12 hex characters of the notice's SHA-256, `explanation_shown` = the exact notice). The latest row decides:
-`approved`, `stale` (approved an older notice), `declined`, `revoked` or `none`.
+`target_version` = which notice text was shown, `explanation_shown` = the exact notice). The latest row decides: `approved`, `declined`, `revoked` or
+`none`. Simplified (owner decision, 2026-11-04): the notice is informational, proceeding implies agreement with a link to the repository, and a
+changed wording needs no re-acceptance.
 
-- `extension-review --apply` refuses with `no_consent` unless the state is `approved`; the dry run lists the missing consent as a blocker.
+- `extension-review --apply` refuses with `no_consent` on an explicit decline or revocation, and on a lock worn by ANOTHER account without that
+  wearer's approval or the owner's attestation (that wearer may never have seen a notice). A lock the owner wears needs nothing else.
 - `extension-review --revert` (dry run) and `--revert --apply --yes` set `visibility` back to `keyholder` on each review extension that has
   `all_members` (`plan_review_revert`; peer verification and punishments untouched). It needs no consent and no plan id (a given one must match)
   and is not stopped by the runtime halt (owner decision: it only reduces exposure); every other guard applies.
@@ -147,14 +131,14 @@ time on a rejection, that a rejection here is at most an UNCONFIRMED incident fo
   decision, only for a lock the connected account wears. A lock worn by another account is refused (only that wearer can decide) unless the
   owner adds `--wearer-is-my-account`, attesting that the wearer account is the owner's own; the attestation is stored with the record. A
   decline or revocation of an exposed lock immediately runs the revert write, also while halted.
-- `extension-config` shows the consent state per lock and warns when community review is on without approved consent.
+- `extension-config` shows the consent state per lock and warns when community review is on although the wearer refused it.
 
 Only the CLI imports the service; the bot never records consent (guarded in tests). A Discord DM path for tenant wearers is not built yet.
 
 Revocation (2026-11-03, `docs/architecture/phase_i_proposal.md` section 8): `--revert` and a revoked consent make Chaster stop asking for
 photos: `verification-picture` is removed, `temporary-opening`'s picture requirements and the tasks' `verificationRequired` /
 `codeRequired` and peer verification are switched off; every other extension and field is sent back as read. A decline runs it only when
-community review is actually on. The notice text (and so its version) changed: earlier approvals are `stale`.
+community review is actually on.
 
 Phase J2 (`penalty_barrier.py`, migration 044, `docs/architecture/phase_j_proposal.md` section 4): `PenaltyBarrierExecutor` carries out the barrier
 intents of a Penalty Window on the one configured lock, only if a fresh read shows role `keyholder`. Freeze / unfreeze only, never time. Its queue is

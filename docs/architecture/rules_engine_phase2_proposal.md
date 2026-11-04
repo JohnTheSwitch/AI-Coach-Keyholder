@@ -1,5 +1,8 @@
 # Phase 2 — Lock Decision Loop and Rules Engine: Design Proposal (v0.1)
 
+> **Superseded in part (2026-11-04): Zero-Time-Modification.** Time changes were removed from the system by owner decision: everything below about
+> adding or removing time is historical. See `phase_j_proposal.md` section 4.5.
+
 > **Status: proposal for owner review. Nothing here is implemented.**
 > Written before the sanitised Chaster lock sample arrives; every rule that
 > depends on `isFrozen`, `canBeUnlocked` or `keyholder` is marked

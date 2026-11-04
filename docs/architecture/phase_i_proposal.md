@@ -193,3 +193,8 @@ until accepted again (one button in the Discord consent overview). After a revoc
 Live dry run (nothing sent): both locks would get `tasks peerVerification.enabled on -> off`, `visibility all_members -> keyholder` and
 `verification-picture removed`; their task and temporary-opening photo flags are already off; `pillory`, `link`, `temporary-opening` are
 sent back unchanged.
+
+## 9. Consent simplified (2026-11-04, owner decision)
+
+The notice is informational and needs no acceptance or re-acceptance; `stale` no longer exists. See `phase_j_proposal.md` section 4.7, which also
+records what was kept: an explicit no refuses, and another account's lock keeps its check. Sections 6 and 8 describe the earlier stricter behaviour.

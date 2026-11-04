@@ -71,12 +71,12 @@ def _lock_decisions(core):
 
 
 class TestDryRunPipeline:
-    def test_missed_goal_records_a_dry_run_add_time_decision(self, core) -> None:
+    def test_a_goal_assessment_records_one_dry_run_decision(self, core) -> None:
         tm, gm, engine, _ = _world(core)
         _assess(gm, GoalOutcome.MISSED)
         _startup(core, engine)
         (d,) = engine.list_decisions()
-        assert d.action_type == A.ADD_TIME and d.hours == 1 and d.status == DecisionStatus.DRY_RUN
+        assert d.action_type == A.FREEZE and d.hours == 0 and d.status == DecisionStatus.DRY_RUN
         assert d.rule_id == "setback" and d.reason and d.ruleset_version == "1"
         assert d.inputs["trust_domain"] == "fitness" and d.inputs["lock"]["is_keyholder_lock"] is True
 
@@ -126,15 +126,14 @@ class TestDryRunPipeline:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM lock_decision_triggers")["n"] == 1
         assert len(_lock_decisions(core)) == 1
 
-    def test_frequency_limit_across_triggers(self, core) -> None:
+    def test_a_freeze_is_never_rate_limited_across_triggers(self, core) -> None:
         tm, gm, engine, _ = _world(core)
         for i in range(3):
             _assess(gm, GoalOutcome.MISSED, at=NOW + timedelta(seconds=i))
         _startup(core, engine)
         decisions = sorted(engine.list_decisions(), key=lambda d: d.trigger_id)
         actionable = [d for d in decisions if d.action_type != A.NO_ACTION]
-        assert len(actionable) == 1          # cooldown (4h) blocks the next two in the same run
-        assert sum(1 for d in decisions if "cooldown" in d.reason) == 2
+        assert len(actionable) == 3 and not [d for d in decisions if "cooldown" in d.reason]      # only releases are limited
 
     def test_setback_streak_uses_trigger_history(self, core) -> None:
         tm, gm, engine, _ = _world(core)

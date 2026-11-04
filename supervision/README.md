@@ -41,7 +41,7 @@ prompts, answers, evaluation and penalties are later phases.
   follow-up window (a sufficient follow-up clears it); still not sufficient -> `check_in.insufficient`. The Trust Manager
   records `CHECKIN_MISSED` / `CHECKIN_INSUFFICIENT` evidence (owner matrix: 1st miss -0.02, 2nd consecutive -0.04, 3rd and later
   -0.06, insufficient -0.01; the position is carried as `streak` in the `check_in.missed` event),
-  idempotent, with an immediate recalculation. The last check-in being `missed` vetoes a release.
+  idempotent, with an immediate recalculation. A missed check-in never vetoes a release.
 - **Strict Supervision Mode (Trust < 0.40, owner rule):** the response deadline drops from 60 to 30 minutes and the
   follow-up window after an `INSUFFICIENT` answer from 30 to 15 minutes (`SupervisionService.is_active(domain)` is read when the
   prompt is sent / the verdict arrives; stored per check-in). Env: `CHECKIN_RESPONSE_TIMEOUT_MINUTES` (60),
@@ -58,3 +58,6 @@ prompts, answers, evaluation and penalties are later phases.
 Phase J2: check-in escalation no longer confirms anything. Three missed check-ins lower Trust (per-miss evidence) and issue a Warning (event
 `check_in.warning_issued`, DM, retried until delivered); the Incident stays UNCONFIRMED until the keyholder runs
 `python -m cli check-in-escalations confirm|dismiss <incident id> --owner-id <id> --yes`.
+
+Phase J2: `open_release_check_in()` opens the on-demand check-in of the Communication-First release (`RELEASE_SLOT`, once per local day). A reply
+counts whatever its verdict, and left unanswered it expires as `skipped`, never `missed`. See `release_engine/README.md`.

@@ -50,19 +50,13 @@ class FakeTransport:
             raise self.raises
         return self.result
 
-    def add_time(self, *, lock_id, seconds):
-        return self._do("add", lock_id, seconds)
-
-    def remove_time(self, *, lock_id, seconds):
-        return self._do("remove", lock_id, seconds)
-
     def set_frozen(self, *, lock_id, frozen):
         return self._do("freeze" if frozen else "unfreeze", lock_id)
 
 
 class World:
     def __init__(self, tmp_path: Path, *, transport=None, can_execute=True, scopes=("locks",), frozen=True,
-                 frozen_since: timedelta = timedelta(hours=1), penalty=False, supervised=False, missed=False,
+                 frozen_since: timedelta = timedelta(hours=1), penalty=False, supervised=False,
                  window_ok=True, status=ChasterProviderStatus.LOCKED) -> None:
         self.core = CoreDatabase(tmp_path / "test.db")
         with self.core.raw_connection() as conn:
@@ -70,7 +64,7 @@ class World:
                 conn.executescript(path.read_text(encoding="utf-8"))
         self.now = local(MON, 10, 0)
         self.frozen, self.frozen_since, self.status = frozen, frozen_since, status
-        self.penalty, self.supervised, self.missed = penalty, supervised, missed
+        self.penalty, self.supervised = penalty, supervised
         self.refreshes = 0
         self.refresh_effective = True
         self.transport = transport or FakeTransport()
@@ -88,7 +82,7 @@ class World:
         self.task = ReleaseEnginePeriodicTask(
             engine=self.engine, rules=self.rules, user_id=U, get_observation=self._obs,
             refresh_observation=self._refresh, penalty_window_active=lambda: self.penalty,
-            supervision_active=lambda: self.supervised, last_check_in_missed=lambda: self.missed,
+            supervision_active=lambda: self.supervised,
             is_halted=self.control.is_halted, can_execute=can_execute, max_hold=timedelta(hours=72),
         )
         self.fetched_at = None          # None = always fresh relative to self.now
@@ -230,7 +224,7 @@ class TestPlanning:
 
 
 class TestVetoes:
-    @pytest.mark.parametrize("flag", ["penalty", "supervised", "missed"])
+    @pytest.mark.parametrize("flag", ["penalty", "supervised"])
     def test_a_veto_cancels_the_plan_and_blocks_a_new_one(self, w, flag) -> None:
         w.tokens()
         w.cycle()
@@ -342,7 +336,7 @@ class TestBackstop:
         assert "backstop:window_closed" in report.notes and world.transport.calls == []
 
     def test_ignores_vetoes(self, tmp_path) -> None:
-        world = World(tmp_path, frozen_since=timedelta(days=5), penalty=True, supervised=True, missed=True)
+        world = World(tmp_path, frozen_since=timedelta(days=5), penalty=True, supervised=True)
         world.cycle(local(MON, 18, 0))
         assert world.transport.calls == [("unfreeze", "lock-1")]
 
