@@ -140,19 +140,15 @@ class TestDiscordDmChasterGuardrail:
         assert embed.color == discord.Color.red()
         assert model.calls == 0
 
-    def test_linked_account_gets_a_model_written_text_reply_from_verified_data(self, core, tmp_path) -> None:
+    def test_linked_account_gets_the_verified_data_directly(self, core, tmp_path) -> None:
+        """A model phrased this once and garbled it in live use, so it no longer sees the question."""
         bot, service, model = _bot(core, tmp_path, chaster_configured=True)
         _link(service)
-        model.text = "Your Weekend lock has 2 days and 3 hours left. Hang in there."
+        model.text = "I don't know the current state of your lock."
         with patch.object(ChasterLockClient, "list_active_locks", return_value=[LOCK]) as locks:
-            message = _ask(bot)
+            embed = _sent_embed(_ask(bot))
         locks.assert_called_once()
-        assert message.channel.send.call_args.args == (model.text,)  # plain text, no embed
-        assert "embed" not in message.channel.send.call_args.kwargs
-        messages = model.requests[0].messages
-        assert messages[-1].role.value == "user" and messages[-2].role.value == "system"
-        assert "VERIFIED CHASTER DATA" in messages[-2].content and "2 days, 3 hours and 4 minutes" in messages[-2].content
-
+        assert embed.color == discord.Color.green() and "Weekend lock" in repr(embed.to_dict()) and model.requests == []
     def test_model_failure_with_real_data_falls_back_to_the_deterministic_green_embed(self, core, tmp_path) -> None:
         from conversation_engine.model_types import LLMGenerationError
         bot, service, model = _bot(core, tmp_path, chaster_configured=True)

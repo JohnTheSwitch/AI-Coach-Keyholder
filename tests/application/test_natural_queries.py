@@ -112,3 +112,28 @@ class TestNothingInternalReachesADm:
         for path in (ROOT / "bot").glob("*.py"):
             source = path.read_text(encoding="utf-8")
             assert "app_commands" not in source and "commands.Bot" not in source and "CommandTree" not in source, path.name
+
+
+class TestLockFactsNeverPassThroughAModel:
+    """Found live on 2026-11-04: with verified data in hand, the model answered "I don't know the current state of your lock"."""
+
+    def _service(self, core, model):  # noqa: F811
+        from types import SimpleNamespace
+        tokens = SimpleNamespace(call_with_token=lambda *_a, **_k: [
+            {"_id": "a", "title": "Keyholder lock", "status": "locked", "isFrozen": False, "endDate": None},
+            {"_id": "b", "title": "Keyholder lock", "status": "unlocked", "isFrozen": False, "endDate": None}])
+        return ApplicationService(core.db_path, core=core, conversation_engine=model, chaster_token_manager=tokens,
+                                  chaster_connections=SimpleNamespace(get=lambda _u: None), chaster_oauth_client=object())
+
+    @pytest.mark.parametrize("question", ["what's my lock status?", "what\u2019s my lock status?", "am I locked?", "how much time is left?", "what's my lock status"])
+    def test_the_verified_data_is_the_answer(self, core, question) -> None:  # noqa: F811
+        class Model:
+            def generate_response(self, **_k):
+                raise AssertionError("a lock fact reached the model")
+
+        service = self._service(core, Model())
+        _complete_onboarding(service)
+        reply = service.handle_message(_incoming(question, external_message_id="m1"))
+        assert reply.embed is not None
+        shown = " ".join(f"{f.name} {f.value}" for f in reply.embed.fields) + (reply.embed.description or "")
+        assert shown.count("Keyholder lock") == 2

@@ -56,7 +56,7 @@ from chaster.lock_client import ChasterLockApiError, ChasterLockClient
 from chaster.llm_tools import (
     ChasterToolOutcome, ChasterToolOutcomeKind, is_chaster_status_query, mentions_lock_topic,
 )
-from chaster.status_context import build_chaster_chat_context, build_chaster_status_context
+from chaster.status_context import build_chaster_chat_context
 from chaster.presentation import lock_status_text, lock_time_remaining, lock_title
 from chaster.token_manager import (
     ChasterNotConnectedError,
@@ -266,7 +266,7 @@ class ApplicationService:
             # the model supporting tools, or on the model being up, so a
             # model can never improvise manual commands for it.
             if is_chaster_status_query(incoming.text):
-                return self._answer_chaster_status_question(incoming, context, preferences)
+                return self._answer_chaster_status_question(context)
 
             # Phase J1: "show my progress" / "how am I doing?" -- answered from real records, never by the model, never with Trust.
             if is_progress_query(incoming.text):
@@ -836,42 +836,14 @@ class ApplicationService:
         connection = connections.get(user_id)
         return connection is not None and connection.connection_status == ConnectionStatus.ACTIVE
 
-    def _answer_chaster_status_question(self, incoming, ctx: RequestContext, preferences) -> OutgoingMessage:
-        """Hybrid path for a natural-language lock-status question.
-
-        1. The application reads the lock data deterministically (same
-           read-only call and self-healing as `chaster status`), no LLM.
-        2. If the data was read, it is handed to the Conversation Engine
-           as verified `extra_system_context` (tools disabled) and the
-           model only phrases the answer -- text only, no embed.
-        3. Everything else -- not configured, not connected, reconnect
-           required, outage, API error, no engine / identity, an unknown
-           identity, or a failed generation -- is answered by the
-           deterministic `chaster status` reply (embed), never by free
-           model text, so the model can never improvise commands."""
+    def _answer_chaster_status_question(self, ctx: RequestContext) -> OutgoingMessage:
+        """A natural-language lock-status question gets the same deterministic reply as `chaster status`: the verified data itself, with no model in between. A model used to
+        phrase it, and in live use it garbled verified data ("I don't know the current state of your lock"), so a fact about the lock no longer passes through one. Not configured,
+        not connected, reconnect required and outages all get their own fixed reply here too, so a model can never improvise manual commands for them."""
         outcome = self._read_chaster_outcome(ctx)
         if outcome is None:
             return self._handle_chaster_status(ctx)
-        if outcome.kind != ChasterToolOutcomeKind.LOCKS:
-            return self._chaster_message(outcome.kind, now=ctx.now, detail=outcome.detail)
-
-        deterministic = self._chaster_message(outcome.kind, now=ctx.now, locks=outcome.locks)
-        engine = self._conversation_engine
-        if engine is None or preferences.identity_id is None:
-            return deterministic
-        try:
-            response = engine.generate_response(
-                subject_key=ctx.user.id, current_user_message=incoming.text,
-                language="en", identity_id=preferences.identity_id, now=ctx.now,
-                extra_system_context=build_chaster_status_context(outcome.locks, now=ctx.now),
-            )
-        except UnknownIdentityError:
-            return deterministic
-        if response.response_category == ResponseCategory.ERROR_FALLBACK or not response.text.strip():
-            logger.warning("Chaster status reply generation failed -- using the deterministic reply")
-            return deterministic
-        logger.info("Chaster status question answered from verified data by the Conversation Engine")
-        return OutgoingMessage(text=response.text)
+        return self._chaster_message(outcome.kind, now=ctx.now, detail=outcome.detail, locks=outcome.locks)
 
     def _read_chaster_outcome(self, ctx: RequestContext) -> ChasterToolOutcome | None:
         """One read-only Chaster call through the self-healing token
@@ -969,7 +941,7 @@ class ApplicationService:
             )
         fields = tuple(
             EmbedField(
-                name=f"\U0001f512 {lock_title(lock)}",
+                name=f"\U0001f512 {' '.join(lock_title(lock).split())[:200]}",   # a title is free text, and Discord refuses a field name over 256 characters
                 value=f"**Status:** {lock_status_text(lock)}\n**Time Remaining:** {lock_time_remaining(lock, now=now)}",
             )
             for lock in locks
