@@ -1,6 +1,6 @@
 # Phase J: Zero-Command Conversational UX, Live Consequences, Local Coach
 
-Status: PROPOSAL (2026-11-03). J1 slices 1 and 2 BUILT (sections 3.1, 3.2); the rest awaits the owner's decisions in section 6.
+Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2) and J2 (section 4) BUILT; the rest awaits the owner's decisions in section 6.
 
 ## 1. Design principles (owner, 2026-11-03)
 
@@ -80,44 +80,66 @@ Status: PROPOSAL (2026-11-03). J1 slices 1 and 2 BUILT (sections 3.1, 3.2); the 
   message (incidents, poll alerts, consent prompts, J2 consequences), so all of them share retry, quiet hours and the Chaster-chat channel
   preference.
 
-## 4. J2: execution layer and Penalty Engine (DESIGN, 2026-11-03; not built)
+## 4. J2: Penalty Engine, Release Engine and the barrier (BUILT 2026-11-04, owner's aligned ruleset)
 
-### 4.1 What exists today (read from the code)
+The owner's conflict review (six decisions) supersedes the earlier raw-hours design. Nothing in J2 adds or removes time on Chaster.
 
-- `incident.confirmation_changed` -> `penalty_engine` consumer (`system/startup.py`) -> a Penalty Window and an `ExtensionDecision`
-  (`assigned_hours`), or only a warning for a first minor offense (`DynamicWindowPolicy`: `base_hours == 0`). It emits
-  `penalty_window.started` / `extension.decision_recorded`. Nothing turns these into a Chaster action.
-- The outbox is drained only at bot start and in `run_periodic_cycle`; the bot starts that cycle only when a Rules Engine, supervision,
-  release, check-in or daily task exists. Live, none does.
-- `ChasterExecutor` is the only caller of the transport. It consumes only `lock_decisions` rows, each tied by `trigger_id` to
-  `lock_decision_triggers` (goal assessments). The Rules Engine deliberately ignores incidents, so one incident is never punished twice.
-- The executor resolves "the lock" from ONE observation (`CHASTER_EXECUTION_WEARER_USER_ID`, unset live), requires a keyholder lock, not
-  frozen, and enforces the hard limits (1-hour unit, 6 h per action, 12 h added per 24 h, 2 actions per 24 h, 4 h between actions).
-- `POST /locks/{id}/update-time` uses an owner-supplied body that Chaster does not document; the first live use must be one 1-hour change on
-  a test lock, comparing the end date before and after.
+### 4.1 Ruleset
 
-### 4.2 Proposed flow
+| Event | Consequence |
+|---|---|
+| Task or goal failure | Trust and token earning ONLY. Never a Penalty Window, a freeze or a Chaster change. The shipped `DEFAULT_RULESET` has no `ADD_TIME` rule. |
+| 3 missed check-ins (consecutive, or within 48 h) | Trust drops through the per-miss evidence; a Warning is issued (event `check_in.warning_issued`, DM); the Incident stays UNCONFIRMED. Only the keyholder's confirmation (`python -m cli check-in-escalations confirm`) can lead further. |
+| Confirmed infraction (rejected photo; `HYGIENE_MISUSE`; lying about lock status) | Trust drops; the Penalty Engine alone decides: a first minor offense is a Warning, a repeated or severe one a Penalty Window. |
+| Emergency Override, Mandatory Health Access | NEVER an Incident or a penalty (philosophy 3.8, 3.9). The hygiene catalog holds only `HYGIENE_MISUSE`. |
 
-1. **Outbox:** start the periodic cycle whenever the peer review watch is on (its lease already guards against two instances); the 60 s
-   cycle is independent of the 10-minute watch loop, which keeps its own task.
-2. **New consumer of `extension.decision_recorded`:** when `eligible` and `assigned_hours > 0`, it writes a trigger plus a `lock_decisions`
-   row (`ADD_TIME`, whole hours, `rule_id = penalty_extension`, trigger id = the extension decision id, so `UNIQUE(trigger_id)` makes it
-   at-most-once per incident). It reuses the executor, its limits and its audit; no second path to Chaster. Migration: the trigger needs a
-   source and the target lock id (the incident's lock from `peer_reviews`), since the executor's single-lock lookup does not fit two locks.
-3. **Halt:** the executor expires a decision after 15 minutes, which would silently drop a penalty while halted. Requirement 3 needs penalty
-   decisions to stay `pending` (logged, not expired) while the runtime is halted and to re-check limits and the lock's state when it clears.
-4. **Testing order:** unit (consumer, idempotency, halt queueing), integration (confirm -> outbox -> decision -> fake transport), then the
-   1-hour live check.
+### 4.2 Pipeline
 
-### 4.3 Open problems for the owner
+```
+Confirm button / CLI -> incident.confirmation_changed -> (outbox, every cycle) Penalty Engine -> Warning | penalty_window.started
+penalty_window.* -> rules_engine/penalty_hold.py records the hold and the barrier intent -> chaster_execution/penalty_barrier.py -> freeze
+```
 
-- **Which lock can be penalised?** `update-time` runs with the connected account. On `6aca95cd…` that is the keyholder; on `6ae98ca…` it is
-  the WEARER and another account holds the key, so the executor's keyholder check refuses it and a lock's own wearer adding time needs its
-  own decision.
-- **Amounts.** With LOW-evidence incidents the assessed severity decides `assigned_hours`; a first minor offense may be a warning with no
-  time at all. Confirm that, or set a fixed penalty per confirmed rejection.
-- **Tokens.** The token pool belongs to the release engine, which is off; "token adjustment" needs that engine or is out of J2.
-- **Button label.** "Confirm Penalty" stays inaccurate until this exists (decision 4).
+- **Outbox.** The periodic cycle now runs whenever the community review watch is on, every `CHASTER_EXECUTION_INTERVAL_SECONDS` (60), beside the
+  10-minute watch loop, under the existing single-instance lease. It also ends a window whose time is up (`ensure_current_state`), which
+  nothing did periodically before.
+- **Engine boundaries.** The Penalty Engine is the single source of truth. `rules_engine/penalty_hold.py` only records state from the window's own
+  events and imports neither the Penalty Engine nor the Trust Manager; `RulesEngineService` still reacts to goal assessments only.
+- **Tokens.** Earning continues during a window (the daily pool has no penalty gate). Redemption is blocked globally by the `penalty_holds` row and
+  the Penalty Engine's own state, through the Release Engine's existing hard veto, until the window expires.
+
+### 4.3 The barrier
+
+| Window event | Intent | Executed when |
+|---|---|---|
+| started | freeze | the lock is not frozen yet (only then does the window count as having raised the barrier) |
+| paused for an approved exemption | unfreeze | always: an approved exemption takes precedence (the window timer is paused, redemption stays blocked) |
+| resumed after an exemption | freeze | the lock is not frozen |
+| completed | unfreeze | only if this window raised the barrier; a barrier it found already up stays up |
+| paused for an Emergency Override | none | that path stays outside this mechanism |
+
+- **72-hour backstop.** Untouched and inviolable: it releases during a window. The barrier acts on window events only, never on an observed state, so
+  it never re-freezes a lock the backstop released.
+- **Halt.** Intents live in their own durable queue instead of `lock_decisions`, so the 15-minute decision expiry stays intact for everything
+  else and a penalty survives a halt of any length. While `halted=True` (or the feature is off) nothing is read from or sent to Chaster, the
+  intended action is logged once and the intent stays `pending`; it executes when the halt clears. A freeze whose window ended meanwhile is
+  skipped. The halt is checked again immediately before the call.
+- **Targeting.** Token blocking is global. Live calls go only to `PENALTY_FREEZE_LOCK_ID` (`6aca95cd...`), and only if a fresh read shows role
+  `keyholder`; a worn lock such as `6ae98ca...` is never called, its penalty is the redemption hold alone.
+- **At most once.** The `executing` claim is committed before the call; an ambiguous outcome is `needs_review` and never retried; only a call that
+  provably reached nothing stays queued.
+
+Diagnostics: `python -m cli penalty-status --owner-id <id>`. Switches: `ENABLE_PENALTY_BARRIER` (default false: a dry run that logs and queues),
+`PENALTY_FREEZE_LOCK_ID`, and the runtime halt.
+
+### 4.4 Not built, or for the owner to decide
+
+- Nothing in production approves an exemption yet: `PenaltyEngine.freeze()` has no caller, so the exemption release is ready but has no trigger.
+- `EPISTEMIC_MISREPRESENTATION` and `HYGIENE_MISUSE` have no detector; a confirmed photo rejection is the only working infraction today.
+- `DEFAULT_RULESET` still removes time on goal progress and high Trust (`REMOVE_TIME`): the decision named rules that ADD hours, so these stayed.
+- A missed check-in still vetoes a release (`ReleaseGates.last_check_in_missed`), so it can keep a barrier up for a while.
+- The I3 consent notice does not mention that a confirmed rejection can freeze the lock.
+- The Release Engine itself stays off (`ENABLE_RELEASE_ENGINE`, it needs `CHASTER_EXECUTION_WEARER_USER_ID`), so tokens are not earned or spent live yet.
 
 ## 5. J3: local Ollama coach (proposal)
 

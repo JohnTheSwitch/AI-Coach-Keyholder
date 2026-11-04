@@ -25,6 +25,7 @@ from infrastructure.clock import FrozenClock
 from infrastructure.database import Database as CoreDatabase
 from system.composition import build_rules_and_execution
 from system.periodic import run_periodic_cycle
+from tests.rules_engine.test_engine import ENGINE_TEST_RULESET
 from trust_manager.repository import TrustManager
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -211,6 +212,7 @@ class TestPeriodicCycleEndToEnd:
         parts = _chaster_parts(core)
         wiring = build_rules_and_execution(_config(core, enable_chaster_execution=True), core,
                                            transport=transport, **parts)
+        wiring.rules_engine._ruleset = ENGINE_TEST_RULESET       # the execution pipeline itself; the shipped ruleset never adds time (below)
         ExecutionControl(core.db_path, core=core).set_halted(False, reason="test", now=NOW)
         _world_with_missed_goal(core)
         _record_observation(core)
@@ -223,6 +225,15 @@ class TestPeriodicCycleEndToEnd:
         run_periodic_cycle(core, "p2", FrozenClock(NOW + timedelta(minutes=2)),
                            rules_engine=wiring.rules_engine, executor=wiring.executor)
         assert len(transport.calls) == 1
+
+    def test_with_the_shipped_ruleset_a_missed_goal_never_changes_the_lock(self, core) -> None:
+        transport = FakeTransport()
+        wiring = build_rules_and_execution(_config(core, enable_chaster_execution=True), core, transport=transport, **_chaster_parts(core))
+        ExecutionControl(core.db_path, core=core).set_halted(False, reason="test", now=NOW)
+        _world_with_missed_goal(core)
+        _record_observation(core)
+        run_periodic_cycle(core, "p1", FrozenClock(NOW + timedelta(minutes=1)), rules_engine=wiring.rules_engine, executor=wiring.executor)
+        assert transport.calls == []
 
     def test_halted_by_default_so_nothing_executes_but_the_decision_is_recorded(self, core) -> None:
         transport = FakeTransport()

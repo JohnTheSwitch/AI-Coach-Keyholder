@@ -37,13 +37,9 @@ def _v(code, domain, severity, drop, description, side=(), detectable=True) -> V
 
 
 CATALOG: tuple[Violation, ...] = (
-    _v("HYGIENE_OVERRUN_MINOR", "hygiene", S.MINOR, "0.03", "Overrun of 2-5 minutes after the grace period", detectable=False),
-    _v("HYGIENE_OVERRUN_REPEATED", "hygiene", S.MINOR, "0.05", "Second minor overrun within 7 days",
-       ("hygiene_lockout_48h",), detectable=False),
-    _v("HYGIENE_OVERRUN_MODERATE", "hygiene", S.MODERATE, None, "Overrun of 5-15 minutes after the grace period", detectable=False),
-    _v("HYGIENE_RELOCK_FAILED", "hygiene", S.SEVERE, None, "Failed or unconfirmed re-lock more than 15 minutes after hygiene",
-       ("hygiene_lockout_48h",), detectable=False),
-    _v("HYGIENE_MISUSE", "hygiene", S.SEVERE, None, "Hygiene window used for an unauthorized purpose", detectable=False),
+    # Owner decision (2026-11-03, Phase J2, philosophy 3.8 / 3.9): the only hygiene infraction is misuse of a DISCRETIONARY break.
+    # Mandatory Hygiene/Health Access and the Emergency Override never create an Incident or a penalty, and have no entry here.
+    _v("HYGIENE_MISUSE", "hygiene", S.SEVERE, None, "Discretionary hygiene break used for an unauthorized purpose", detectable=False),
     _v("CHECKIN_MISSED_FIRST", "supervision", S.MINOR, "0.02", "First missed check-in (warning)"),
     _v("CHECKIN_INSUFFICIENT", "supervision", S.MINOR, "0.01", "Insufficient check-in response after the grace window"),
     _v("CHECKIN_REPEATED_NONCOMPLIANCE", "supervision", S.MINOR, "0.06",

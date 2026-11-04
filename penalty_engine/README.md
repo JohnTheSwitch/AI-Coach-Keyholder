@@ -163,3 +163,7 @@ to -- noted in its own comment in prose instead.
   runtime builds the engine through `system/penalty_policy.make_penalty_engine`.
 - `violations_catalog.py`: the catalog with default Trust drops (minor 0.02, moderate 0.05, severe 0.10) for entries without a
   specific number. It is declarative; goal failures are not violations.
+
+Phase J2: the single source of truth for an Incident (Warning or Penalty Window). The periodic cycle now calls `ensure_current_state()`, so a window
+ends when its time is up. Its `penalty_window.*` events drive the redemption hold and the barrier (`rules_engine/penalty_hold.py`). The hygiene
+catalog holds only `HYGIENE_MISUSE`: Mandatory Health Access and the Emergency Override never create an Incident (philosophy 3.8, 3.9).

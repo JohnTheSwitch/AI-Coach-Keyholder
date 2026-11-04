@@ -4,7 +4,8 @@ system/periodic.py
 The periodic cycle (approved: every ~60 seconds), guarded by the same
 single-instance lease as startup so two processes never run it at once:
 
-    drain the outbox -> Rules Engine evaluates pending triggers -> executor pass -> behavioral telemetry (Phase G1)
+    end a Penalty Window whose time is up -> drain the outbox -> Rules Engine evaluates pending triggers -> executor pass
+    -> penalty barrier queue (Phase J2) -> behavioral telemetry (Phase G1)
 
 A failure in any step is logged and never raises out of the loop.
 """
@@ -33,15 +34,17 @@ CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
 def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
-                       release_task=None, check_ins=None, daily=None, telemetry=None) -> bool:
+                       release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
     if lease is None:
         return False
     try:
+        penalties = make_penalty_engine(core)
+        penalties.ensure_current_state(now)          # Phase J2: a window whose time is up ends here, and its event is drained below
         registry = build_consumer_registry(
-            TrustManager(core.db_path, core=core), make_penalty_engine(core),
+            TrustManager(core.db_path, core=core), penalties,
             RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
             release_engine=None if release_task is None else release_task.engine,
             release_user_id=None if release_task is None else release_task.user_id,
@@ -63,6 +66,11 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
     except Exception:
         logger.exception("Periodic cycle failed; will retry next interval.")
     try:
+        if penalty_barrier is not None:
+            penalty_barrier.run(now)                 # on its own: a failure here never affects the steps above
+    except Exception:
+        logger.exception("Penalty barrier pass failed; the intents stay queued.")
+    try:
         if telemetry is not None:
             telemetry.run(now)                       # last and on its own: derived records only, never affects the steps above
     except Exception:
@@ -74,12 +82,13 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
                         interval_seconds: int = 60, supervision=None,
-                        release_task=None, check_ins=None, daily=None, telemetry=None) -> None:
+                        release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
                 supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
+                penalty_barrier=penalty_barrier,
             )
         except asyncio.CancelledError:
             raise

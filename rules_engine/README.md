@@ -33,9 +33,13 @@ Engine. **It executes nothing: no Chaster call exists anywhere in it.**
 
 ## Triggers and persistence (migration 025)
 
-- Only `goal_accountability_assessment.recorded` triggers an evaluation.
-  **Incident-driven time is deliberately not handled here**; it derives from the
-  Penalty Engine's `ExtensionDecision`, so one incident is never punished twice.
+- Only `goal_accountability_assessment.recorded` triggers an evaluation. Incidents are
+  deliberately not handled here: the Penalty Engine alone resolves them (Warning or
+  Penalty Window), and no incident ever becomes raw hours on a lock.
+- `penalty_hold.py` (Phase J2) only RECORDS state from `penalty_window.*` events: the global
+  token redemption hold and the barrier intents. It evaluates nothing.
+- The shipped `DEFAULT_RULESET` has no `ADD_TIME` rule (owner decision, Phase J2): a missed
+  goal or falling Trust never changes the lock.
 - The outbox handler (`record_trigger_in_transaction`) only writes a
   `lock_decision_triggers` row (id = event id, idempotent). `evaluate_pending()`
   runs afterwards, reads trust state and the optional lock snapshot through

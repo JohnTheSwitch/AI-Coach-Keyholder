@@ -54,3 +54,7 @@ prompts, answers, evaluation and penalties are later phases.
   `UNIQUE` per triggering check-in and a crash between register and confirm is finished on the next pass.
 - Config: `CHECK_IN_TRUST_DOMAIN` (default `routine`; sets the level and receives the evidence), `CHECK_IN_USER_ID`
   (defaults to `CHASTER_EXECUTION_WEARER_USER_ID`).
+
+Phase J2: check-in escalation no longer confirms anything. Three missed check-ins lower Trust (per-miss evidence) and issue a Warning (event
+`check_in.warning_issued`, DM, retried until delivered); the Incident stays UNCONFIRMED until the keyholder runs
+`python -m cli check-in-escalations confirm|dismiss <incident id> --owner-id <id> --yes`.

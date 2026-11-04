@@ -11,7 +11,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import iso
 from supervision.checkin_evaluator import Verdict
 from supervision.checkins import CheckInService, SendOutcome
-from supervision.escalation import RULE_GROUP_ID, CheckInEscalation
+from supervision.escalation import RULE_GROUP_ID, WARNING_TEXT, CheckInEscalation, EscalationDecisions, EscalationOutcome
 from system.composition import _LOW_SEVERITY_EVIDENCE, build_rules_and_execution
 from tests.supervision.test_checkins import CFG, MON, Env, Sender, local
 from tests.system.test_phase2_composition import config
@@ -45,7 +45,7 @@ def world(tmp_path):
         for path in sorted((ROOT / "database" / "migrations").glob("*.sql")):
             conn.executescript(path.read_text(encoding="utf-8"))
     inc = Incidents()
-    esc = CheckInEscalation(core.db_path, core=core, user_id=U, register_incident=inc.register, confirm_incident=inc.confirm)
+    esc = CheckInEscalation(core.db_path, core=core, user_id=U, register_incident=inc.register)
     return core, inc, esc
 
 
@@ -71,7 +71,7 @@ class TestRule:
         assert inc.registered == []                           # two misses are not enough any more
         add(core, 3, "missed", at(60))                        # not within 48 h of the first: the streak rule fires
         esc.run(at(61))
-        assert len(inc.registered) == 1 and inc.confirmed == ["inc-1"] and "three consecutive" in inc.registered[0]
+        assert len(inc.registered) == 1 and inc.confirmed == [] and "three consecutive" in inc.registered[0]
         esc.run(at(26))
         assert len(inc.registered) == 1                       # idempotent
 
@@ -138,22 +138,26 @@ class TestRule:
         esc.run(at(151))
         assert len(inc.registered) == 2                       # misses 4 + 5 + 6
 
-    def test_a_crash_between_registering_and_confirming_is_recovered_without_a_duplicate(self, tmp_path) -> None:
+    def test_an_undelivered_warning_is_retried_and_sent_once(self, tmp_path) -> None:
         core = CoreDatabase(tmp_path / "t.db")
         with core.raw_connection() as conn:
             for path in sorted((ROOT / "database" / "migrations").glob("*.sql")):
                 conn.executescript(path.read_text(encoding="utf-8"))
-        inc = Incidents(fail_confirm=True)
-        esc = CheckInEscalation(core.db_path, core=core, user_id=U, register_incident=inc.register, confirm_incident=inc.confirm)
+        inc, sent, deliver = Incidents(), [], [False]
+
+        def notify(text):
+            sent.append(text)
+            return deliver[0]
+
+        esc = CheckInEscalation(core.db_path, core=core, user_id=U, register_incident=inc.register, notify=notify)
         for n in (1, 2, 3):
             add(core, n, "missed", at(24 * n))
         esc.run(at(73))
-        assert len(inc.registered) == 1 and inc.confirmed == []
-        inc.fail_confirm = False
+        deliver[0] = True
         esc.run(at(74))
-        assert len(inc.registered) == 1 and inc.confirmed == ["inc-1"]
-        with core.transaction() as tx:
-            assert [r["state"] for r in tx.fetch_all("SELECT state FROM check_in_escalations")] == ["confirmed"]
+        esc.run(at(75))
+        assert sent == [WARNING_TEXT, WARNING_TEXT] and len(inc.registered) == 1 and "No Penalty Window" in WARNING_TEXT
+        assert "trust" not in WARNING_TEXT.lower()
 
     def test_another_user_is_never_escalated(self, world) -> None:
         core, inc, esc = world
@@ -173,25 +177,60 @@ class TestThroughTheRealTrustManager:
             env.core.db_path, core=env.core, user_id=U,
             register_incident=lambda d, now: tm.register_incident_report(
                 rule_group_id=RULE_GROUP_ID, trust_domain="d", description=d, evidence=_LOW_SEVERITY_EVIDENCE, now=now).id,
-            confirm_incident=lambda i, e, now: tm.confirm_incident(
-                i, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
-                evidence_description=e, now=now),
         )
         return env, esc, tm
 
-    def test_the_incident_is_confirmed_minor_and_reaches_the_penalty_engine_path(self, tmp_path) -> None:
-        env, esc, tm = self._real(tmp_path)
+    def _escalate(self, env, esc):
         for n in (1, 2, 3):
             add(env.core, n, "missed", at(24 * n))
-        before = tm.get_domain_state("d").score
         esc.run(at(73))
+
+    def test_an_escalation_is_a_warning_and_the_incident_stays_unconfirmed(self, tmp_path) -> None:
+        env, esc, tm = self._real(tmp_path)
+        self._escalate(env, esc)
         with env.core.transaction() as tx:
             inc = tx.fetch_one("SELECT * FROM incidents")
             events = [r["event_type"] for r in tx.fetch_all("SELECT event_type FROM domain_events ORDER BY rowid")]
-        assert inc["rule_group_id"] == RULE_GROUP_ID and inc["confirmation"] == "confirmed"
-        assert "incident.reported" in events and "incident.confirmation_changed" in events
-        assert tm.get_incident_assessment(inc["id"]).intrinsic_severity is SeverityTier.MINOR
+            row = tx.fetch_one("SELECT state, warned_at, keyholder_decision FROM check_in_escalations")
+        assert inc["rule_group_id"] == RULE_GROUP_ID and inc["confirmation"] == "unconfirmed"
+        assert "check_in.warning_issued" in events and "incident.confirmation_changed" not in events
+        assert row["state"] == "registered" and row["warned_at"] and row["keyholder_decision"] is None
+        assert tm.get_confirmed_incidents_since(at(0)) == []
+
+    def test_composition_gives_it_no_way_to_confirm(self) -> None:
+        import inspect
+        assert "confirm" not in inspect.signature(CheckInEscalation.__init__).parameters
+        assert "_confirm" not in inspect.getsource(CheckInEscalation)
+
+    def _decisions(self, env, tm):
+        return EscalationDecisions(env.core.db_path, core=env.core, owner_user_id="owner", confirm_incident=lambda i, e, now: tm.confirm_incident(
+            i, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.KEYHOLDER_REVIEW, evidence_description=e, now=now))
+
+    def test_only_the_keyholder_can_confirm_and_then_it_counts(self, tmp_path) -> None:
+        env, esc, tm = self._real(tmp_path)
+        self._escalate(env, esc)
+        decisions = self._decisions(env, tm)
+        incident_id = decisions.rows()[0]["incident_id"]
+        now = at(80)
+        assert decisions.decide(actor="x", incident_id=incident_id, confirm=True, confirmed=True, now=now) is EscalationOutcome.NOT_OWNER
+        assert decisions.decide(actor="owner", incident_id=incident_id, confirm=True, confirmed=False, now=now) is EscalationOutcome.NOT_CONFIRMED
+        assert decisions.decide(actor="owner", incident_id="nope", confirm=True, confirmed=True, now=now) is EscalationOutcome.NOT_FOUND
+        before = tm.get_domain_state("d").score
+        assert decisions.decide(actor="owner", incident_id=incident_id, confirm=True, confirmed=True, now=now) is EscalationOutcome.CONFIRMED
+        assert tm.get_incident_assessment(incident_id).intrinsic_severity is SeverityTier.MINOR
         assert tm.get_domain_state("d").score < before
+        assert decisions.rows()[0]["state"] == "confirmed"
+        assert decisions.decide(actor="owner", incident_id=incident_id, confirm=False, confirmed=True, now=now) is EscalationOutcome.ALREADY_DECIDED
+
+    def test_a_dismissal_leaves_it_unconfirmed(self, tmp_path) -> None:
+        env, esc, tm = self._real(tmp_path)
+        self._escalate(env, esc)
+        decisions = self._decisions(env, tm)
+        incident_id = decisions.rows()[0]["incident_id"]
+        assert decisions.decide(actor="owner", incident_id=incident_id, confirm=False, confirmed=True, now=at(80)) is EscalationOutcome.DISMISSED
+        with env.core.transaction() as tx:
+            assert tx.fetch_one("SELECT confirmation FROM incidents")["confirmation"] == "unconfirmed"
+        assert decisions.rows()[0]["keyholder_decision"] == "dismissed" and decisions.rows()[0]["state"] == "registered"
 
 
 class TestStrictDeadlines:

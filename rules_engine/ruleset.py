@@ -73,18 +73,11 @@ def validate_ruleset(ruleset: Ruleset) -> Ruleset:
 # Placeholder thresholds and step sizes pending owner tuning.
 # Priority order; the first match wins. No FREEZE/UNFREEZE rule is shipped:
 # those actions are supported by the engine but dormant by default.
+# Owner decision (2026-11-03, Phase J2): no rule ever adds time. A missed goal or a falling Trust score affects Trust and token
+# earning only; incidents are resolved by the Penalty Engine (Warning or Penalty Window), never as raw hours.
 DEFAULT_RULESET = validate_ruleset(Ruleset(
     version="1",
     rules=(
-        Rule(id="setback_streak", description="Repeated missed goals",
-             action=ActionType.ADD_TIME, hours=2, direction=GoalDirection.SETBACK, min_setback_streak=2),
-        Rule(id="trust_fell_below_floor", description="Trust fell below the floor",
-             action=ActionType.ADD_TIME, hours=2, crossed_below=0.3, min_confidence=0.3),
-        Rule(id="setback_low_trust", description="Missed goal while trust is low",
-             action=ActionType.ADD_TIME, hours=2, direction=GoalDirection.SETBACK, trust_below=0.4,
-             min_confidence=0.3),
-        Rule(id="setback", description="Missed goal",
-             action=ActionType.ADD_TIME, hours=1, direction=GoalDirection.SETBACK),
         Rule(id="trust_rose_above_ceiling", description="Trust rose above the ceiling",
              action=ActionType.REMOVE_TIME, hours=1, crossed_above=0.7, min_confidence=0.3),
         Rule(id="progress_high_trust", description="Goal met while trust is high",

@@ -178,6 +178,8 @@ class Config:
     enable_peer_review_watch: bool = False    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
+    enable_penalty_barrier: bool = False      # Phase J2: a Penalty Window really freezes PENALTY_FREEZE_LOCK_ID (off = logged and queued only)
+    penalty_freeze_lock_id: str | None = None  # the one lock the account holds as KEYHOLDER; a worn lock is never called
     check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
 
     @classmethod
@@ -270,4 +272,6 @@ class Config:
             enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",
             peer_review_poll_seconds=max(120, int(get("PEER_REVIEW_POLL_SECONDS", "600") or "600")),
+            enable_penalty_barrier=(get("ENABLE_PENALTY_BARRIER", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            penalty_freeze_lock_id=(get("PENALTY_FREEZE_LOCK_ID") or "").strip() or None,
         )

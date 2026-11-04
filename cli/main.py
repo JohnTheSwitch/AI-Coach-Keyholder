@@ -19,6 +19,9 @@ it only reduces who sees the photos). `review-consent` shows the notice and reco
 
 `trust-domain` lists the Trust domains or creates one (owner only, --yes); the creation writes its consent record first (TI1).
 
+`penalty-status` (Phase J2) is READ-ONLY: the redemption hold and the barrier queue. `check-in-escalations` lists the Warnings from repeated
+missed check-ins; `confirm` / `dismiss` is the keyholder's decision (owner only, --yes), and only `confirm` can lead to a Penalty Window.
+
 `freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -372,6 +375,49 @@ _DOMAIN_TEXT = {
 }
 
 
+def build_escalation_decisions():
+    """Phase J2: (decisions, core) for `check-in-escalations` and `penalty-status` (local database only)."""
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from supervision.escalation import EscalationDecisions
+    from trust_manager.models import ConfirmationSource, IncidentConfirmation
+    from trust_manager.repository import TrustManager
+
+    config = Config.load()
+    core = CoreDatabase(config.db_path)
+    trust = TrustManager(config.db_path, core=core)
+    return EscalationDecisions(config.db_path, core=core, owner_user_id=config.owner_user_id,
+                               confirm_incident=lambda incident_id, evidence, at: trust.confirm_incident(
+                                   incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.KEYHOLDER_REVIEW,
+                                   evidence_description=evidence, now=at)), core
+
+
+_ESCALATION_TEXT = {
+    "confirmed": "Confirmed: the Incident is CONFIRMED (keyholder review); the Penalty Engine now resolves it as a Warning or a Penalty Window.",
+    "dismissed": "Dismissed: the Incident stays UNCONFIRMED for good and never counts.",
+    "owner_not_configured": "Refused: OWNER_USER_ID is not configured.",
+    "not_owner": "Refused: that identity is not the owner.",
+    "not_confirmed": "Refused: add --yes to record this decision.",
+    "not_found": "No check-in escalation has that incident id.",
+    "already_decided": "Nothing to do: that escalation was already decided.",
+    "failed": "Failed: the Incident could not be confirmed; nothing was recorded.",
+}
+
+
+def render_penalty_status(core) -> str:
+    """Ids, enum codes and timestamps only."""
+    with core.transaction() as tx:
+        holds = tx.fetch_all("SELECT * FROM penalty_holds ORDER BY started_at DESC LIMIT 10")
+        intents = tx.fetch_all("SELECT * FROM penalty_barrier_intents ORDER BY created_at DESC, rowid DESC LIMIT 20")
+    active = sum(1 for h in holds if h["released_at"] is None)
+    lines = [f"Token redemption: {'BLOCKED by a Penalty Window' if active else 'not blocked by a Penalty Window'}"]
+    lines += [f"  window {h['penalty_window_id']}  started {h['started_at']}  released {h['released_at'] or '-'}  raised freeze: "
+              f"{'yes' if h['raised_freeze'] else 'no'}" for h in holds]
+    lines.append("Barrier queue:" if intents else "Barrier queue: empty")
+    lines += [f"  {i['created_at']}  {i['action']:<8}  {i['reason']:<17}  {i['status']:<12}  {i['detail'] or ''}" for i in intents]
+    return "\n".join(lines)
+
+
 _PEER_TEXT = {
     "confirmed": "Confirmed: the Incident is now CONFIRMED (keyholder review) and counts like any confirmed Incident.",
     "dismissed": "Dismissed: the Incident stays UNCONFIRMED for good and never counts.",
@@ -699,7 +745,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
          tenants_factory: Callable[[], tuple] = build_tenant_admin, pairing_factory: Callable[[object], object] | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
          config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None,
-         peer_factory: Callable[[], object] | None = None, domain_factory: Callable[[], object] | None = None) -> int:
+         peer_factory: Callable[[], object] | None = None, domain_factory: Callable[[], object] | None = None,
+         escalation_factory: Callable[[], tuple] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -710,6 +757,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     review_factory = review_factory or build_extension_review_service
     peer_factory = peer_factory or build_peer_review_decisions_cli
     domain_factory = domain_factory or build_trust_domain_admin
+    escalation_factory = escalation_factory or build_escalation_decisions
     now = now or SystemClock().now
     parser = argparse.ArgumentParser(prog="python -m cli", description="Chaster diagnostics (read-only).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -749,6 +797,17 @@ def main(argv: list[str], *, out: TextIO | None = None,
         pd.add_argument("--yes", action="store_true")
     for pp in psub.choices.values():
         pp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    status = sub.add_parser("penalty-status", help="READ-ONLY: the token redemption hold and the penalty barrier queue (owner only).")
+    status.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    escalations = sub.add_parser("check-in-escalations", help="Warnings from repeated missed check-ins and the keyholder's decision on them.")
+    esub = escalations.add_subparsers(dest="escalation_command", required=True)
+    esub.add_parser("list", help="Read-only.")
+    for verb, help_text in (("confirm", "CONFIRM the Incident (the Penalty Engine then resolves it)."), ("dismiss", "Dismiss it (it never counts).")):
+        ep = esub.add_parser(verb, help=help_text)
+        ep.add_argument("incident_id")
+        ep.add_argument("--yes", action="store_true")
+    for ep in esub.choices.values():
+        ep.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     domains = sub.add_parser("trust-domain", help="List the Trust domains or create one with recorded consent (owner only).")
     dsub = domains.add_subparsers(dest="domain_command", required=True)
     dsub.add_parser("list", help="Read-only.")
@@ -910,6 +969,24 @@ def main(argv: list[str], *, out: TextIO | None = None,
         if not result.done:
             return 3
         return 0 if result.revert is None or result.revert.outcome.value in ("applied", "nothing_to_revert") else 4
+    if args.command in ("penalty-status", "check-in-escalations"):
+        decisions, core = escalation_factory()
+        refusal = decisions.authorize(args.owner_id)
+        if refusal is not None:
+            print(_ESCALATION_TEXT[refusal.value], file=out)
+            return 3
+        if args.command == "penalty-status":
+            print(render_penalty_status(core), file=out)
+            return 0
+        if args.escalation_command == "list":
+            rows = decisions.rows()
+            print("\n".join(f"{r['created_at']}  incident {r['incident_id']}  {r['reason']}  warned {r['warned_at'] or '-'}  "
+                            f"decision {r['keyholder_decision'] or 'awaiting you'}" for r in rows) or "No check-in escalations.", file=out)
+            return 0
+        outcome = decisions.decide(actor=args.owner_id, incident_id=args.incident_id, confirm=args.escalation_command == "confirm",
+                                   confirmed=args.yes, now=now())
+        print(f"{_ESCALATION_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
+        return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
     if args.command == "trust-domain":
         from trust_manager.domain_admin import domain_explanation
         admin = domain_factory()

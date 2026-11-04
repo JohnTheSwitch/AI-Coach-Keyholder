@@ -276,7 +276,7 @@ class TestPhase3EndToEnd:
         cycle(core, w, late + timedelta(minutes=6), "p5")
         assert len(transport.calls) == 2
 
-    def test_unanswered_check_ins_file_an_incident_and_block_the_release(self, core) -> None:
+    def test_unanswered_check_ins_warn_without_a_window_and_block_the_release(self, core) -> None:
         w, transport = self._world(core)
         t = local(MON, 16, 30)
         while t < local(MON + timedelta(days=1), 23, 45):      # slots are random: two a day, each missed an hour after it is sent
@@ -288,8 +288,10 @@ class TestPhase3EndToEnd:
             missed = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE status = 'missed'")["n"]
             ledger = tx.fetch_all("SELECT state FROM check_in_escalations")
         assert missed >= 2
-        assert incidents == [{"rule_group_id": "CHECKIN_REPEATED_NONCOMPLIANCE", "confirmation": "confirmed"}]
-        assert [r["state"] for r in ledger] == ["confirmed"]
+        assert incidents == [{"rule_group_id": "CHECKIN_REPEATED_NONCOMPLIANCE", "confirmation": "unconfirmed"}]    # the keyholder decides (J2)
+        assert [r["state"] for r in ledger] == ["registered"]
+        with core.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM penalty_windows")["n"] == 0 and tx.fetch_one("SELECT COUNT(*) AS n FROM penalty_holds")["n"] == 0
         assert w.check_ins.last_check_in_missed()
         w.release_engine.earn_tokens(user_id="w", amount=1, reason_code="goal", source_event_id="e1", now=t)
         record_obs(core, t)

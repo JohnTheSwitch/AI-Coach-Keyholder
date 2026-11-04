@@ -127,6 +127,7 @@ class CoachKeyholderBot(discord.Client):
         self._chat_task: asyncio.Task | None = None
         self.research_export = None              # Phase G4: the export coroutine (system.composition.research_export_loop_for) when configured
         self._research_task: asyncio.Task | None = None
+        self.penalty_barrier = None              # Phase J2: chaster_execution.penalty_barrier.PenaltyBarrierExecutor, run by the periodic cycle
         self.peer_reviews = None                 # Phase I4: the peer_review.wiring.peer_review_loop coroutine when the watch is active
         self.peer_review_buttons = None          # Phase I4: peer_review.discord_buttons.PeerReviewButtonHandler (owner's one-click decisions)
         self.review_consent_dm = None            # Phase J1: system.review_consent_dm.ReviewConsentDm (owner's consent buttons)
@@ -147,7 +148,8 @@ class CoachKeyholderBot(discord.Client):
             self._periodic_task = asyncio.create_task(
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
                               interval_seconds=interval, supervision=supervision,
-                              release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry)
+                              release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
+                              penalty_barrier=self.penalty_barrier)
             )
         if self.tenant_supervisor is not None:
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
@@ -627,7 +629,9 @@ def main() -> None:
                                             owner_target=peer.owner_target, view_for=decision_view, embed_for=_build_discord_embed)
     if bot.research_export is not None:
         logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
-    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily)):
+    # Phase J2: the watch can produce confirmed Incidents, so the outbox must be drained continuously, not only at start.
+    bot.penalty_barrier = wiring.penalty_barrier
+    if any(x is not None for x in (wiring.rules_engine, wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, peer.watch)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, wiring.telemetry)
     bot.run(config.discord_token, log_handler=None)

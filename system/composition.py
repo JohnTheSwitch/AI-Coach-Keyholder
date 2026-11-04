@@ -19,13 +19,15 @@ from chaster_execution.control import ExecutionControl
 from chaster_execution.executor import ChasterExecutor
 from chaster_execution.hydration import make_snapshot_provider
 from chaster_execution.models import ExecStatus
-from chaster_execution.transport import build_keyholder_transport
+from chaster_execution.penalty_barrier import PenaltyBarrierExecutor
+from chaster_execution.transport import ChasterHttpTransport, build_keyholder_transport
 from infrastructure.clock import Clock, SystemClock
 from release_engine.service import ReleaseEngine
+from rules_engine.penalty_hold import PenaltyHold
 from rules_engine.repository import RulesEngineService
 from schedule_windows.windows import WindowConfig, WindowKind, classify
 from supervision.checkin_evaluator import evaluate_check_in
-from supervision.checkins import CheckInSender, CheckInService
+from supervision.checkins import CheckInSender, CheckInService, SendOutcome
 from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
 from supervision.repository import SupervisionService
@@ -33,10 +35,8 @@ from system.daily_evaluation import DailyEvaluationTask
 from system.release_tick import ReleaseEnginePeriodicTask
 from trust_manager.models import (
     BreachDirectness,
-    ConfirmationSource,
     EvidenceConfidenceLevel,
     ImpactLevel,
-    IncidentConfirmation,
     IncidentEvidence,
     IntentAssessment,
     RepetitionEvidence,
@@ -94,6 +94,8 @@ class RulesExecutionWiring:
     research_exporter: object | None = None         # behavioral_telemetry.research.ResearchExporter of this database, when the link is configured
     iron_contract: object | None = None             # iron_contract.guard.IronContract (Phase G6, always built)
     vacation: object | None = None                  # iron_contract.vacation.VacationService (Phase G6, always built)
+    penalty_hold: object | None = None              # rules_engine.penalty_hold.PenaltyHold (Phase J2, always built): the redemption hold
+    penalty_barrier: object | None = None           # chaster_execution.penalty_barrier.PenaltyBarrierExecutor (Phase J2, owner's system only)
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -217,12 +219,31 @@ def build_rules_and_execution(
                     register_incident=lambda description, now: trust.register_incident_report(
                         rule_group_id=ESCALATION_RULE_GROUP, trust_domain=domain, description=description,
                         evidence=_LOW_SEVERITY_EVIDENCE, now=now).id,
-                    confirm_incident=lambda incident_id, evidence, now: trust.confirm_incident(
-                        incident_id, new_confirmation=IncidentConfirmation.CONFIRMED,
-                        source=ConfirmationSource.SYSTEM_VERIFIED, evidence_description=evidence, now=now),
+                    notify=lambda text, u=user: check_in_sender.send(user_id=u, text=text) is SendOutcome.DELIVERED,
                 ),
             )
             out.notes.append("Proactive check-ins enabled (discretionary window only).")
+
+    out.penalty_hold = PenaltyHold(core)
+    if observation_source is None:           # the owner's own system only: a tenant has no penalty barrier
+        barrier_on = bool(getattr(config, "enable_penalty_barrier", False))
+        barrier_lock = getattr(config, "penalty_freeze_lock_id", None)
+        barrier_ready = bool(barrier_lock and keyholder_id and kh_tokens is not None and lock_client is not None)
+        if barrier_on and not barrier_ready:
+            out.notes.append("ENABLE_PENALTY_BARRIER is true but the penalty barrier is NOT active: it needs PENALTY_FREEZE_LOCK_ID, "
+                             "Chaster fully configured and CHASTER_EXECUTION_KEYHOLDER_USER_ID. Intents stay queued.")
+        barrier_clock = clock or SystemClock()
+        barrier_transport = transport
+        if barrier_on and barrier_ready and barrier_transport is None:
+            barrier_transport = ChasterHttpTransport(token_manager=kh_tokens, keyholder_user_id=keyholder_id, clock=barrier_clock)
+        out.penalty_barrier = PenaltyBarrierExecutor(
+            config.db_path, core=core, enabled=barrier_on and barrier_ready,
+            control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source), transport=barrier_transport,
+            read_lock=(lambda lock_id: kh_tokens.call_with_token(keyholder_id, now=barrier_clock.now(), operation=lambda token: lock_client.get_lock(
+                access_token=token, lock_id=lock_id))) if barrier_ready else None,
+            lock_id=barrier_lock)
+        if barrier_on and barrier_ready:
+            out.notes.append("Penalty barrier enabled: a Penalty Window freezes the configured keyholder lock (subject to the runtime halt).")
 
     if not config.enable_rules_engine:
         out.notes.append("Rules Engine disabled (ENABLE_RULES_ENGINE=false).")
@@ -323,7 +344,7 @@ def build_rules_and_execution(
                 out.release_task = ReleaseEnginePeriodicTask(
                     engine=engine, rules=out.rules_engine, user_id=wearer_id,
                     get_observation=get_obs, refresh_observation=refresh_obs,
-                    penalty_window_active=lambda: penalties.get_active_or_frozen_penalty_window() is not None,
+                    penalty_window_active=lambda: penalties.get_active_or_frozen_penalty_window() is not None or out.penalty_hold.is_active(),
                     supervision_active=(lambda: supervision.is_active()) if supervision is not None else (lambda: False),
                     last_check_in_missed=(lambda: check_ins.last_check_in_missed()) if check_ins is not None else (lambda: False),
                     is_halted=control.is_halted, can_execute=out.executor is not None,

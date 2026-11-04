@@ -15,6 +15,7 @@ from goal_management.models import GoalInterventionType, GoalOutcome
 from goal_management.repository import GoalManager
 from infrastructure.clock import FrozenClock
 from infrastructure.database import Database as CoreDatabase
+from tests.rules_engine.test_engine import ENGINE_TEST_RULESET
 from rules_engine.models import ActionType as A
 from rules_engine.models import DecisionStatus, LockSnapshot
 from rules_engine.repository import RulesEngineService
@@ -47,7 +48,8 @@ def _world(core: CoreDatabase, snapshot=True):
         return LockSnapshot(observed_at=NOW, status="locked", is_frozen=False, can_be_unlocked=False,
                             is_keyholder_lock=True)
 
-    engine = RulesEngineService(core.db_path, core=core, get_trust_state=tm.get_domain_state, get_lock_snapshot=provider)
+    engine = RulesEngineService(core.db_path, core=core, get_trust_state=tm.get_domain_state, get_lock_snapshot=provider,
+                                ruleset=ENGINE_TEST_RULESET)      # the pipeline itself; the shipped ruleset is tested below
     return tm, gm, engine, calls
 
 

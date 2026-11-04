@@ -41,6 +41,27 @@ def ra(minutes_ago: int, action=A.ADD_TIME, hours=1) -> RecentAction:
     return RecentAction(created_at=NOW - timedelta(minutes=minutes_ago), action_type=action, hours=hours)
 
 
+# The shipped DEFAULT_RULESET no longer adds time (owner decision, Phase J2), but the pure engine still evaluates any valid ruleset, so
+# its ordering, gates and limits are exercised with this test-only ruleset. It is NOT what runs in production.
+ENGINE_TEST_RULESET = validate_ruleset(Ruleset(version="1", rules=(
+    Rule(id="setback_streak", description="Repeated missed goals", action=A.ADD_TIME, hours=2, direction=D.SETBACK, min_setback_streak=2),
+    Rule(id="trust_fell_below_floor", description="Trust fell below the floor", action=A.ADD_TIME, hours=2, crossed_below=0.3, min_confidence=0.3),
+    Rule(id="setback_low_trust", description="Missed goal while trust is low", action=A.ADD_TIME, hours=2, direction=D.SETBACK, trust_below=0.4,
+         min_confidence=0.3),
+    Rule(id="setback", description="Missed goal", action=A.ADD_TIME, hours=1, direction=D.SETBACK),
+    *DEFAULT_RULESET.rules,
+)))
+
+
+class TestShippedRuleset:
+    def test_no_shipped_rule_adds_time(self) -> None:
+        assert DEFAULT_RULESET.rules and all(r.action != A.ADD_TIME for r in DEFAULT_RULESET.rules)
+
+    @pytest.mark.parametrize("kw", [dict(), dict(setback_streak=5), dict(trust_score=0.2), dict(previous_trust_score=0.35, trust_score=0.25)])
+    def test_a_missed_goal_or_falling_trust_never_touches_the_lock(self, kw) -> None:
+        assert evaluate(inputs(**kw), DEFAULT_RULESET).action_type == A.NO_ACTION
+
+
 class TestSafetyGates:
     @pytest.mark.parametrize("kw,text", [
         (dict(lock=None), "no lock data"),
@@ -55,59 +76,59 @@ class TestSafetyGates:
         (dict(trust_score=None), "trust data"),
     ])
     def test_fail_closed(self, kw, text) -> None:
-        out = evaluate(inputs(**kw), DEFAULT_RULESET)
+        out = evaluate(inputs(**kw), ENGINE_TEST_RULESET)
         assert out.action_type == A.NO_ACTION and out.entitlement_class == E.ABSOLUTE
         assert text in out.reason
 
     def test_data_exactly_15_minutes_old_is_still_fresh(self) -> None:
-        out = evaluate(inputs(lock=lock(observed_at=NOW - timedelta(minutes=15))), DEFAULT_RULESET)
+        out = evaluate(inputs(lock=lock(observed_at=NOW - timedelta(minutes=15))), ENGINE_TEST_RULESET)
         assert out.action_type == A.ADD_TIME
 
 
 class TestRules:
     def test_missed_goal_adds_time(self) -> None:
-        out = evaluate(inputs(), DEFAULT_RULESET)
+        out = evaluate(inputs(), ENGINE_TEST_RULESET)
         assert (out.action_type, out.hours, out.rule_id, out.entitlement_class) == (A.ADD_TIME, 1, "setback", E.GUARANTEED)
 
     def test_streak_outranks_plain_setback(self) -> None:
-        out = evaluate(inputs(setback_streak=2), DEFAULT_RULESET)
+        out = evaluate(inputs(setback_streak=2), ENGINE_TEST_RULESET)
         assert out.rule_id == "setback_streak" and out.hours == 2
 
     def test_low_trust_setback(self) -> None:
-        out = evaluate(inputs(trust_score=0.2), DEFAULT_RULESET)
+        out = evaluate(inputs(trust_score=0.2), ENGINE_TEST_RULESET)
         assert out.rule_id == "setback_low_trust"
 
     def test_low_confidence_blocks_confidence_gated_rules(self) -> None:
-        out = evaluate(inputs(trust_score=0.2, trust_confidence=0.1), DEFAULT_RULESET)
+        out = evaluate(inputs(trust_score=0.2, trust_confidence=0.1), ENGINE_TEST_RULESET)
         assert out.rule_id == "setback"
 
     def test_progress_with_high_trust_removes_time(self) -> None:
-        out = evaluate(inputs(direction=D.PROGRESS, trust_score=0.8), DEFAULT_RULESET)
+        out = evaluate(inputs(direction=D.PROGRESS, trust_score=0.8), ENGINE_TEST_RULESET)
         assert (out.action_type, out.hours, out.rule_id) == (A.REMOVE_TIME, 1, "progress_high_trust")
 
     def test_progress_with_ordinary_trust_does_nothing(self) -> None:
-        out = evaluate(inputs(direction=D.PROGRESS, trust_score=0.5), DEFAULT_RULESET)
+        out = evaluate(inputs(direction=D.PROGRESS, trust_score=0.5), ENGINE_TEST_RULESET)
         assert out.action_type == A.NO_ACTION and out.entitlement_class == E.GUARANTEED
 
     def test_neutral_does_nothing(self) -> None:
-        assert evaluate(inputs(direction=D.NEUTRAL), DEFAULT_RULESET).action_type == A.NO_ACTION
+        assert evaluate(inputs(direction=D.NEUTRAL), ENGINE_TEST_RULESET).action_type == A.NO_ACTION
 
     def test_threshold_crossing_down_and_up(self) -> None:
-        down = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.25, previous_trust_score=0.35), DEFAULT_RULESET)
+        down = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.25, previous_trust_score=0.35), ENGINE_TEST_RULESET)
         assert down.rule_id == "trust_fell_below_floor" and down.action_type == A.ADD_TIME
-        up = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.72, previous_trust_score=0.68), DEFAULT_RULESET)
+        up = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.72, previous_trust_score=0.68), ENGINE_TEST_RULESET)
         assert up.rule_id == "trust_rose_above_ceiling" and up.action_type == A.REMOVE_TIME
 
     def test_crossing_needs_a_known_previous_score(self) -> None:
-        out = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.25, previous_trust_score=None), DEFAULT_RULESET)
+        out = evaluate(inputs(direction=D.NEUTRAL, trust_score=0.25, previous_trust_score=None), ENGINE_TEST_RULESET)
         assert out.action_type == A.NO_ACTION
 
     def test_every_outcome_has_a_reason(self) -> None:
         for kw in (dict(), dict(lock=None), dict(direction=D.NEUTRAL), dict(setback_streak=3)):
-            assert evaluate(inputs(**kw), DEFAULT_RULESET).reason.strip()
+            assert evaluate(inputs(**kw), ENGINE_TEST_RULESET).reason.strip()
 
     def test_deterministic(self) -> None:
-        assert evaluate(inputs(), DEFAULT_RULESET) == evaluate(inputs(), DEFAULT_RULESET)
+        assert evaluate(inputs(), ENGINE_TEST_RULESET) == evaluate(inputs(), ENGINE_TEST_RULESET)
 
 
 class TestFreezeDormantButValid:
@@ -117,7 +138,7 @@ class TestFreezeDormantButValid:
     ))
 
     def test_default_ruleset_has_no_freeze_rules(self) -> None:
-        assert not {r.action for r in DEFAULT_RULESET.rules} & {A.FREEZE, A.UNFREEZE}
+        assert not {r.action for r in ENGINE_TEST_RULESET.rules} & {A.FREEZE, A.UNFREEZE}
 
     def test_freeze_on_unfrozen_lock(self) -> None:
         out = evaluate(inputs(), self.RULES)
@@ -136,7 +157,7 @@ class TestFreezeDormantButValid:
         assert out.action_type == A.NO_ACTION and "not frozen" in out.reason
 
     def test_time_change_on_frozen_lock_is_refused(self) -> None:
-        out = evaluate(inputs(lock=lock(is_frozen=True)), DEFAULT_RULESET)
+        out = evaluate(inputs(lock=lock(is_frozen=True)), ENGINE_TEST_RULESET)
         assert out.action_type == A.NO_ACTION and "frozen" in out.reason
 
 
@@ -202,7 +223,7 @@ class TestRulesetValidation:
         return Ruleset(version=version, rules=tuple(rules))
 
     def test_default_is_valid(self) -> None:
-        validate_ruleset(DEFAULT_RULESET)
+        validate_ruleset(ENGINE_TEST_RULESET)
 
     @pytest.mark.parametrize("rule,version", [
         (Rule(id="a", description="x", action=A.ADD_TIME, hours=7, direction=D.SETBACK), "1"),      # above single limit

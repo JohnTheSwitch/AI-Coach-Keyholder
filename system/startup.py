@@ -26,6 +26,7 @@ from datetime import timedelta
 
 from infrastructure.clock import Clock
 from infrastructure.consumer_registry import ConsumerRegistry, process_pending_events
+from rules_engine.penalty_hold import HANDLERS as PENALTY_HOLD_HANDLERS
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.startup_lease import (
@@ -196,6 +197,10 @@ def build_consumer_registry(
                     occurred_at=event.occurred_at,
                 ),
             )
+
+    # Phase J2: the Rules Engine records the redemption hold and the barrier intents from the window's own events (it evaluates nothing).
+    for event_type, handler in PENALTY_HOLD_HANDLERS.items():
+        registry.register(event_type, "rules_engine_penalty_hold", handler)
 
     registry.register("penalty_window.started", "recovery_plan", on_penalty_window_started)
     registry.register("penalty_window.frozen", "recovery_plan", on_penalty_window_frozen)

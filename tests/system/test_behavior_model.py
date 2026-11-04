@@ -133,16 +133,22 @@ class TestCatalog:
         assert (cat.get("CHECKIN_MISSED_FIRST").trust_drop, cat.get("CHECKIN_INSUFFICIENT").trust_drop) == (D("0.02"), D("0.01"))
         assert cat.get("CHECKIN_REPEATED_NONCOMPLIANCE").severity is S.MINOR
         assert cat.get("CHECKIN_REPEATED_NONCOMPLIANCE").trust_drop == D("0.06")
-        assert cat.get("HYGIENE_OVERRUN_MINOR").trust_drop == D("0.03") and cat.get("HYGIENE_OVERRUN_REPEATED").trust_drop == D("0.05")
         assert cat.get("EPISTEMIC_MISREPRESENTATION").severity is S.SEVERE
-        assert "hygiene_lockout_48h" in cat.get("HYGIENE_RELOCK_FAILED").side_effects
 
     def test_unspecified_drops_use_the_severity_defaults(self) -> None:
         assert cat.DEFAULT_TRUST_DROP == {S.MINOR: D("0.02"), S.MODERATE: D("0.05"), S.SEVERE: D("0.10")}
-        assert cat.get("HYGIENE_OVERRUN_MODERATE").trust_drop == D("0.05")
         assert cat.get("CHASTER_SETTINGS_TAMPERED").trust_drop == D("0.05")
         assert cat.get("EPISTEMIC_MISREPRESENTATION").trust_drop == D("0.10")
-        assert cat.get("HYGIENE_RELOCK_FAILED").trust_drop == D("0.10")
+        assert cat.get("HYGIENE_MISUSE").trust_drop == D("0.10")
+
+    def test_the_only_hygiene_infraction_is_discretionary_misuse(self) -> None:
+        assert [v.code for v in cat.by_domain("hygiene")] == ["HYGIENE_MISUSE"]
+        assert "iscretionary" in cat.get("HYGIENE_MISUSE").description
+
+    def test_emergency_and_mandatory_access_can_never_be_an_infraction(self) -> None:
+        for v in cat.CATALOG:
+            text = f"{v.code} {v.description}".lower()
+            assert "emergency" not in text and "mandatory" not in text and "health" not in text
 
     def test_goal_failures_are_not_violations(self) -> None:
         assert not any("GOAL" in v.code for v in cat.CATALOG)
