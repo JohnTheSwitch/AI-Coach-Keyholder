@@ -192,11 +192,11 @@ def build_rules_and_execution(
         out.notes.append("Proactive supervision state enabled (derived from Trust recalculations).")
 
     if want_check_ins:
-        user = getattr(config, "check_in_user_id", None) or wearer_id
+        user = getattr(config, "check_in_user_id", None) or wearer_id or getattr(config, "owner_user_id", None)
         domain = getattr(config, "check_in_trust_domain", None)
         if not user or not domain or check_in_sender is None:
             out.notes.append("ENABLE_CHECK_INS is true but check-ins are NOT active: they need CHECK_IN_USER_ID "
-                             "(or CHASTER_EXECUTION_WEARER_USER_ID), CHECK_IN_TRUST_DOMAIN and a Discord sender.")
+                             "(or CHASTER_EXECUTION_WEARER_USER_ID, or OWNER_USER_ID), CHECK_IN_TRUST_DOMAIN and a Discord sender.")
         else:
             def score():
                 state = trust.get_domain_state(domain)

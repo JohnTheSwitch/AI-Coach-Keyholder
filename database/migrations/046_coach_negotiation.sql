@@ -7,8 +7,8 @@
 -- proposal is shown to the user on a card and only their button applies it, exactly as recorded (`payload_json` is never rewritten, philosophy
 -- 2.5 and GOAL-6). At most one is pending per user. `fingerprint` is the folded word set, so a declined proposal is not offered again.
 -- `coach_refusals`: reason codes of what the gates turned down, never the text. Audit only, read by `python -m cli coach-status`.
--- `daily_commitments`: what the user accepted. Their outcome is the user's own button press and has NO consequence: it is not goal evidence,
--- it costs no Trust and no tokens, and it never reaches the lock.
+-- `daily_commitments`: what the user accepted. Their outcome is the user's own button press. Not kept is a minor Trust reduction through an event and
+-- nothing else: it is not goal evidence, it takes no tokens, and it never reaches the lock. Unanswered commitments lapse at no cost.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS coach_proposals (

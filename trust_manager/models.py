@@ -79,6 +79,7 @@ class EvidenceType(StrEnum):
     CHECKIN_MISSED = "checkin_missed"                 # v0.39
     CHECKIN_INSUFFICIENT = "checkin_insufficient"     # v0.39
     CLEAN_STREAK_BONUS = "clean_streak_bonus"         # v0.39: daily recovery of a Clean Day streak
+    COMMITMENT_NOT_KEPT = "commitment_not_kept"       # Phase J3: the wearer reported a daily commitment as not kept
 
 
 @dataclass(frozen=True, kw_only=True)

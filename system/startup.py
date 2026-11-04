@@ -137,6 +137,14 @@ def build_consumer_registry(
     registry.register("check_in.missed", "trust_manager", on_check_in_missed)
     registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
 
+    def on_commitment_missed(tx, event) -> None:
+        # Phase J3: Trust only. Nothing else consumes this event, by design (test_coach_dm.py).
+        trust_manager._record_commitment_evidence_in_transaction(
+            tx, commitment_id=event.payload["commitment_id"], trust_domain=event.payload["trust_domain"], now=event.occurred_at,
+        )
+
+    registry.register("coach.commitment_missed", "trust_manager", on_commitment_missed)
+
     if conditioning is not None:
         # Phase F4: a release that Chaster CONFIRMED may raise the hidden Progressive Conditioning factor (token-funded only, consent and owner switch
         # checked inside, once per authorization). Nothing else can raise it.

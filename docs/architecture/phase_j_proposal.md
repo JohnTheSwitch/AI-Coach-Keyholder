@@ -1,6 +1,6 @@
 # Phase J: Zero-Command Conversational UX, Live Consequences, Local Coach
 
-Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2), J2 with its refinements (section 4) and J3 (section 5) BUILT; the rest awaits the owner's decisions in section 6.
+Status: COMPLETE (owner, 2026-11-04). J1 slices 1 and 2 (sections 3.1, 3.2), J2 with its refinements (section 4) and J3 (section 5) are built. The two J1 slices in section 3.3 were not built and are carried forward, not part of this completion (section 6.2).
 
 ## 1. Design principles (owner, 2026-11-03)
 
@@ -71,7 +71,7 @@ Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2), J2 with its refinements
   incident id, how to decide) with the Confirm / Dismiss buttons; the watch alert (red) and recovery note (green) are embeds too. The
   plain text stays the fallback. `DiscordMessagingAdapter.send_message(..., embed=)` sends the embed and the buttons as one message.
 
-### 3.3 Next J1 slices (need decisions, section 6)
+### 3.3 J1 slices carried forward (not built)
 
 - **Zero-command migration.** Replace `help`'s command list with a short natural description of what the bot can do; accept natural
   phrasings for the read-only commands ("what's my task?", "am I on vacation?"); keep exact, deterministic phrases (or buttons) for every
@@ -209,7 +209,7 @@ model reply (JSON, Ollama `format`) -> reply text goes to the user
 - **Strict validation** (`coach/actions.py`). Exact keys, exact types, length limits, no control or invisible characters, no links. It rejects, it never repairs.
 - **Deterministic gates** (`coach/desk.py`). Right user; no vacation; no negotiation when the user's message mentions pain, injury or distress; no regime
   words and nothing risky in the text (`coach/safety.py`); goal numbers only reach active goals; at most 3 proposals a day, 5 active goals and 3 commitments a
-  day; nothing similar to a declined proposal for 14 days (2.5); a negotiation cannot change kind. A refusal stores a reason code, never the text.
+  day; nothing similar to a declined proposal for 14 days (2.5); a negotiation cannot change kind, and the same proposal again is no second card. A refusal stores a reason code, never the text.
 - **Deterministic confirmation.** Only the user's own button applies a proposal, from the stored record. The card is built from that record, never from the
   model's sentence. A second press, an expired card or another account's press changes nothing, and the lock state is checked again at the press.
 - **Never a broken reply.** A failing port, an unusable output or a model failure leaves the conversation as it was. A proposal the model pasted into its
@@ -217,17 +217,30 @@ model reply (JSON, Ollama `format`) -> reply text goes to the user
 
 Philosophy 2.5 is this order: proposal, explanation, user approval, application. `_SYSTEM_BOUNDARIES` is unchanged, and an untrusted channel never reaches any of it.
 
-### 5.4 Commitments have no consequence
+### 5.4 Commitment weight (owner, 2026-11-04)
 
-J3's live effect stays "conversation only". A commitment and its outcome (Kept, Partly, Not kept, or lapsing unanswered after 3 days) live in
-`daily_commitments` and nowhere else: not goal evidence, so no Trust, no tokens, nothing on a lock. `forget all` erases proposals, refusals and commitments;
-goals stay, as agreed records with an append-only history.
+A commitment reported as **Not kept** is a minor Trust reduction and nothing else: the `coach.commitment_missed` event, whose only consumer is the Trust Manager,
+writes one piece of evidence of -0.01 (half a first missed check-in, flat, no streak). It is not goal evidence, so the daily token evaluation never sees it, and it
+makes no Incident, no Penalty Window, no freeze and no token taken away. Kept and Partly do nothing, and neither does a report during a vacation. A commitment
+nobody answered lapses after 3 days at no cost (`_SYSTEM_BOUNDARIES`: no fact inferred from silence). Someone reporting pain or an emergency is not asked about a
+commitment in that reply. `forget all` erases proposals, refusals and commitments, but Trust evidence is append-only (TI3) and stays; goals stay as agreed records.
+
+What a lower Trust score does, through machinery that already existed: daily token progress grows with Trust, so tokens are earned very slightly slower (no token
+is ever removed), and crossing a level threshold changes the number of check-ins a day. No rule in `DEFAULT_RULESET` reacts to Trust; a Trust rule added to a
+future ruleset would see the lowered score like any other.
+
+### 5.4.1 Coaching Memory (owner, 2026-11-04)
+
+With `ENABLE_COACHING_MEMORY` on, every check-in reply is kept as a dated quote in Coaching Memory, in the user's own words, for multi-day context. It goes through
+the service's own filters: nothing about health or distress is stored, nothing instruction-like, at most 5 notes a day. `memory` shows it and `forget all` erases
+it. The prompt shows the 5 most recent notes. With the coach on, Coaching Memory no longer needs `CONVERSATION_STRUCTURED_OUTPUT`, and coach turns can also save
+the model's own notes.
 
 ### 5.5 Limits, and what is not built
 
-- **The Iron Contract and goals.** Rule 7 forbids negotiating while locked, but the wearer is usually locked, so J3 reads it narrowly: time, deadlines,
-  assigned tasks and check-ins are not negotiable; new goals and commitments are. Changing an agreed target (`adapt_goal`) is refused while locked, because
-  code cannot tell a harder target from an easier one. See decision 6.
+- **The Iron Contract and goals (owner, 2026-11-04).** Rule 7 forbids negotiating while locked, but the wearer is usually locked, so J3 reads it narrowly: time,
+  deadlines, assigned tasks and check-ins are not negotiable; new goals and commitments are. An agreed target stays frozen during an active lock: `adapt_goal` needs
+  the wearer to be KNOWN to be unlocked, at the proposal and again at the button, so an unknown lock state refuses too.
 - **Small models are uneven.** In the live runs `qwen3-vl` once acknowledged a counter-offer in words without revising the card, so the old card stood until
   declined. Both models sometimes ask a question instead of proposing. Nothing breaks; the user just gets no card that turn.
 - **No model-written proactive messages.** A check-in question is fixed text plus plain code.
@@ -235,7 +248,17 @@ goals stay, as agreed records with an append-only history.
 - **Coaching Memory on ordinary turns.** A user with an active Chaster connection always takes the context path, which has no JSON reply, so
   `CONVERSATION_STRUCTURED_OUTPUT` has no effect for them outside coach turns. This predates J3; coach turns do carry the side fields.
 
-## 6. Decisions needed
+## 6. Decisions
+
+### 6.1 Resolved
+
+- **Button label (the original decision 4)** stays open as a cosmetic point in 6.2.
+- **J2 consequences (3)**: section 4. **J3 model (5)**: `OLLAMA_MODEL=llama3.1`, check-in data may enter Coaching Memory. **Goal changes while locked (6)**: frozen.
+  **Commitments (7)**: a minor Trust reduction only.
+
+### 6.2 Carried forward, outside Phase J
+
+The zero-command migration and the notification engine (section 3.3), with the numbered questions below that belong to them.
 
 1. **Which text commands are retired?** Proposed: keep every consent/safety phrase exactly (`forget all`/`yes`, `mode ...`, `research ...`,
    `conditioning ...`, `vacation ...`, `halt`, `resume`, `leave confirm`, `accept`, `decline`, `chaster connect/disconnect`) but stop
@@ -247,7 +270,6 @@ goals stay, as agreed records with an append-only history.
    the CLI.
 3. **J2 consequences.** Which Penalty Engine outcomes become which Chaster actions (freeze? add time? how much?), under which limits?
 4. **Button label.** Rename "Confirm Penalty" to "Confirm Incident" until J2 exists?
-5. **J3 model.** Decided by the build: `OLLAMA_MODEL`, no separate model. Still open: which one (`llama3.1` proposed more reliably in the live runs, and on a
-   back-pain message it named the emergency option where `qwen3-vl` did not), and whether check-in data may enter Coaching Memory.
-6. **Goal changes while locked.** `adapt_goal` is refused while the Iron Contract is in force (section 5.5). Allow it, or keep it for the keyholder?
-7. **Commitments and tokens.** Should a reported outcome become goal evidence? That would feed the daily token evaluation and Trust, so J3 keeps it out.
+5. **J3 model (resolved).** `OLLAMA_MODEL=llama3.1`; check-in data may enter Coaching Memory.
+6. **Goal changes while locked (resolved).** Frozen (section 5.5).
+7. **Commitments and tokens (resolved).** A minor Trust reduction only, no goal evidence (section 5.4).

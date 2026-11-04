@@ -13,14 +13,17 @@ The gates, each a reason code in `coach_refusals` (never the text):
   paused           a vacation is in force
   safety_topic     the user's message mentions pain, injury, distress or an emergency: no negotiation, safety comes first
   regime_topic / unsafe_content   coach/safety.py
-  locked           an adaptation while the Iron Contract is in force (a new goal or commitment is fine; changing an agreed target is not)
+  locked           an adaptation unless the wearer is known to be unlocked (a new goal or commitment is fine; an agreed target stays frozen)
   unknown_goal, too_many_goals, too_many_commitments
   other_kind_pending  while a proposal waits, only a revised one of the same kind may replace it: a counter-offer stays what it was
+  already_waiting  the same proposal again: no second card, and it does not use up the day's limit
   daily_limit      at most MAX_PROPOSALS_PER_DAY a local day, whatever became of them
   declined_recently  nothing like a declined proposal again within DECLINE_MEMORY (2.5: no re-proposing after a rejection)
 
-Commitments have NO consequence by design: an outcome is the user's own button press and is not goal evidence, so it never moves Trust, tokens or
-the lock. This module imports no execution, release, penalty or Trust code (guard test), and reads no Trust state: nothing it returns can carry it.
+A commitment reported as NOT KEPT is a minor Trust reduction and nothing else (owner, 2026-11-04): the `coach.commitment_missed` event, whose only consumer is
+the Trust Manager. It is not goal evidence, so it is no Incident, no Penalty Window, no freeze and no token taken away. Kept, partly kept and unanswered commitments
+do nothing, and neither does a report during a vacation. This module imports no execution, release, penalty or Trust code (guard test), and reads no Trust state:
+nothing it returns can carry it.
 """
 
 from __future__ import annotations
@@ -91,25 +94,27 @@ class Commitment:
 
 
 def _fingerprint(texts: tuple[str, ...]) -> str:
-    return " ".join(sorted({w for w in _WORD.findall(fold(" ".join(texts)).lower()) if len(w) > 2}))
+    return " ".join(sorted({w for w in _WORD.findall(fold(" ".join(texts)).lower()) if len(w) > 2 or w.isdigit()}))
 
 
 def _similar(a: str, b: str) -> bool:
     left, right = set(a.split()), set(b.split())
+    if {w for w in left if w.isdigit()} != {w for w in right if w.isdigit()}:
+        return False                                 # 25 minutes is a counter-offer to 30 minutes, not the same proposal again
     return bool(left and right) and len(left & right) / len(left | right) >= _SIMILAR
 
 
 class CoachDesk:
     def __init__(self, core: CoreDatabase, *, user_id: str, trust_domain: str, goals: GoalManager, today: Callable[[datetime], date],
-                 is_locked: Callable[[str], bool] = lambda _user: False, paused: Callable[[datetime], bool] = lambda _now: False,
+                 targets_frozen: Callable[[str], bool] = lambda _user: False, paused: Callable[[datetime], bool] = lambda _now: False,
                  active_task: Callable[[str], tuple[str, str | None] | None] = lambda _user: None) -> None:
         """`active_task(user_id)` returns (assignment id, title) or None. `trust_domain` only labels a new goal; it is never shown or scored here."""
         self._core = core
         self.user_id = user_id
         self._domain = trust_domain
         self._goals = goals
-        self._today = today
-        self._is_locked = is_locked
+        self.today = today
+        self._targets_frozen = targets_frozen
         self._paused = paused
         self._active_task = active_task
 
@@ -166,10 +171,10 @@ class CoachDesk:
                 return Refusal(reason="too_many_goals")
             return {"title": action.title, "target": action.target}
         if action.kind is ActionKind.ADAPT_GOAL:
-            if self._is_locked(user_id):
+            if self._targets_frozen(user_id):
                 return Refusal(reason="locked")
             return {"goal_group_id": goal["id"], "goal_title": goal["title"], "target": action.target, "reason": action.reason}
-        today = self._today(now)
+        today = self.today(now)
         for_date = today if action.when == "today" else today + timedelta(days=1)
         task = self._active_task(user_id) if action.active_task else None      # only a link: without an active task the commitment stands on its own
         task_id, task_title = task if task is not None else (None, None)
@@ -182,20 +187,22 @@ class CoachDesk:
                 "goal_title": goal["title"] if goal else None, "task_assignment_id": task_id, "task_title": task_title}
 
     def _limit_refusal(self, kind: ActionKind, fingerprint: str, now: datetime) -> str | None:
-        if self._proposals_today(now) >= MAX_PROPOSALS_PER_DAY:
-            return "daily_limit"
         with self._core.transaction() as tx:
-            waiting = tx.fetch_one("SELECT kind FROM coach_proposals WHERE user_id = ? AND status IN ('pending', 'claimed')", (self.user_id,))
+            waiting = tx.fetch_one("SELECT kind, fingerprint FROM coach_proposals WHERE user_id = ? AND status IN ('pending', 'claimed')", (self.user_id,))
             if waiting is not None and waiting["kind"] != kind.value:
                 return "other_kind_pending"
+            if waiting is not None and waiting["fingerprint"] == fingerprint:
+                return "already_waiting"
             declined = tx.fetch_all("SELECT fingerprint FROM coach_proposals WHERE user_id = ? AND kind = ? AND status = 'declined' AND resolved_at >= ?",
                                     (self.user_id, kind.value, _iso(now - DECLINE_MEMORY)))
-        return "declined_recently" if any(_similar(fingerprint, r["fingerprint"]) for r in declined) else None
+        if any(_similar(fingerprint, r["fingerprint"]) for r in declined):
+            return "declined_recently"
+        return "daily_limit" if self._proposals_today(now) >= MAX_PROPOSALS_PER_DAY else None
 
     def _proposals_today(self, now: datetime) -> int:
         with self._core.transaction() as tx:
             return tx.fetch_one("SELECT COUNT(*) AS n FROM coach_proposals WHERE user_id = ? AND local_date = ?",
-                                (self.user_id, self._today(now).isoformat()))["n"]
+                                (self.user_id, self.today(now).isoformat()))["n"]
 
     def _store(self, kind: ActionKind, payload: dict, fingerprint: str, now: datetime) -> Proposal:
         proposal_id = str(uuid.uuid4())
@@ -205,7 +212,7 @@ class CoachDesk:
                        (_iso(now), self.user_id))
             tx.execute("INSERT INTO coach_proposals (id, user_id, local_date, kind, payload_json, fingerprint, status, created_at, expires_at) "
                        "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-                       (proposal_id, self.user_id, self._today(now).isoformat(), kind.value, json.dumps(payload, ensure_ascii=False), fingerprint,
+                       (proposal_id, self.user_id, self.today(now).isoformat(), kind.value, json.dumps(payload, ensure_ascii=False), fingerprint,
                         _iso(now), _iso(now + PROPOSAL_TTL)))
             self._event(tx, "coach.proposal_created", now, proposal_id=proposal_id, kind=kind.value)
 
@@ -217,7 +224,7 @@ class CoachDesk:
 
         def write(tx: Transaction, _s: object) -> None:
             tx.execute("INSERT INTO coach_refusals (id, user_id, local_date, action, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                       (str(uuid.uuid4()), user_id, self._today(now).isoformat(), action, reason, _iso(now)))
+                       (str(uuid.uuid4()), user_id, self.today(now).isoformat(), action, reason, _iso(now)))
 
         apply_transition(self._core, write=write)
         logger.info("A coach proposal was refused.", extra={"error_code": "coach_refused", "reason": reason})
@@ -240,8 +247,8 @@ class CoachDesk:
         kind, payload = ActionKind(row["kind"]), json.loads(row["payload_json"])
         if kind is ActionKind.PROPOSE_COMMITMENT:
             return self._accept_commitment(row, payload, now)
-        if kind is ActionKind.ADAPT_GOAL and self._is_locked(user_id):
-            return "Not while you are locked. An agreed target stays as it is until you are unlocked. Your card stays open until it expires."
+        if kind is ActionKind.ADAPT_GOAL and self._targets_frozen(user_id):
+            return "Not while you are locked. An agreed target stays as it is until you are known to be unlocked. Your card stays open until it expires."
         return self._accept_goal_change(row, kind, payload, now)
 
     def _accept_commitment(self, row, payload: dict, now: datetime) -> str:
@@ -289,12 +296,16 @@ class CoachDesk:
         return text
 
     def record_outcome(self, user_id: str, commitment_id: str, outcome: Outcome, now: datetime) -> str:
-        """The user's own report on a commitment. Stored here and nowhere else: no goal evidence, no Trust, no tokens."""
+        """The user's own report on a commitment. Not kept also raises `coach.commitment_missed` for the Trust Manager, unless a vacation is in force."""
+        counts = outcome is Outcome.NOT_KEPT and not self._paused(now)
+
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ? AND status = 'open'",
                               (outcome.value, _iso(now), commitment_id, user_id)).rowcount
             if done:
                 self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=outcome.value)
+                if counts:
+                    self._event(tx, "coach.commitment_missed", now, commitment_id=commitment_id, trust_domain=self._domain)
             return bool(done)
 
         if user_id != self.user_id or not apply_transition(self._core, write=write):
@@ -329,7 +340,7 @@ class CoachDesk:
 
     def commitment_to_review(self, now: datetime) -> Commitment | None:
         """The oldest open commitment from before today. Anything older than OUTCOME_WINDOW lapses first: unanswered costs nothing."""
-        today = self._today(now)
+        today = self.today(now)
         oldest = (today - OUTCOME_WINDOW).isoformat()
 
         def write(tx: Transaction, _s: object) -> None:
@@ -346,7 +357,7 @@ class CoachDesk:
         """Everything the model sees about goals, commitments and tasks. Plain facts for this user; no Trust, no ids, no domain name."""
         if user_id != self.user_id:
             return None
-        today = self._today(now)
+        today = self.today(now)
         goals = []
         active = self.active_goals()
         open_proposal = _describe(self.pending_proposal(now))
@@ -373,7 +384,7 @@ class CoachDesk:
 
     def prompt_suffix(self, now: datetime) -> str:
         """Added to a scheduled check-in question (never to the release check-in, whose wording is the owner's)."""
-        today = self._today(now).isoformat()
+        today = self.today(now).isoformat()
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT text FROM daily_commitments WHERE user_id = ? AND for_date = ? AND status = 'open' ORDER BY created_at LIMIT 1",
                                (self.user_id, today))

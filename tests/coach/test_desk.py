@@ -32,7 +32,7 @@ class World:
         self.paused = False
         self.task = kw.pop("task", None)
         self.desk = CoachDesk(self.core, user_id=U, trust_domain="routine", goals=self.goals, today=lambda n: n.date(),
-                              is_locked=lambda _u: self.locked, paused=lambda _n: self.paused, active_task=lambda _u: self.task)
+                              targets_frozen=lambda _u: self.locked, paused=lambda _n: self.paused, active_task=lambda _u: self.task)
 
     def goal(self, title="Study", target="An hour a day", at=NOW):
         return self.goals.create_goal(title, target, "routine", "user_proposed", now=at).goal_group_id
@@ -147,6 +147,11 @@ class TestNegotiation:
         assert "replaced" in w.desk.decide(U, first.id, accept=True, now=NOW + timedelta(minutes=2))
         assert w.rows("SELECT * FROM daily_commitments") == []
 
+    def test_the_same_proposal_again_is_no_second_card_and_uses_up_nothing(self, w) -> None:
+        first = w.submit().proposal
+        assert w.submit(now=NOW + timedelta(minutes=1)).reason == "already_waiting"
+        assert w.rows("SELECT id, status FROM coach_proposals") == [{"id": first.id, "status": "pending"}]
+
     def test_a_negotiation_cannot_change_kind(self, w) -> None:
         w.goal()
         w.submit()
@@ -158,6 +163,10 @@ class TestNegotiation:
         w.desk.decide(U, proposal.id, accept=False, now=NOW)
         assert w.submit({**COMMIT, "text": "Study 30 minutes"}, now=NOW + timedelta(hours=1)).reason == "declined_recently"
         assert w.submit({**COMMIT, "text": "Read twenty pages of a novel"}, now=NOW + timedelta(hours=1)).proposal is not None
+
+    def test_a_different_number_after_a_decline_is_a_counter_offer(self, w) -> None:
+        w.desk.decide(U, w.submit().proposal.id, accept=False, now=NOW)
+        assert w.submit({**COMMIT, "text": "Study for 25 minutes"}, now=NOW + timedelta(hours=1)).proposal is not None
 
     def test_the_memory_of_a_decline_ends(self, w) -> None:
         w.desk.decide(U, w.submit().proposal.id, accept=False, now=NOW)
@@ -234,6 +243,11 @@ class TestDecisions:
 class TestTheIronContract:
     ADAPT = {"action": "adapt_goal", "goal": 1, "target_description": "x", "reason": "y"}
 
+    def test_a_softer_target_is_refused_like_any_other(self, w) -> None:
+        w.goal()
+        w.locked = True
+        assert w.submit({**self.ADAPT, "target_description": "Just five minutes a week"}).reason == "locked"
+
     def test_an_agreed_target_cannot_be_changed_while_locked(self, w) -> None:
         w.goal()
         w.locked = True
@@ -251,19 +265,39 @@ class TestTheIronContract:
         assert len(w.versions(goal_id)) == 1 and w.rows("SELECT status FROM coach_proposals") == [{"status": "pending"}]
 
 
-class TestCommitmentsHaveNoConsequence:
+class TestCommitmentOutcomes:
     def accepted(self, w, when="today"):
         w.desk.decide(U, w.submit({**COMMIT, "when": when}).proposal.id, accept=True, now=NOW)
         return w.rows("SELECT id FROM daily_commitments")[0]["id"]
 
+    def missed_events(self, w):
+        return w.rows("SELECT payload_json FROM domain_events WHERE event_type = 'coach.commitment_missed'")
+
     @pytest.mark.parametrize("outcome", list(Outcome))
-    def test_an_outcome_is_recorded_once_and_touches_nothing_else(self, w, outcome) -> None:
+    def test_an_outcome_is_recorded_once_and_writes_no_goal_evidence(self, w, outcome) -> None:
         commitment = self.accepted(w)
         before = {t: len(w.rows(f"SELECT * FROM {t}")) for t in ("goal_evidence", "goal_evaluations", "trust_evidence", "daily_evaluations", "penalty_windows")}
         assert w.desk.record_outcome(U, commitment, outcome, NOW) != "That commitment isn't open."
         assert w.desk.record_outcome(U, commitment, Outcome.KEPT, NOW) == "That commitment isn't open."
         assert w.rows("SELECT status FROM daily_commitments") == [{"status": outcome.value}]
         assert {t: len(w.rows(f"SELECT * FROM {t}")) for t in before} == before
+
+    def test_only_not_kept_raises_the_event_and_once(self, w) -> None:
+        commitment = self.accepted(w)
+        w.desk.record_outcome(U, commitment, Outcome.NOT_KEPT, NOW)
+        w.desk.record_outcome(U, commitment, Outcome.NOT_KEPT, NOW)
+        assert len(self.missed_events(w)) == 1
+
+    @pytest.mark.parametrize("outcome", [Outcome.KEPT, Outcome.PARTLY])
+    def test_kept_and_partly_raise_nothing(self, w, outcome) -> None:
+        w.desk.record_outcome(U, self.accepted(w), outcome, NOW)
+        assert self.missed_events(w) == []
+
+    def test_a_vacation_raises_nothing(self, w) -> None:
+        commitment = self.accepted(w)
+        w.paused = True
+        w.desk.record_outcome(U, commitment, Outcome.NOT_KEPT, NOW)
+        assert self.missed_events(w) == [] and w.rows("SELECT status FROM daily_commitments") == [{"status": "not_kept"}]
 
     def test_someone_else_cannot_report(self, w) -> None:
         commitment = self.accepted(w)
@@ -279,6 +313,7 @@ class TestCommitmentsHaveNoConsequence:
         later = NOW + OUTCOME_WINDOW + timedelta(days=2)
         assert w.desk.commitment_to_review(later) is None
         assert w.rows("SELECT status FROM daily_commitments") == [{"status": "lapsed"}] and w.rows("SELECT * FROM goal_evidence") == []
+        assert self.missed_events(w) == []
 
 
 class TestContext:

@@ -107,18 +107,19 @@ class TenantRuntime:
             release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry)
 
 
-def coaching_memory_parts(config, db_path, core):
+def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
     """(memory service, conditioning preferences, context provider or None, structured sink or None) for ONE database. The service and the
     preferences are always built, so a user can view and erase their memory and use `conditioning` even when the feature is switched off;
     the provider (reading memory into prompts) and the memory sink exist only with ENABLE_COACHING_MEMORY and structured output on; the
-    idea-box sink (Phase F3, write-only) only with ENABLE_AI_SUGGESTIONS and structured output on."""
+    idea-box sink (Phase F3, write-only) only with ENABLE_AI_SUGGESTIONS and structured output on. `coach=True` (Phase J3, the single wearer only) counts as
+    structured output: a coach turn is always a JSON reply."""
     from conversation_engine.context_providers.coaching_memory_provider import CoachingMemoryContextProvider
     from coaching_memory.service import CoachingMemoryService
     from release_engine.conditioning import ConditioningPreferences
 
     memory = CoachingMemoryService(db_path, core=core)
     conditioning = ConditioningPreferences(db_path, core=core)
-    structured = getattr(config, "conversation_structured_output", False)
+    structured = coach or getattr(config, "conversation_structured_output", False)
     sinks = []
     provider = None
     if structured and getattr(config, "enable_coaching_memory", False):

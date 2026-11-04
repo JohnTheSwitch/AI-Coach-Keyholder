@@ -21,7 +21,7 @@ from pathlib import Path
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
-from trust_manager.checkin_scoring import checkin_evidence_spec
+from trust_manager.checkin_scoring import CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_NOT_KEPT_WEIGHT, checkin_evidence_spec
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
     goal_evidence_confidence,
@@ -736,19 +736,39 @@ class TrustManager:
         same transaction. Unknown or inactive domains write nothing. UNCERTAIN / NOT_EVALUATED verdicts
         never reach this method: only `check_in.missed` and `check_in.insufficient` events do."""
         evidence_type, weight, confidence = checkin_evidence_spec(kind, streak)
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=evidence_type, source_entity_type="check_in", source_entity_id=check_in_id,
+            weight=weight, confidence=confidence, triggered_by="check_in", now=now,
+            explanation="Missed a proactive check-in." if kind == "missed"
+            else "A check-in answer stayed insufficient after the follow-up window.",
+        )
+
+    def _record_commitment_evidence_in_transaction(
+        self, tx: Transaction, *, commitment_id: str, trust_domain: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """Phase J3: one small negative piece of evidence for a daily commitment the wearer reported as not kept, then an immediate recalculation. Only the
+        `coach.commitment_missed` event reaches this method; a commitment nobody answered never does (no inference from silence)."""
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=EvidenceType.COMMITMENT_NOT_KEPT, source_entity_type="daily_commitment",
+            source_entity_id=commitment_id, weight=COMMITMENT_NOT_KEPT_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="commitment", now=now,
+            explanation="A daily commitment was reported as not kept.",
+        )
+
+    def _record_minor_evidence_in_transaction(
+        self, tx: Transaction, *, trust_domain: str, evidence_type: EvidenceType, source_entity_type: str, source_entity_id: str, weight: float,
+        confidence: float, triggered_by: str, explanation: str, now: datetime,
+    ) -> TrustEvidence | None:
         domain = tx.fetch_one("SELECT is_active FROM trust_domains WHERE domain_id = ?", (trust_domain,))
         if domain is None or not domain["is_active"]:
             return None
         if tx.fetch_one(
             "SELECT 1 FROM trust_evidence WHERE source_entity_type = ? AND source_entity_id = ? AND evidence_type = ?",
-            ("check_in", check_in_id, evidence_type.value),
+            (source_entity_type, source_entity_id, evidence_type.value),
         ):
             return None
         evidence = TrustEvidence(
-            domain_id=trust_domain, created_at=now, evidence_type=evidence_type, source_entity_type="check_in",
-            source_entity_id=check_in_id, raw_weight=weight, evidence_confidence=confidence,
-            explanation="Missed a proactive check-in." if kind == "missed"
-            else "A check-in answer stayed insufficient after the follow-up window.",
+            domain_id=trust_domain, created_at=now, evidence_type=evidence_type, source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id, raw_weight=weight, evidence_confidence=confidence, explanation=explanation,
         )
         tx.execute(
             """
@@ -765,7 +785,7 @@ class TrustManager:
             payload={"evidence_id": evidence.id, "domain_id": evidence.domain_id}, occurred_at=now,
         ))
         recalculation = self._recalculate_domain_trust_in_transaction(
-            tx, trust_domain, triggered_by="check_in", now=now,
+            tx, trust_domain, triggered_by=triggered_by, now=now,
         )
         write_event(tx, DomainEvent(
             event_type="trust_domain.recalculated", source_module="trust_manager",

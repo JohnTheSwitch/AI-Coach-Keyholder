@@ -20,13 +20,16 @@ from typing import Callable
 from application.models import ActionSpec, OutgoingMessage
 from coach.actions import ACTION_INSTRUCTIONS, ACTION_SCHEMAS, ActionKind
 from coach.desk import Commitment, CoachDesk, Outcome, Proposal, SubmitResult
+from coaching_memory.service import MAX_CONTENT, WriteOutcome
 from goal_management.repository import GoalManager
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
+from iron_contract.guard import IronContract, LockStatus
+from supervision.checkin_evaluator import mentions_safety_issue
 
 logger = logging.getLogger("ai_coach_keyholder.system.coach_dm")
 
-__all__ = ["CoachDm", "build_coach", "COACH_GUIDANCE", "CHECK_IN_GUIDANCE", "OUTCOME_BUTTONS"]
+__all__ = ["CoachDm", "build_coach", "goal_targets_frozen", "COACH_GUIDANCE", "CHECK_IN_GUIDANCE", "OUTCOME_BUTTONS"]
 
 COACH_GUIDANCE = (
     "GOALS AND COMMITMENTS. You help the user set their own goals and small daily commitments. Offer only what they said they want or could do, in their own "
@@ -34,7 +37,7 @@ COACH_GUIDANCE = (
     "them. Small talk gets no proposal. Change a goal's target only when they say the goal itself no longer fits. If a proposal is waiting and they want it changed, "
     "send the same action again with their change, and do not treat it as settled. If they say no, let it go. A goal is an "
     "aspiration, not an obligation: a missed one is something to understand together, never something to blame them for. Rule 7 still holds for time, "
-    "deadlines, assigned tasks and check-ins; goals and commitments stay open for discussion while they are locked."
+    "deadlines, assigned tasks and check-ins. While they are locked they can still add goals and commitments, but an agreed goal's target stays as it is."
 )
 CHECK_IN_GUIDANCE = (
     "This message answers today's check-in. Say in one short sentence what you heard. Then, if they named something they could do next, or you can see a small "
@@ -68,7 +71,7 @@ def proposal_card(proposal: Proposal) -> tuple[str, tuple[ActionSpec, ...]]:
 
 
 def review_card(commitment: Commitment) -> tuple[str, tuple[ActionSpec, ...]]:
-    text = f"**Your commitment for {_weekday(commitment.for_date)}:** {commitment.text}\nHow did it go? This is only for you, nothing depends on it."
+    text = f"**Your commitment for {_weekday(commitment.for_date)}:** {commitment.text}\nHow did it go?"
     return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style, _ in OUTCOME_BUTTONS)
 
 
@@ -84,10 +87,12 @@ class CoachDm:
     schemas = ACTION_SCHEMAS
     instructions = ACTION_INSTRUCTIONS
 
-    def __init__(self, desk: CoachDesk, *, core: CoreDatabase, clock: Clock) -> None:
+    def __init__(self, desk: CoachDesk, *, core: CoreDatabase, clock: Clock, memory=None) -> None:
+        """`memory` is coaching_memory.service.CoachingMemoryService when ENABLE_COACHING_MEMORY is on: check-in replies are kept there for multi-day context."""
         self._desk = desk
         self._core = core
         self._clock = clock
+        self._memory = memory
 
     # ------------------------------------------------------------------ the engine's port
 
@@ -117,12 +122,14 @@ class CoachDm:
 
     # ------------------------------------------------------------------ the reply
 
-    def present(self, outgoing: OutgoingMessage, *, user_id: str, outcome: object, check_in_reply: bool, now: datetime) -> OutgoingMessage:
+    def present(self, outgoing: OutgoingMessage, *, user_id: str, outcome: object, check_in_reply: bool, now: datetime, user_message: str = "") -> OutgoingMessage:
         cards: list[tuple[str, tuple[ActionSpec, ...]]] = []
         if isinstance(outcome, SubmitResult) and outcome.proposal is not None:
             cards.append(proposal_card(outcome.proposal))
         if check_in_reply and user_id == self._desk.user_id:
-            commitment = self._desk.commitment_to_review(now)
+            self._remember_check_in(user_id, user_message, now)
+            # Someone reporting pain or an emergency is never asked to account for a commitment in the same breath.
+            commitment = None if mentions_safety_issue(user_message) else self._desk.commitment_to_review(now)
             if commitment is not None:
                 cards.append(review_card(commitment))
         if not cards:
@@ -130,6 +137,20 @@ class CoachDm:
         block = "\n\n".join(text for text, _ in cards)
         return replace(outgoing, text=f"{_fit(outgoing.text, block)}\n\n{block}",
                        actions=outgoing.actions + tuple(action for _, actions in cards for action in actions))
+
+    def _remember_check_in(self, user_id: str, text: str, now: datetime) -> None:
+        """The user's own words, dated, through every filter of Coaching Memory: nothing about health or distress is stored, and `forget all` erases it."""
+        if self._memory is None or not text.strip():
+            return
+        note = f"Check-in {self._desk.today(now).isoformat()}: {' '.join(text.split())}"
+        if len(note) > MAX_CONTENT:
+            note = note[:MAX_CONTENT - 1].rsplit(" ", 1)[0].rstrip() + "…"
+        try:
+            outcome = self._memory.record(user_id=user_id, category="quote", content=note, user_message=text, now=now)
+            if outcome is not WriteOutcome.STORED:
+                logger.info("A check-in was not kept in Coaching Memory.", extra={"outcome": outcome.value})
+        except Exception:
+            logger.exception("A check-in could not be kept in Coaching Memory; the reply is unaffected.")
 
     def forget_all(self, user_id: str) -> int:
         return self._desk.forget_all(user_id)
@@ -163,8 +184,13 @@ def active_task_reader(task_runtime, task_catalog) -> Callable[[str], tuple[str,
     return read
 
 
-def build_coach(config, core: CoreDatabase, *, clock: Clock, is_locked: Callable[[str], bool], paused: Callable[[str, datetime], bool],
-                today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None]) -> CoachDm | None:
+def goal_targets_frozen(contract: IronContract) -> Callable[[str], bool]:
+    """Fails closed like every Iron Contract gate that needs "unlocked": an agreed target can change only when the wearer is KNOWN to be unlocked."""
+    return lambda user_id: contract.lock_status(user_id) is not LockStatus.UNLOCKED
+
+
+def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Callable[[str], bool], paused: Callable[[str, datetime], bool],
+                today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None], memory=None) -> CoachDm | None:
     """None unless ENABLE_COACH is on and there is a wearer and a Trust domain to label goals with."""
     if not getattr(config, "enable_coach", False):
         return None
@@ -175,6 +201,6 @@ def build_coach(config, core: CoreDatabase, *, clock: Clock, is_locked: Callable
         logger.warning("ENABLE_COACH is true but the coach is NOT active: it needs a user (CHECK_IN_USER_ID, CHASTER_EXECUTION_WEARER_USER_ID or OWNER_USER_ID) "
                        "and CHECK_IN_TRUST_DOMAIN.")
         return None
-    desk = CoachDesk(core, user_id=user_id, trust_domain=domain, goals=GoalManager(core.db_path, core=core), today=today, is_locked=is_locked,
+    desk = CoachDesk(core, user_id=user_id, trust_domain=domain, goals=GoalManager(core.db_path, core=core), today=today, targets_frozen=targets_frozen,
                      paused=lambda now: paused(user_id, now), active_task=active_task)
-    return CoachDm(desk, core=core, clock=clock)
+    return CoachDm(desk, core=core, clock=clock, memory=memory if getattr(config, "enable_coaching_memory", False) else None)

@@ -32,22 +32,26 @@ Each refusal stores a reason code in `coach_refusals`, never the text. `python -
 | `paused` | a vacation is in force |
 | `safety_topic` | the user's message mentions pain, injury, distress or an emergency |
 | `regime_topic`, `unsafe_content` | `safety.py` |
-| `locked` | `adapt_goal` while the Iron Contract is in force; checked again at the button |
+| `locked` | `adapt_goal` unless the wearer is known to be unlocked; checked again at the button |
 | `unknown_goal`, `too_many_goals`, `too_many_commitments` | a goal number must reach an active goal; at most 5 goals, 3 commitments a day |
 | `other_kind_pending` | a counter-offer stays the kind it was |
+| `already_waiting` | the same proposal again: no second card, and it uses up nothing |
 | `daily_limit` | at most 3 proposals a local day |
 | `declined_recently` | nothing similar to a declined proposal for 14 days |
 
 ## What it never does
 
 - It reads no Trust state and imports no execution, release, penalty, Trust, rules or Iron Contract code (guard test). Locks and vacations arrive as injected callables.
-- A commitment and its outcome have no consequence: they are not goal evidence, so no Trust, no tokens, nothing on a lock.
+- A commitment reported as not kept is a minor Trust reduction (-0.01, through `coach.commitment_missed`) and nothing else: it is not goal evidence, it takes no
+  token and it never reaches a lock. Kept, partly kept, unanswered, and anything reported during a vacation do nothing.
 - An untrusted channel never reaches it, and multi-wearer tenants are not wired, because a tenant's invitation does not disclose it.
 
-`forget all` erases proposals, refusals and commitments. Goals stay, as agreed records with an append-only history.
+`forget all` erases proposals, refusals and commitments. Goals stay as agreed records, and Trust evidence is append-only.
+
+With `ENABLE_COACHING_MEMORY` on, check-in replies are kept as dated quotes through Coaching Memory's own filters (`system/coach_dm.py`).
 
 ## Turning it on
 
 `ENABLE_COACH=true`, a model that follows a JSON schema (`OLLAMA_MODEL`; `llama3.1` and `qwen3-vl` were tested), `OLLAMA_NUM_CTX=8192` or similar, a Trust domain
 to label goals with (`CHECK_IN_TRUST_DOMAIN`), and a user (`CHECK_IN_USER_ID`, `CHASTER_EXECUTION_WEARER_USER_ID` or `OWNER_USER_ID`). The check-in negotiation also
-needs `ENABLE_CHECK_INS`.
+needs `ENABLE_CHECK_INS`, and multi-day memory needs `ENABLE_COACHING_MEMORY`.

@@ -12,6 +12,7 @@ from trust_manager.models import EvidenceType
 
 __all__ = [
     "CHECKIN_MISSED_WEIGHT", "CHECKIN_MISSED_WEIGHTS", "CHECKIN_INSUFFICIENT_WEIGHT", "CHECKIN_EVIDENCE_CONFIDENCE", "checkin_evidence_spec",
+    "COMMITMENT_NOT_KEPT_WEIGHT",
 ]
 
 # Owner-specified matrix (v0.39 section 11.9): the drop grows with the number of CONSECUTIVE missed check-ins.
@@ -24,6 +25,9 @@ CHECKIN_INSUFFICIENT_WEIGHT = -0.01
 # BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
 # System-observed facts (a deadline passed) carry full confidence.
 CHECKIN_EVIDENCE_CONFIDENCE = 1.0
+
+# Phase J3 (owner, 2026-11-04): a commitment reported as not kept is a minor Trust reduction and nothing else. Half a first missed check-in, and flat: no streak.
+COMMITMENT_NOT_KEPT_WEIGHT = -0.01
 
 
 def checkin_evidence_spec(kind: str, streak: int = 1) -> tuple[EvidenceType, float, float]:

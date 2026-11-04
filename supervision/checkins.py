@@ -23,7 +23,8 @@ left unanswered it expires as `skipped`, never `missed`, so ignoring a release h
 
 Never a penalty: UNCERTAIN / NOT_EVALUATED verdicts, undeliverable or skipped prompts, a
 crash while sending (needs_review). Events carry ids and the Trust domain only, never the
-user's text. The reply text is stored locally for evaluation only.
+user's text. The reply text is stored locally for evaluation; with the coach and Coaching Memory on,
+a filtered, dated copy of it also goes to Coaching Memory (system/coach_dm.py).
 """
 
 from __future__ import annotations

@@ -26,7 +26,8 @@ prompts, answers, evaluation and penalties are later phases.
 
 `CheckInService.prompt_suffix` (set by the bot when `ENABLE_COACH` is on) adds today's commitment and an invitation to a scheduled question. It is plain code, so
 the periodic cycle gains no model call, and a failure leaves the plain question. The release check-in keeps the owner's wording. A reply to a check-in becomes a
-coach turn with the negotiation instruction (`system/coach_dm.py`). `mentions_safety_issue` no longer matches "number" (`numb\w*` was too broad).
+coach turn with the negotiation instruction (`system/coach_dm.py`), and with `ENABLE_COACHING_MEMORY` on a filtered, dated copy goes to Coaching Memory. The check-in
+user now falls back to `OWNER_USER_ID`, like the coach. `mentions_safety_issue` no longer matches "number" (`numb\w*` was too broad).
 
 ## Phase 2: proactive check-ins (migration 029, `ENABLE_CHECK_INS`, default off)
 

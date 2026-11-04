@@ -182,7 +182,7 @@ class Config:
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
     enable_penalty_barrier: bool = False      # Phase J2: a Penalty Window really freezes PENALTY_FREEZE_LOCK_ID (off = logged and queued only)
     penalty_freeze_lock_id: str | None = None  # the one lock the account holds as KEYHOLDER; a worn lock is never called
-    check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID
+    check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID, then OWNER_USER_ID
 
     @classmethod
     def load(cls, env_path: Path | None = None) -> Config:

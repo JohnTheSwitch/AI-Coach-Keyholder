@@ -517,16 +517,16 @@ def main() -> None:
         raise SystemExit(1)
 
     context_providers = context_providers + (IronContractContextProvider(is_locked=wiring.iron_contract.locked_for_context),)
-    coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core)
+    coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core, coach=config.enable_coach)
     if memory_provider is not None:
         context_providers = context_providers + (memory_provider,)
     # Phase J3: goal and commitment proposals. Off unless ENABLE_COACH; the single wearer only, tenants are not wired (system/coach_dm.py).
     from conversation_engine.context_providers.coach_provider import CoachContextProvider
-    from system.coach_dm import active_task_reader, build_coach
+    from system.coach_dm import active_task_reader, build_coach, goal_targets_frozen
     from system.composition import window_config_from
-    coach_dm = build_coach(config, core, clock=clock, is_locked=wiring.iron_contract.locked_for_context, paused=wiring.vacation.is_paused,
+    coach_dm = build_coach(config, core, clock=clock, targets_frozen=goal_targets_frozen(wiring.iron_contract), paused=wiring.vacation.is_paused,
                            today=lambda now, cfg=window_config_from(config): cfg.local(now).date(),
-                           active_task=active_task_reader(task_runtime, task_catalog)) if config.enable_coach else None
+                           active_task=active_task_reader(task_runtime, task_catalog), memory=coaching) if config.enable_coach else None
     if coach_dm is not None:
         context_providers = context_providers + (CoachContextProvider(read=coach_dm.context),)
         if wiring.check_ins is not None:

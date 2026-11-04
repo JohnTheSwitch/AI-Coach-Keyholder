@@ -297,7 +297,7 @@ class ApplicationService:
                 # "missing required context" situation, not a bug crash.
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
             embed = self._embed_from_tool_outputs(response.tool_outputs, now=incoming.received_at)
-            return self._with_coach_cards(OutgoingMessage(text=response.text, embed=embed), user.id, response, check_in_reply, incoming.received_at)
+            return self._with_coach_cards(OutgoingMessage(text=response.text, embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
@@ -342,11 +342,12 @@ class ApplicationService:
             logger.exception("The coach guidance failed; this turn is ordinary conversation.")
             return None
 
-    def _with_coach_cards(self, outgoing: OutgoingMessage, user_id: str, response, check_in_reply: bool, now) -> OutgoingMessage:
+    def _with_coach_cards(self, outgoing: OutgoingMessage, user_id: str, user_message: str, response, check_in_reply: bool, now) -> OutgoingMessage:
         if self._coach is None:
             return outgoing
         try:
-            return self._coach.present(outgoing, user_id=user_id, outcome=response.proposal_outcome, check_in_reply=check_in_reply, now=now)
+            return self._coach.present(outgoing, user_id=user_id, outcome=response.proposal_outcome, check_in_reply=check_in_reply, now=now,
+                                       user_message=user_message)
         except Exception:
             logger.exception("The coach cards failed; the reply goes out without them.")
             return outgoing
