@@ -88,7 +88,7 @@ class CommandRouter:
         self._families[family.strip().lower()] = invalid_handler
 
     def route(self, text: str, context: RequestContext) -> RouteResult:
-        command = text.strip().lower()
+        command = text.strip().lower().lstrip("/!").strip()       # a leading `/` or `!` is a habit from other bots: it means the same
         handler = self._handlers.get(command)
         if handler is not None:
             return RouteResult(matched=True, outgoing=handler(context))

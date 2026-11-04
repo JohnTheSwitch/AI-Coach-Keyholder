@@ -16,6 +16,7 @@ from conversation_engine.models import ConversationContextFragment
 __all__ = ["CoachContextProvider"]
 
 _FIELDS = ("goals", "commitments", "tasks", "open_proposal")
+_OPTIONAL_FIELDS = ("time_of_day",)                 # a coarse word only: no clock time, and nothing about a release
 
 
 class CoachContextProvider:
@@ -28,4 +29,4 @@ class CoachContextProvider:
         data = self._read(subject_key, now)
         if data is None:
             return None
-        return ConversationContextFragment(namespace=self.namespace, data={key: data[key] for key in _FIELDS})
+        return ConversationContextFragment(namespace=self.namespace, data={**{key: data[key] for key in _FIELDS}, **{key: data[key] for key in _OPTIONAL_FIELDS if data.get(key)}})

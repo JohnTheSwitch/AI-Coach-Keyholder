@@ -555,7 +555,7 @@ def main() -> None:
     from system.coach_dm import active_task_reader, build_coach, goal_targets_frozen
     from system.composition import window_config_from
     coach_dm = build_coach(config, core, clock=clock, targets_frozen=goal_targets_frozen(wiring.iron_contract), paused=wiring.vacation.is_paused,
-                           today=lambda now, cfg=window_config_from(config): cfg.local(now).date(),
+                           today=lambda now, cfg=window_config_from(config): cfg.local(now).date(), local_now=lambda now, cfg=window_config_from(config): cfg.local(now),
                            active_task=active_task_reader(task_runtime, task_catalog), memory=coaching) if config.enable_coach else None
     if coach_dm is not None:
         context_providers = context_providers + (CoachContextProvider(read=coach_dm.context),)

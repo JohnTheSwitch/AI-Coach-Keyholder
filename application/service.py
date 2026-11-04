@@ -46,6 +46,7 @@ from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.progress import is_progress_query, read_progress, render_progress
 from application.natural_queries import CAPABILITIES_TEXT, read_only_command
+from application.reply_guard import finish_reply
 from application.review_consent_query import is_review_consent_query
 from application.terms_notice import TERMS_NOTICE
 from application.user_service import UserService
@@ -316,7 +317,7 @@ class ApplicationService:
                 # "missing required context" situation, not a bug crash.
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
             embed = self._embed_from_tool_outputs(response.tool_outputs, now=incoming.received_at)
-            return self._with_coach_cards(OutgoingMessage(text=response.text, embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
+            return self._with_coach_cards(OutgoingMessage(text=finish_reply(response.text, incoming.text), embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")

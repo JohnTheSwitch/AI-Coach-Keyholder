@@ -13,7 +13,20 @@ import unicodedata
 
 from supervision.checkin_evaluator import mentions_safety_issue
 
-__all__ = ["content_refusal", "fold"]
+_DONE = re.compile(r"\b(i('ve| have)?( already| just)? (done|did|finished|completed|managed)( it| that| them| those| all)?(?! not)\b|done it|all done|finished it|got it done"
+                   r"|hotovo|splneno|mam hotovo|(udelal|zvladl|dokoncil|splnil)a? jsem)")
+_NOT_DONE = re.compile(r"\bnot\b|n't\b|\bnever\b|\bdidnt\b|\bhavent\b|\bnestihl|\bneudelal|\bnezvladl")
+
+
+def reports_done(text: object) -> bool:
+    """Deterministic: the user says they did something. It only offers the outcome buttons, so a misreading costs one card and never records anything."""
+    if not isinstance(text, str) or len(text) > 400:
+        return False
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(ch)).replace("’", "'")
+    return _DONE.search(folded) is not None and _NOT_DONE.search(folded) is None
+
+
+__all__ = ["reports_done", "content_refusal", "fold"]
 
 _REGIME = re.compile(
     r"\b(un)?lock(s|ed|ing)?\b|\bkeyholders?\b|\bchaster\b|\bchastity\b|\bcage\w*\b|\bfr[eo]ez\w*\b|\bfrozen\b|\bunfreeze\w*\b|\brelease\w*\b|"

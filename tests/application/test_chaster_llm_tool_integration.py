@@ -512,7 +512,7 @@ class TestChasterContextInOrdinaryChat:
         with patch.object(ChasterLockClient, "list_active_locks", return_value=[LOCK]) as locks:
             reply = service.handle_message(_incoming(text, "m1"))
         locks.assert_called_once()
-        assert reply.text == model.plain_text and reply.embed is None
+        assert reply.text.startswith(model.plain_text) and reply.embed is None
         context = self._generate_context(model)
         assert "Weekend lock" in context and "HOW TO USE THIS DATA" in context
         assert model.requests == []  # tools are never offered when the data is already supplied
@@ -547,7 +547,7 @@ class TestChasterContextInOrdinaryChat:
         _connect(service)
         with patch.object(ChasterLockClient, "list_active_locks", side_effect=failure):
             reply = service.handle_message(_incoming("Odemkni mě hned", "m1"))
-        assert reply.text == "Jsem tady."
+        assert reply.text.startswith("Jsem tady.")
         assert all("VERIFIED CHASTER DATA" not in m.content for m in model.requests[0][0].messages)
 
     def test_revoked_authorization_gives_plain_chat_without_context(self, core, tmp_path) -> None:
@@ -557,7 +557,7 @@ class TestChasterContextInOrdinaryChat:
         _connect(service, expires_in=timedelta(minutes=-1))
         with patch.object(ChasterOAuthClient, "refresh_tokens", side_effect=ChasterTokenExchangeError("rejected", status_code=400)):
             reply = service.handle_message(_incoming("Odemkni mě hned", "m1"))
-        assert reply.text == "Jsem tady."
+        assert reply.text.startswith("Jsem tady.")
         assert all("VERIFIED CHASTER DATA" not in m.content for m in model.requests[0][0].messages)
 
     def test_the_exchange_is_remembered_but_the_context_is_not(self, core, tmp_path) -> None:

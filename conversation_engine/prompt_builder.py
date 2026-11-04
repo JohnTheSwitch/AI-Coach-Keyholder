@@ -225,7 +225,7 @@ _COMMITMENT_WORDS = (("kept", "kept"), ("partly", "partly kept"), ("not_kept", "
 def _render_coach(data: object) -> str:
     """Phase J3: the user's own goals, commitments and recent tasks. Every text passes the same cleaning as Coaching Memory and is quoted, so it stays data.
     There is no Trust here, and no field that could carry it: the coach reads none (coach/desk.py, guard test)."""
-    lines = []
+    lines = [f"It is {data['time_of_day']} for the user."] if data.get("time_of_day") else []
     for goal in data["goals"]:
         progress = "; ".join(p for p in (_counts(goal["evidence"], _EVIDENCE_WORDS), _counts(goal["commitments"], _COMMITMENT_WORDS)) if p)
         lines.append(f"Goal {goal['number']}: {_quoted(goal['title'])}, target {_quoted(goal['target'])}" + (f". Last 14 days: {progress}." if progress else "."))

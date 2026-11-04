@@ -114,6 +114,7 @@ class CoachDesk:
         self._domain = trust_domain
         self._goals = goals
         self.today = today
+        self.time_of_day: Callable[[datetime], str] | None = None      # a coarse word for the model; set by build_coach
         self._targets_frozen = targets_frozen
         self._paused = paused
         self._active_task = active_task
@@ -338,8 +339,8 @@ class CoachDesk:
             row = tx.fetch_one("SELECT * FROM coach_proposals WHERE user_id = ? AND status = 'pending'", (self.user_id,))
         return None if row is None else Proposal(id=row["id"], kind=ActionKind(row["kind"]), payload=json.loads(row["payload_json"]))
 
-    def commitment_to_review(self, now: datetime) -> Commitment | None:
-        """The oldest open commitment from before today. Anything older than OUTCOME_WINDOW lapses first: unanswered costs nothing."""
+    def commitment_to_review(self, now: datetime, *, include_today: bool = False) -> Commitment | None:
+        """The oldest open commitment from before today, or from today too when the user just said it is done. Anything older than OUTCOME_WINDOW lapses first: unanswered costs nothing."""
         today = self.today(now)
         oldest = (today - OUTCOME_WINDOW).isoformat()
 
@@ -350,7 +351,7 @@ class CoachDesk:
         apply_transition(self._core, write=write)
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT id, for_date, text FROM daily_commitments WHERE user_id = ? AND status = 'open' AND for_date < ? "
-                               "ORDER BY for_date, created_at LIMIT 1", (self.user_id, today.isoformat()))
+                               "ORDER BY for_date, created_at LIMIT 1", (self.user_id, (today + timedelta(days=1) if include_today else today).isoformat()))
         return None if row is None else Commitment(id=row["id"], for_date=date.fromisoformat(row["for_date"]), text=row["text"])
 
     def context(self, user_id: str, now: datetime) -> dict | None:
@@ -375,6 +376,7 @@ class CoachDesk:
                                  "AND v.version = a.template_version WHERE a.user_id = ? AND a.resolved_at >= ? ORDER BY a.resolved_at DESC",
                                  (self.user_id, _iso(now - TASK_WINDOW)))
         return {
+            "time_of_day": self.time_of_day(now) if self.time_of_day is not None else None,
             "goals": goals,
             "commitments": [{"day": _day_word(date.fromisoformat(c["for_date"]), today), "text": c["text"], "status": c["status"]} for c in commitments],
             "tasks": {"completed": sum(1 for t in tasks if t["status"] == "completed"), "cancelled": sum(1 for t in tasks if t["status"] == "cancelled"),

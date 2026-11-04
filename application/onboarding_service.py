@@ -21,6 +21,8 @@ write happens at all; the same step's prompt is re-shown.
 
 from __future__ import annotations
 
+import difflib
+
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -217,6 +219,11 @@ class OnboardingService:
                 if normalized in names:
                     chosen = entry
                     break
+            if chosen is None:                              # "Scarlet": one typo should not start the question over
+                names = {entry.display_name(preferences.language or "en").lower(): entry for entry in candidates}
+                close = difflib.get_close_matches(normalized, names, n=2, cutoff=0.8)
+                if len(close) == 1:
+                    chosen = names[close[0]]
 
         if chosen is None:
             return OnboardingResult(

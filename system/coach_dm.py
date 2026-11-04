@@ -19,6 +19,7 @@ from typing import Callable
 
 from application.models import ActionSpec, OutgoingMessage
 from coach.actions import ACTION_INSTRUCTIONS, ACTION_SCHEMAS, ActionKind
+from coach.safety import reports_done
 from coach.desk import Commitment, CoachDesk, Outcome, Proposal, SubmitResult
 from coaching_memory.service import MAX_CONTENT, WriteOutcome
 from goal_management.repository import GoalManager
@@ -37,7 +38,9 @@ COACH_GUIDANCE = (
     "them. Small talk gets no proposal. Change a goal's target only when they say the goal itself no longer fits. If a proposal is waiting and they want it changed, "
     "send the same action again with their change, and do not treat it as settled. If they say no, let it go. A goal is an "
     "aspiration, not an obligation: a missed one is something to understand together, never something to blame them for. Rule 7 still holds for time, "
-    "deadlines, assigned tasks and check-ins. While they are locked they can still add goals and commitments, but an agreed goal's target stays as it is."
+    "deadlines, assigned tasks and check-ins. While they are locked they can still add goals and commitments, but an agreed goal's target stays as it is. "
+    "Never ask whether they kept a commitment and never say it is recorded: when they tell you they did it, just be glad with them, and the app shows them buttons for that. "
+    "Mind the time of day you are told. Late in the evening, do not push anything new for tonight: rest is fine, and a next step belongs to tomorrow. Do not suggest again what they already said they did."
 )
 CHECK_IN_GUIDANCE = (
     "This message answers today's check-in. Say in one short sentence what you heard. Then, if they named something they could do next, or you can see a small "
@@ -68,6 +71,11 @@ def proposal_card(proposal: Proposal) -> tuple[str, tuple[ActionSpec, ...]]:
             text += f"\nTask: {payload['task_title']}"
     return text, (ActionSpec(action_id=f"coach:accept:{proposal.id}", label="Accept", style="success"),
                   ActionSpec(action_id=f"coach:decline:{proposal.id}", label="Decline", style="secondary"))
+
+
+def describe_time_of_day(local: datetime) -> str:
+    part = "night" if local.hour < 5 or local.hour >= 23 else "morning" if local.hour < 12 else "afternoon" if local.hour < 18 else "evening" if local.hour < 21 else "late evening"
+    return f"{local.strftime('%A')} {part}"
 
 
 def review_card(commitment: Commitment) -> tuple[str, tuple[ActionSpec, ...]]:
@@ -128,8 +136,10 @@ class CoachDm:
             cards.append(proposal_card(outcome.proposal))
         if check_in_reply and user_id == self._desk.user_id:
             self._remember_check_in(user_id, user_message, now)
+        done = reports_done(user_message)
+        if (check_in_reply or done) and user_id == self._desk.user_id:
             # Someone reporting pain or an emergency is never asked to account for a commitment in the same breath.
-            commitment = None if mentions_safety_issue(user_message) else self._desk.commitment_to_review(now)
+            commitment = None if mentions_safety_issue(user_message) else self._desk.commitment_to_review(now, include_today=done)
             if commitment is not None:
                 cards.append(review_card(commitment))
         if not cards:
@@ -190,7 +200,8 @@ def goal_targets_frozen(contract: IronContract) -> Callable[[str], bool]:
 
 
 def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Callable[[str], bool], paused: Callable[[str, datetime], bool],
-                today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None], memory=None) -> CoachDm | None:
+                today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None], memory=None,
+                local_now: Callable[[datetime], datetime] | None = None) -> CoachDm | None:
     """None unless ENABLE_COACH is on and there is a wearer and a Trust domain to label goals with."""
     if not getattr(config, "enable_coach", False):
         return None
@@ -203,4 +214,6 @@ def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Cal
         return None
     desk = CoachDesk(core, user_id=user_id, trust_domain=domain, goals=GoalManager(core.db_path, core=core), today=today, targets_frozen=targets_frozen,
                      paused=lambda now: paused(user_id, now), active_task=active_task)
+    if local_now is not None:
+        desk.time_of_day = lambda now: describe_time_of_day(local_now(now))
     return CoachDm(desk, core=core, clock=clock, memory=memory if getattr(config, "enable_coaching_memory", False) else None)
