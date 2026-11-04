@@ -4,7 +4,7 @@ rem Starts the AI Coach and Keyholder Discord bot from the repository directory 
 rem to logs\bot.log and restarts it after a crash: wait 10 s, at most 3 restarts.
 setlocal
 title AI Coach Keyholder bot
-cd /d "C:\Users\jirka\AI-Coach-Keyholder" || exit /b 1
+cd /d "C:\Users\jirka\claude\AI-Coach-Keyholder" || exit /b 1
 if not exist logs mkdir logs
 set RESTARTS=0
 :run
