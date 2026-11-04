@@ -282,3 +282,4 @@ class ConversationResponse:
     text: str
     response_category: ResponseCategory
     tool_outputs: tuple[ToolExecutionResult, ...] = ()
+    proposal_outcome: object | None = None      # Phase J3: what the coach port answered for this turn's proposal; opaque here, like ToolExecutionResult.data

@@ -58,7 +58,14 @@ from conversation_engine.prompt_builder import build_generation_request
 from conversation_engine.providers import ConversationContextProvider
 from conversation_engine.subject_queue import SubjectConversationQueue
 from conversation_engine.tools import ToolExecutionContext, ToolExecutor, build_tool_guidance
-from conversation_engine.structured_output import FORMAT_INSTRUCTIONS, RESPONSE_SCHEMA, parse_structured_reply
+from conversation_engine.structured_output import (
+    FORMAT_INSTRUCTIONS,
+    RESPONSE_SCHEMA,
+    build_coach_instructions,
+    build_coach_schema,
+    parse_structured_reply,
+    strip_proposal_echo,
+)
 from conversation_engine.validation import validate_response
 from memory_system.models import WorkingMemoryCapacityError, WorkingMemoryError, WorkingMemorySnapshot
 from memory_system.working_memory import WorkingMemoryReader, WorkingMemoryWriter
@@ -92,9 +99,16 @@ class ConversationEngine:
         max_output_characters: int = DEFAULT_MAX_OUTPUT_CHARACTERS,
         tool_executor: ToolExecutor | None = None,
         structured_output: bool = False, structured_sink=None,
-        runtime_sink=None, monotonic: Callable[[], float] = time.monotonic,
+        runtime_sink=None, monotonic: Callable[[], float] = time.monotonic, coach=None,
     ) -> None:
         self._model = model
+        # Phase J3: the coach port (`schemas`, `instructions`, `submit(subject_key, raw, now, user_message)`), injected by the composition root. It is the
+        # ONLY thing a model's `proposal` reaches, and it validates everything itself; this engine neither reads nor acts on a proposal. A coach turn
+        # (see `coach_guidance`) needs a model that can follow a JSON schema; without one the coach is off, with one warning.
+        self._coach = coach if callable(getattr(model, "generate_structured", None)) else None
+        if coach is not None and self._coach is None:
+            logger.warning("Coach port configured but the model adapter has no structured output -- proposals disabled",
+                           extra={"error_code": "coach_model_unsupported", "adapter": type(model).__name__})
         # Phase F1: ask for the JSON shape of conversation_engine.structured_output when the model supports it. `structured_sink`
         # (subject_key, StructuredReply, now, user_message) receives the validated side data (Phase F2: Coaching Memory).
         self._structured = bool(structured_output) and callable(getattr(model, "generate_structured", None))
@@ -128,6 +142,7 @@ class ConversationEngine:
     def generate_response(
         self, *, subject_key: str, current_user_message: str, language: str, identity_id: str, now: datetime,
         extra_system_context: str | None = None, remember_exchange: bool = False, allow_side_data: bool = True,
+        coach_guidance: str | None = None,
     ) -> ConversationResponse:
         """`extra_system_context` is verified, application-supplied DATA
         for this one reply (e.g. freshly read Chaster lock state). When
@@ -140,7 +155,10 @@ class ConversationEngine:
         `remember_exchange=True` (ordinary chat turns that merely received
         context) commits the user/assistant TEXT to Working Memory anyway;
         the context block itself is never stored, and the context tells
-        the model that figures in earlier turns may be outdated."""
+        the model that figures in earlier turns may be outdated.
+
+        `coach_guidance` (Phase J3) makes this a COACH turn: one JSON reply that may carry a `proposal`, handed to the coach port. Tools are never offered
+        on it, and `extra_system_context`, when given, stays in the prompt. Never on an untrusted channel (`allow_side_data=False`)."""
         with self._queue.turn(subject_key):
             working_memory_snapshot = self._read_working_memory(subject_key)
 
@@ -167,13 +185,20 @@ class ConversationEngine:
 
             tool_outputs: tuple[ToolExecutionResult, ...] = ()
             structured_status: str | None = None
-            path = ("context" if extra_system_context is not None else "tools" if self._tool_executor is not None
+            coach_turn = bool(coach_guidance) and allow_side_data and self._coach is not None
+            proposal_outcome: object | None = None
+            path = ("structured" if coach_turn else "context" if extra_system_context is not None else "tools" if self._tool_executor is not None
                     else "structured" if self._structured else "plain")
             started = self._started()
             try:
-                if extra_system_context is not None:
-                    if not extra_system_context.strip():
-                        raise ValueError("extra_system_context must not be blank")
+                if extra_system_context is not None and not extra_system_context.strip():
+                    raise ValueError("extra_system_context must not be blank")
+                if coach_turn:
+                    messages = request.messages if extra_system_context is None else self._with_tool_guidance(request.messages, extra_system_context)
+                    raw_text, structured_status, proposal_outcome = self._generate_coach(
+                        ModelGenerationRequest(messages=messages, max_output_characters=request.max_output_characters),
+                        guidance=coach_guidance, subject_key=subject_key, now=now, user_message=current_user_message)
+                elif extra_system_context is not None:
                     context_request = ModelGenerationRequest(
                         messages=self._with_tool_guidance(request.messages, extra_system_context),
                         max_output_characters=request.max_output_characters,
@@ -199,7 +224,8 @@ class ConversationEngine:
                 self._observe(subject_key, now, started, path, "generation_failed", structured_status, allow_side_data)
                 return render_fallback(FallbackReason.GENERATION_UNAVAILABLE, language=language)
 
-            response = ConversationResponse(text=raw_text, response_category=plan.response_category, tool_outputs=tool_outputs)
+            response = ConversationResponse(text=raw_text, response_category=plan.response_category, tool_outputs=tool_outputs,
+                                            proposal_outcome=proposal_outcome)
             validation = validate_response(response, plan, outcome.snapshot)
             if not validation.is_valid:
                 logger.warning(
@@ -272,6 +298,36 @@ class ConversationEngine:
             except Exception:
                 logger.exception("Structured side data could not be stored; the reply is unaffected.")
         return parsed.reply, ("side_dropped" if parsed.issues else "ok")
+
+    def _generate_coach(self, request: ModelGenerationRequest, *, guidance: str, subject_key: str, now: datetime,
+                        user_message: str) -> tuple[str, str, object | None]:
+        """Phase J3: one model call, one JSON reply. Output without a usable reply is never shown (one plain generation instead, and so no proposal). The
+        `proposal` goes to the coach port unread; a failing port never touches the reply. Returns (reply, structured status, the port's answer or None)."""
+        with_side = self._structured_sink is not None
+        coach_request = ModelGenerationRequest(
+            messages=self._with_tool_guidance(request.messages, f"{guidance}\n\n{build_coach_instructions(self._coach.instructions, with_side=with_side)}"),
+            max_output_characters=request.max_output_characters,
+        )
+        raw = self._model.generate_structured(request=coach_request, schema=build_coach_schema(self._coach.schemas, with_side=with_side))
+        parsed = parse_structured_reply(raw, max_reply_characters=request.max_output_characters, allow_proposal=True)
+        if parsed is None:
+            logger.warning("Structured output unusable on a coach turn; falling back to a plain reply",
+                           extra={"error_code": "structured_unparseable", "adapter": type(self._model).__name__})
+            return self._model.generate(request=request), "unparseable", None
+        if parsed.issues:
+            logger.info("Structured side data dropped", extra={"error_code": "structured_side_dropped", "issues": list(parsed.issues)})
+        if parsed.has_side_data and with_side:
+            try:
+                self._structured_sink(subject_key, parsed, now, user_message)
+            except Exception:
+                logger.exception("Structured side data could not be stored; the reply is unaffected.")
+        outcome = None
+        if parsed.proposal is not None:
+            try:
+                outcome = self._coach.submit(subject_key, parsed.proposal, now, user_message)
+            except Exception:
+                logger.exception("The coach port failed on a proposal; the reply is unaffected.")
+        return strip_proposal_echo(parsed.reply), ("side_dropped" if parsed.issues else "ok"), outcome
 
     def _generate_with_tools(
         self, request: ModelGenerationRequest, *, subject_key: str, now: datetime, user_message: str,

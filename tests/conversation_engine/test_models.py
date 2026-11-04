@@ -183,7 +183,11 @@ class TestConversationResponse:
         set is exactly {text, response_category, tool_outputs}, nothing
         write-shaped. INTENTIONALLY EXTENDED for read-only tool calling:
         `tool_outputs` records what a read-only tool READ (default
-        empty); it is not, and cannot express, a write request."""
+        empty); it is not, and cannot express, a write request.
+        INTENTIONALLY EXTENDED for Phase J3: `proposal_outcome` is what the
+        coach port already ANSWERED for this turn (opaque here, default
+        None); nothing reads it as a request, and acting on a proposal
+        takes the user's own button (coach/desk.py)."""
         field_names = {f.name for f in dataclasses.fields(ConversationResponse)}
-        assert field_names == {"text", "response_category", "tool_outputs"}
+        assert field_names == {"text", "response_category", "tool_outputs", "proposal_outcome"}
         assert ConversationResponse(text="x", response_category=ResponseCategory.COACHING_DIALOGUE).tool_outputs == ()

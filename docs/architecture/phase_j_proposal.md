@@ -1,6 +1,6 @@
 # Phase J: Zero-Command Conversational UX, Live Consequences, Local Coach
 
-Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2) and J2 with its refinements (section 4) BUILT; the rest awaits the owner's decisions in section 6.
+Status: PROPOSAL. J1 slices 1 and 2 (sections 3.1, 3.2), J2 with its refinements (section 4) and J3 (section 5) BUILT; the rest awaits the owner's decisions in section 6.
 
 ## 1. Design principles (owner, 2026-11-03)
 
@@ -136,8 +136,8 @@ Diagnostics: `python -m cli penalty-status --owner-id <id>`. Switches: `ENABLE_P
 
 - Nothing in production approves an exemption yet: `PenaltyEngine.freeze()` has no caller, so the exemption release is ready but has no trigger.
 - `EPISTEMIC_MISREPRESENTATION` and `HYGIENE_MISUSE` have no detector; a confirmed photo rejection is the only working infraction today.
-- The escalation's unconfirmed Incident is kept, so `check-in-escalations confirm` can still lead to a Warning or Window through the keyholder's own
-  decision. "Missed check-ins affect ONLY Trust and a Warning DM" read literally would remove that path too; it needs the owner's word.
+- The escalation's unconfirmed Incident is kept for the keyholder's manual review (owner decision, 2026-11-04): `check-in-escalations confirm` can lead
+  to a Warning or Window through that decision and in no other way.
 - The Release Engine stays off (`ENABLE_RELEASE_ENGINE`, it needs `CHASTER_EXECUTION_WEARER_USER_ID`), so tokens and releases are not live yet.
 
 ### 4.5 Zero-Time-Modification (owner, 2026-11-04)
@@ -171,10 +171,69 @@ approval or the owner's attestation, because that wearer may never have seen any
 
 ## 5. J3: local Ollama coach (proposal)
 
-- Daily check-ins and coaching dialogues on the local model (the check-in scaffolding, `supervision/`, and the Conversation Engine with
-  Coaching Memory already exist; check-ins are off).
-- Goal negotiation: the model proposes, the user decides; any goal or rule change goes through the existing consent process (2.5); the
-  model never sees the Trust score.
+Code: `coach/` (the catalogue, the gates, the ledger), `system/coach_dm.py` (cards, buttons, wiring), `CoachContextProvider`, a coach turn in
+`ConversationEngine`, migration 046. Off by default (`ENABLE_COACH`), and the bot needs a restart for any of it. See `coach/README.md`.
+
+### 5.1 Owner decisions (2026-11-04)
+
+1. Consent: an explicit decline or revocation, and the approval or attestation for a third party's lock, stay fully enforced.
+2. Live testing: physical lock destruction and unlock (the Chaster `/unlock` endpoint) stay BANNED. Unfreezing through the Release Engine (`frozen=False`)
+   is allowed once the execution halt is lifted. The transport has no unlock method at all, and a test pins that public surface.
+3. Unconfirmed check-in escalation Incidents stay for manual review.
+
+### 5.2 Objectives and what they became
+
+1. **Ollama integration.** The connection already existed (`OllamaConversationModel`). J3 adds what running it needs: `OLLAMA_NUM_CTX` (Ollama's default
+   window is the model's maximum: `llama3.1` loaded at 23 GB, `qwen3-vl` at 46 GB with an 80 second first reply) and a read-only readiness check at
+   startup and in `python -m cli coach-status`. Decision 5 below: the coach uses `OLLAMA_MODEL`; there is no separate coach model.
+2. **Context-aware dialogue.** The prompt gains the user's goals with their numbers, recent commitments, the last 7 days of tasks and any waiting proposal,
+   next to the lock facts it already had. The fragment comes from a whitelist of fields, text is cleaned and quoted as data, and the coach reads no Trust
+   state, so the score cannot reach the prompt. Guard tests cover the package imports and the rendered prompt.
+3. **Goal negotiation.** A check-in reply is a coach turn with a negotiation instruction. The model may offer one commitment; the user can accept, decline, or
+   answer in words, and a revised offer replaces the waiting one. Scheduled check-ins add today's commitment and an invitation to the question (plain code:
+   no model call in the periodic cycle). The release check-in keeps the owner's wording. Goals can also come up in ordinary conversation.
+4. **Action safeguards.** Section 5.3.
+
+### 5.3 The action path
+
+```
+model reply (JSON, Ollama `format`) -> reply text goes to the user
+                                    -> `proposal` -> validate_action -> gates -> pending row -> card -> the user's button -> GoalManager
+```
+
+- **Measured first.** Native tool calling was tried on the owner's models and rejected: `llama3.1` called a tool for "hi", proposed "Take a 1-hour break from
+  your lock" and "I will immediately unlock you right now", and every call loses the reply text and costs a second generation. The JSON schema behaved on
+  both models in one call. So the request is a field of the reply, and the existing read-only tools stay exactly as they were.
+- **Closed catalogue.** `propose_goal`, `adapt_goal`, `propose_commitment`. All three are proposals. Nothing exists for a lock, time, a release, a token, a
+  penalty, Trust, a rule, consent, a message, or a task assignment.
+- **Strict validation** (`coach/actions.py`). Exact keys, exact types, length limits, no control or invisible characters, no links. It rejects, it never repairs.
+- **Deterministic gates** (`coach/desk.py`). Right user; no vacation; no negotiation when the user's message mentions pain, injury or distress; no regime
+  words and nothing risky in the text (`coach/safety.py`); goal numbers only reach active goals; at most 3 proposals a day, 5 active goals and 3 commitments a
+  day; nothing similar to a declined proposal for 14 days (2.5); a negotiation cannot change kind. A refusal stores a reason code, never the text.
+- **Deterministic confirmation.** Only the user's own button applies a proposal, from the stored record. The card is built from that record, never from the
+  model's sentence. A second press, an expired card or another account's press changes nothing, and the lock state is checked again at the press.
+- **Never a broken reply.** A failing port, an unusable output or a model failure leaves the conversation as it was. A proposal the model pasted into its
+  reply is cut out before the user sees it (measured on `llama3.1`).
+
+Philosophy 2.5 is this order: proposal, explanation, user approval, application. `_SYSTEM_BOUNDARIES` is unchanged, and an untrusted channel never reaches any of it.
+
+### 5.4 Commitments have no consequence
+
+J3's live effect stays "conversation only". A commitment and its outcome (Kept, Partly, Not kept, or lapsing unanswered after 3 days) live in
+`daily_commitments` and nowhere else: not goal evidence, so no Trust, no tokens, nothing on a lock. `forget all` erases proposals, refusals and commitments;
+goals stay, as agreed records with an append-only history.
+
+### 5.5 Limits, and what is not built
+
+- **The Iron Contract and goals.** Rule 7 forbids negotiating while locked, but the wearer is usually locked, so J3 reads it narrowly: time, deadlines,
+  assigned tasks and check-ins are not negotiable; new goals and commitments are. Changing an agreed target (`adapt_goal`) is refused while locked, because
+  code cannot tell a harder target from an easier one. See decision 6.
+- **Small models are uneven.** In the live runs `qwen3-vl` once acknowledged a counter-offer in words without revising the card, so the old card stood until
+  declined. Both models sometimes ask a question instead of proposing. Nothing breaks; the user just gets no card that turn.
+- **No model-written proactive messages.** A check-in question is fixed text plus plain code.
+- **Multi-wearer tenants are not wired**: a tenant's invitation does not disclose the coach.
+- **Coaching Memory on ordinary turns.** A user with an active Chaster connection always takes the context path, which has no JSON reply, so
+  `CONVERSATION_STRUCTURED_OUTPUT` has no effect for them outside coach turns. This predates J3; coach turns do carry the side fields.
 
 ## 6. Decisions needed
 
@@ -188,5 +247,7 @@ approval or the owner's attestation, because that wearer may never have seen any
    the CLI.
 3. **J2 consequences.** Which Penalty Engine outcomes become which Chaster actions (freeze? add time? how much?), under which limits?
 4. **Button label.** Rename "Confirm Penalty" to "Confirm Incident" until J2 exists?
-5. **J3 model.** Which local model for coaching (the current conversation model, or a separate one), and is check-in data allowed into
-   Coaching Memory?
+5. **J3 model.** Decided by the build: `OLLAMA_MODEL`, no separate model. Still open: which one (`llama3.1` proposed more reliably in the live runs, and on a
+   back-pain message it named the emergency option where `qwen3-vl` did not), and whether check-in data may enter Coaching Memory.
+6. **Goal changes while locked.** `adapt_goal` is refused while the Iron Contract is in force (section 5.5). Allow it, or keep it for the keyholder?
+7. **Commitments and tokens.** Should a reported outcome become goal evidence? That would feed the daily token evaluation and Trust, so J3 keeps it out.

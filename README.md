@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**4062 passing tests** across the whole repository (`pytest`), including
+**4307 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -117,8 +117,8 @@ silently updated each time, since letting a stale count stand
 unremarked is exactly the kind of documentation drift this project's
 own "Roadmap" section already guards against.
 
-Thirty-eight sequential database migrations are applied so far
-(`database/migrations/001` through `042`), covering the initial Phase 0
+Forty-six sequential database migrations are applied so far
+(`database/migrations/001` through `046`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -580,6 +580,8 @@ task_catalog/    # versioned task template reference layer -- catalog only,
 advanced_mode/   # OperatingMode global singleton + two-stage critical_change
                  # transition process -- no DelegatedAuthorityPolicy, no other
                  # part of the wider Advanced Mode draft (see advanced_mode/README.md)
+coach/           # Phase J3: the closed catalogue of what the local model may propose, the gates, the
+                 # proposals and daily commitments; only the user's button applies anything (see coach/README.md)
 conversation_engine/  # Slices 1-3 -- runtime types, deterministic safety shell,
                  # real Ollama-backed conversation for unmatched text only, and
                  # Working Memory integration via memory_system (see conversation_engine/README.md)

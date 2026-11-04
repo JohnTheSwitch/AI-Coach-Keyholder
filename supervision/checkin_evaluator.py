@@ -47,7 +47,7 @@ class Verdict(StrEnum):
 
 
 _SAFETY = re.compile(
-    r"\b(pain|painful|hurts?|hurting|injur\w*|numb\w*|bleed\w*|swollen|swelling|medical|doctor|hospital|"
+    r"\b(pain|painful|hurts?|hurting|injur\w*|numb|numbness|numbed|numbing|bleed\w*|swollen|swelling|medical|doctor|hospital|"
     r"emergency|ambulance|breath\w*|panic\w*|suicid\w*|self[- ]?harm|bolest\w*|boli|zraneni\w*|necitim|"
     r"nemocnice|doktor\w*|zachranka|nouz\w*)\b",
     re.IGNORECASE,

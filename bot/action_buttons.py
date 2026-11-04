@@ -9,6 +9,8 @@ community review consent buttons (`review_consent:<accept|decline|revoke>:<lock 
   registered template is simply not offered (dropped), never shown as a dead button.
 - `ReviewConsentButton` hands the click to `system.review_consent_dm.ReviewConsentDm.decide()` (owner's Discord account only)
   and replaces the buttons with the outcome.
+- `CoachButton` (Phase J3, `coach:<accept|decline|kept|partly|missed>:<id>`) hands the click to `system.coach_dm.CoachDm.press()`, which resolves the
+  presser and refuses anyone but the proposal's own user. Only the buttons of that one card are removed: a reply can carry two.
 """
 
 from __future__ import annotations
@@ -23,10 +25,12 @@ from application.models import ActionSpec
 
 logger = logging.getLogger("ai_coach_keyholder.bot.action_buttons")
 
-__all__ = ["REVIEW_CONSENT_TEMPLATE", "ReviewConsentButton", "actions_view", "REGISTERED_TEMPLATES"]
+__all__ = ["REVIEW_CONSENT_TEMPLATE", "COACH_TEMPLATE", "ReviewConsentButton", "CoachButton", "actions_view", "REGISTERED_TEMPLATES"]
 
 REVIEW_CONSENT_TEMPLATE = r"review_consent:(?P<action>accept|decline|revoke):(?P<lock>[A-Za-z0-9_-]{1,64})"
+COACH_TEMPLATE = r"coach:(?P<action>accept|decline|kept|partly|missed):(?P<ident>[0-9a-f-]{36})"
 HANDLER_ATTRIBUTE = "review_consent_dm"          # the bot attribute holding the ReviewConsentDm facade
+COACH_ATTRIBUTE = "coach_dm"                     # the bot attribute holding the CoachDm facade
 _STYLES = {"primary": discord.ButtonStyle.primary, "secondary": discord.ButtonStyle.secondary,
            "success": discord.ButtonStyle.success, "danger": discord.ButtonStyle.danger}
 
@@ -66,9 +70,47 @@ class ReviewConsentButton(discord.ui.DynamicItem[discord.ui.Button], template=RE
                 logger.warning("Could not remove the consent buttons from the message.")
 
 
+class CoachButton(discord.ui.DynamicItem[discord.ui.Button], template=COACH_TEMPLATE):
+    def __init__(self, action: str, ident: str, *, label: str | None = None, style: str = "secondary") -> None:
+        super().__init__(discord.ui.Button(label=label or action.capitalize(), style=_STYLES.get(style, discord.ButtonStyle.secondary),
+                                           custom_id=f"coach:{action}:{ident}"))
+        self.action = action
+        self.ident = ident
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        return cls(match["action"], match["ident"], label=item.label, style=item.style.name)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        facade = getattr(interaction.client, COACH_ATTRIBUTE, None)
+        if facade is None:
+            await interaction.response.send_message("The coach is switched off right now.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            text = await asyncio.to_thread(facade.press, discord_user_id=str(interaction.user.id), action=self.action, ident=self.ident)
+        except Exception:
+            logger.exception("A coach button failed.")
+            text = "Something went wrong; please try again."
+        await interaction.followup.send(text)
+        if interaction.message is not None:
+            try:
+                await interaction.message.edit(view=actions_view(remaining_actions(interaction.message, self.ident)))
+            except Exception:
+                logger.warning("Could not update the coach buttons on the message.")
+
+
+def remaining_actions(message: discord.Message, ident: str) -> tuple[ActionSpec, ...]:
+    """The message's buttons without the card that was just decided."""
+    return tuple(ActionSpec(action_id=button.custom_id, label=button.label or "", style=button.style.name)
+                 for row in message.components for button in row.children
+                 if button.custom_id and not button.custom_id.endswith(ident))
+
+
 # (compiled template, factory(match, spec) -> DynamicItem): every flow that offers buttons registers here.
 REGISTERED_TEMPLATES = (
     (re.compile(REVIEW_CONSENT_TEMPLATE), lambda m, spec: ReviewConsentButton(m["action"], m["lock"], label=spec.label[:80], style=spec.style)),
+    (re.compile(COACH_TEMPLATE), lambda m, spec: CoachButton(m["action"], m["ident"], label=spec.label[:80], style=spec.style)),
 )
 
 

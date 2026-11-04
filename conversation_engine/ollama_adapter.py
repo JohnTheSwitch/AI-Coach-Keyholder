@@ -13,6 +13,7 @@ model-initiated tool calls.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import requests
 
@@ -32,6 +33,7 @@ __all__ = [
     "DEFAULT_MAX_RESPONSE_BODY_BYTES",
     "DEFAULT_HTTP_CHUNK_SIZE_BYTES",
     "STRUCTURED_OVERHEAD_CHARACTERS",
+    "ModelReadiness",
 ]
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
@@ -40,6 +42,14 @@ DEFAULT_MAX_RESPONSE_BODY_BYTES = 1_000_000
 STRUCTURED_OVERHEAD_CHARACTERS = 2000   # JSON keys + the two side notes (300 + 500) + escaping
 DEFAULT_HTTP_CHUNK_SIZE_BYTES = 8192  # a reasonable default read-chunk size only --
                                        # the actual safety limit is max_bytes itself, not this.
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelReadiness:
+    """What `/api/tags` says about the configured model. `reachable=False` means Ollama did not answer at all."""
+    reachable: bool
+    installed: bool = False
+    available: tuple[str, ...] = ()
 
 
 def _is_accepted_content_type(content_type: str) -> bool:
@@ -109,16 +119,38 @@ class OllamaConversationModel:
         connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         read_timeout_seconds: float = DEFAULT_READ_TIMEOUT_SECONDS,
         max_response_body_bytes: int = DEFAULT_MAX_RESPONSE_BODY_BYTES,
-        keep_alive: str | None = None,
+        keep_alive: str | None = None, num_ctx: int | None = None,
     ) -> None:
         """`keep_alive` (for example "30m") asks Ollama to keep the model loaded between messages, so only the first reply after a quiet
-        period pays the load time; None leaves Ollama's own default."""
+        period pays the load time; None leaves Ollama's own default.
+
+        `num_ctx` sets the context window. Ollama's default follows the model's maximum, which is expensive: on the owner's machine `llama3.1` loaded at
+        23 GB and `qwen3-vl` at 46 GB with an 80 second first reply. Every request must send the same value, or Ollama reloads the model."""
         self._host = host.rstrip("/")
         self._model_name = model_name
         self._connect_timeout = connect_timeout_seconds
         self._read_timeout = read_timeout_seconds
         self._max_body_bytes = max_response_body_bytes
         self._keep_alive = keep_alive
+        self._num_ctx = num_ctx
+
+    def check_ready(self) -> ModelReadiness:
+        """Read-only, for diagnostics and a startup warning: is Ollama up, and does it have this model? Never raises."""
+        try:
+            response = requests.get(f"{self._host}/api/tags", timeout=(self._connect_timeout, self._connect_timeout), stream=True, allow_redirects=False)
+        except requests.RequestException:
+            return ModelReadiness(reachable=False)
+        try:
+            if response.status_code != 200:
+                return ModelReadiness(reachable=False)
+            payload = json.loads(_read_bounded_response_body(response, max_bytes=self._max_body_bytes).decode("utf-8"))
+            names = tuple(str(m["name"]) for m in payload["models"])
+        except (LLMGenerationError, ValueError, KeyError, TypeError):
+            return ModelReadiness(reachable=False)
+        finally:
+            response.close()
+        wanted = {self._model_name, f"{self._model_name}:latest"}
+        return ModelReadiness(reachable=True, installed=bool(wanted & set(names)), available=names)
 
     def generate(self, *, request: ModelGenerationRequest) -> str:
         payload = self._post_chat(request=request, tools=())
@@ -204,6 +236,8 @@ class OllamaConversationModel:
             body["format"] = json.loads(json.dumps(response_format))
         if self._keep_alive:
             body["keep_alive"] = self._keep_alive
+        if self._num_ctx:
+            body["options"] = {"num_ctx": self._num_ctx}
         try:
             response = requests.post(
                 f"{self._host}/api/chat",

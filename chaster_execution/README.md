@@ -5,6 +5,9 @@ Carries out barrier decisions on a Chaster lock. **Zero-Time-Modification (owner
 up or down.** No time method exists on the transport or the executor, and no action type or limit for one exists in `rules_engine`. Lock
 progression is governed purely by the frozen state and the Release Engine. `ENABLE_CHASTER_EXECUTION` stays false until live testing.
 
+**Live testing (owner decision, 2026-11-04):** physical lock destruction and unlock (the Chaster `/unlock` endpoint) stay banned, and no method for them exists
+here. Unfreezing through the Release Engine (`frozen=False`) is allowed once the execution halt is lifted.
+
 ## The Chaster transport (`ChasterHttpTransport`, Route A)
 
 `POST https://api.chaster.app/locks/{lockId}/freeze` with `{"isFrozen": <bool>}`, authenticated with the KEYHOLDER connection's access token (the

@@ -131,6 +131,7 @@ class CoachKeyholderBot(discord.Client):
         self.peer_reviews = None                 # Phase I4: the peer_review.wiring.peer_review_loop coroutine when the watch is active
         self.peer_review_buttons = None          # Phase I4: peer_review.discord_buttons.PeerReviewButtonHandler (owner's one-click decisions)
         self.review_consent_dm = None            # Phase J1: system.review_consent_dm.ReviewConsentDm (owner's consent buttons)
+        self.coach_dm = None                     # Phase J3: system.coach_dm.CoachDm (the wearer's Accept / Decline / outcome buttons)
         self._peer_review_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
@@ -165,6 +166,9 @@ class CoachKeyholderBot(discord.Client):
         if self.review_consent_dm is not None:
             from bot.action_buttons import ReviewConsentButton
             self.add_dynamic_items(ReviewConsentButton)
+        if self.coach_dm is not None:
+            from bot.action_buttons import CoachButton
+            self.add_dynamic_items(CoachButton)
         if self.chaster_chat is not None:
             poller, adapter, interval = self.chaster_chat
             self._chat_task = asyncio.create_task(run_chaster_chat_loop(poller, adapter, interval_seconds=interval))
@@ -395,7 +399,8 @@ def main() -> None:
     # own DEFAULT_CONNECT_TIMEOUT_SECONDS/DEFAULT_READ_TIMEOUT_SECONDS
     # bootstrap defaults are used as-is).
     ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model,
-                                           read_timeout_seconds=config.ollama_read_timeout_seconds, keep_alive=config.ollama_keep_alive)
+                                           read_timeout_seconds=config.ollama_read_timeout_seconds, keep_alive=config.ollama_keep_alive,
+                                           num_ctx=config.ollama_num_ctx)
     working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
     conversation_queue = SubjectConversationQueue()
 
@@ -515,11 +520,24 @@ def main() -> None:
     coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core)
     if memory_provider is not None:
         context_providers = context_providers + (memory_provider,)
+    # Phase J3: goal and commitment proposals. Off unless ENABLE_COACH; the single wearer only, tenants are not wired (system/coach_dm.py).
+    from conversation_engine.context_providers.coach_provider import CoachContextProvider
+    from system.coach_dm import active_task_reader, build_coach
+    from system.composition import window_config_from
+    coach_dm = build_coach(config, core, clock=clock, is_locked=wiring.iron_contract.locked_for_context, paused=wiring.vacation.is_paused,
+                           today=lambda now, cfg=window_config_from(config): cfg.local(now).date(),
+                           active_task=active_task_reader(task_runtime, task_catalog)) if config.enable_coach else None
+    if coach_dm is not None:
+        context_providers = context_providers + (CoachContextProvider(read=coach_dm.context),)
+        if wiring.check_ins is not None:
+            wiring.check_ins.prompt_suffix = coach_dm.prompt_suffix
+        warning = coach_dm.check_ready(ollama_model)
+        logger.warning(warning) if warning else logger.info("The coach is active.")
     conversation_engine = ConversationEngine(
         model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
         structured_output=config.conversation_structured_output, structured_sink=memory_sink,
         runtime_sink=wiring.telemetry_buffer.record,
-        queue=conversation_queue, providers=context_providers, tool_executor=tool_executor,
+        queue=conversation_queue, providers=context_providers, tool_executor=tool_executor, coach=coach_dm,
     )
 
     # Chaster chat (Phase C): off unless ENABLE_CHASTER_MESSAGING; every user must also opt in with `channel chaster`.
@@ -550,9 +568,11 @@ def main() -> None:
         telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
         owner_user_id=config.owner_user_id,
         review_consent_reply=(lambda: render_overview(review_consent_dm.overview())) if review_consent_dm is not None else None,
+        coach=coach_dm,
     )
     bot = build_bot(config, db, clock, application_service)
     bot.review_consent_dm = review_consent_dm
+    bot.coach_dm = coach_dm
     check_in_sender.attach(bot)
     if platform is not None:
         # Phase E2: every ACTIVE wearer runs as an isolated tenant (own database, own staggered loop); tenant zero keeps the loop above.

@@ -128,6 +128,9 @@ class CheckInService:
         self._strict_timeouts = (strict_response_timeout, strict_follow_up_window)
         self._escalation = escalation
         self._paused = paused
+        # Phase J3: `prompt_suffix(now)`, set by the composition when the coach is on: today's commitment and the invitation to make the next one. Scheduled
+        # check-ins only; the release check-in keeps the owner's wording. A failure leaves the plain question.
+        self.prompt_suffix: Callable[[datetime], str] | None = None
 
     # ------------------------------------------------------------------ driver
 
@@ -308,6 +311,7 @@ class CheckInService:
             if prompt is None:                  # level 4 now: nothing to ask
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
+            prompt += self._suffix(now)
             if not self._cas(row["id"], ("scheduled",), "sending", now, prompt_text=prompt, event="check_in.prompt_due"):
                 continue
             awaiting = True
@@ -322,6 +326,15 @@ class CheckInService:
                 self._cas(row["id"], ("sending",), "undeliverable", now)
             else:
                 self._cas(row["id"], ("sending",), "needs_review", now)
+
+    def _suffix(self, now: datetime) -> str:
+        if self.prompt_suffix is None:
+            return ""
+        try:
+            return self.prompt_suffix(now) or ""
+        except Exception:
+            logger.exception("The check-in addition failed; the plain question goes out.")
+            return ""
 
     def _evaluate_responses(self, now: datetime) -> None:
         with self._core.transaction() as tx:

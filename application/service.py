@@ -89,8 +89,8 @@ logger = logging.getLogger("ai_coach_keyholder.application")
 
 # Phase G6: `forget all` is a two-step command; the second step is `yes` within this window.
 FORGET_CONFIRM_WINDOW = timedelta(minutes=5)
-FORGET_ALL_WARNING = ("This will permanently delete your psychological profile and revoke sharing consent: your Coaching Memory and all behavioral "
-                      "telemetry about you are erased, and research sharing is switched off with an erase request to the research server. "
+FORGET_ALL_WARNING = ("This will permanently delete your psychological profile and revoke sharing consent: your Coaching Memory, the coach's proposals and commitments and all "
+                      "behavioral telemetry about you are erased, and research sharing is switched off with an erase request to the research server. "
                       "Reply `yes` within 5 minutes to confirm; anything else cancels.")
 
 
@@ -119,7 +119,7 @@ class ApplicationService:
         check_in_listener=None,
         channel_service=None,
         coaching_memory=None, conditioning=None, telemetry=None, research=None, iron_contract=None, vacation=None,
-        owner_user_id: str | None = None, review_consent_reply=None,
+        owner_user_id: str | None = None, review_consent_reply=None, coach=None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -145,6 +145,8 @@ class ApplicationService:
         # Phase J1 slice 2: callable() -> OutgoingMessage with the community review consent overview and its buttons (owner only;
         # system/review_consent_dm.py, injected by the bot). Decisions are button presses, never this text path.
         self._review_consent_reply = review_consent_reply
+        # Phase J3: system.coach_dm.CoachDm by injection: `guidance(...)` for a turn, `present(...)` for its cards. A coach failure never touches a reply.
+        self._coach = coach
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -267,7 +269,7 @@ class ApplicationService:
             if self._review_consent_reply is not None and self._is_owner(context) and is_review_consent_query(incoming.text):
                 return self._answer_review_consent()
 
-            self._notify_check_in(user.id, incoming.text, incoming.received_at)
+            check_in_reply = self._notify_check_in(user.id, incoming.text, incoming.received_at)
 
             if self._conversation_engine is None:
                 return OutgoingMessage(text=self.router.unrecognized_text())
@@ -276,9 +278,12 @@ class ApplicationService:
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
 
             chat_context = self._chaster_chat_context(incoming.text, context)
-            context_kwargs = (
+            context_kwargs: dict = (
                 {"extra_system_context": chat_context, "remember_exchange": True} if chat_context is not None else {}
             )
+            guidance = self._coach_guidance(user.id, incoming.text, incoming.received_at, check_in_reply)
+            if guidance:
+                context_kwargs["coach_guidance"] = guidance
             try:
                 response = self._conversation_engine.generate_response(
                     subject_key=user.id, current_user_message=incoming.text,
@@ -292,7 +297,7 @@ class ApplicationService:
                 # "missing required context" situation, not a bug crash.
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
             embed = self._embed_from_tool_outputs(response.tool_outputs, now=incoming.received_at)
-            return OutgoingMessage(text=response.text, embed=embed)
+            return self._with_coach_cards(OutgoingMessage(text=response.text, embed=embed), user.id, response, check_in_reply, incoming.received_at)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
@@ -318,14 +323,33 @@ class ApplicationService:
             logger.exception("ApplicationService.handle_conversation_only failed.")
             return None
 
-    def _notify_check_in(self, user_id: str, text: str, now) -> None:
-        """Best effort and never raises: a check-in problem must not break a conversation."""
+    def _notify_check_in(self, user_id: str, text: str, now) -> bool:
+        """Best effort and never raises: a check-in problem must not break a conversation. True when the message answered a check-in."""
         if self._check_in_listener is None:
-            return
+            return False
         try:
-            self._check_in_listener(user_id, text, now)
+            return self._check_in_listener(user_id, text, now) is True
         except Exception:
             logger.exception("Check-in listener failed; the message is handled normally.")
+            return False
+
+    def _coach_guidance(self, user_id: str, text: str, now, check_in_reply: bool) -> str | None:
+        if self._coach is None:
+            return None
+        try:
+            return self._coach.guidance(user_id, text, now, check_in_reply=check_in_reply)
+        except Exception:
+            logger.exception("The coach guidance failed; this turn is ordinary conversation.")
+            return None
+
+    def _with_coach_cards(self, outgoing: OutgoingMessage, user_id: str, response, check_in_reply: bool, now) -> OutgoingMessage:
+        if self._coach is None:
+            return outgoing
+        try:
+            return self._coach.present(outgoing, user_id=user_id, outcome=response.proposal_outcome, check_in_reply=check_in_reply, now=now)
+        except Exception:
+            logger.exception("The coach cards failed; the reply goes out without them.")
+            return outgoing
 
     # -------------------------------------------------------------------
     # Explicit, limited command set (per this phase's own scope --
@@ -987,7 +1011,7 @@ class ApplicationService:
 
     def _handle_forget_all(self, ctx: RequestContext) -> OutgoingMessage:
         """Step one of two (Phase G6): a warning; `_confirm_pending_forget` erases on `yes`."""
-        if self._coaching_memory is None and self._telemetry is None and self._research is None:
+        if self._coaching_memory is None and self._telemetry is None and self._research is None and self._coach is None:
             return OutgoingMessage(text="Coaching Memory is not available on this bot.")
         self._pending_forget[ctx.user.id] = ctx.now + FORGET_CONFIRM_WINDOW
         return OutgoingMessage(text=FORGET_ALL_WARNING)
@@ -1002,6 +1026,9 @@ class ApplicationService:
         if self._telemetry is not None:
             erased = self._telemetry.forget_all(ctx.user.id)
             parts.append(f"Erased {erased} behavioral telemetry record{'' if erased == 1 else 's'}.")
+        if self._coach is not None:
+            erased = self._coach.forget_all(ctx.user.id)
+            parts.append(f"Erased {erased} coach proposal{'' if erased == 1 else 's'} and commitment{'' if erased == 1 else 's'}. Your goals stay.")
         return OutgoingMessage(text=" ".join(parts))
 
     # Phase G6 -- the Iron Contract guard, the two-step `forget all` and vacations ------------------------------------------------------

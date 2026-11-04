@@ -22,6 +22,8 @@ it only reduces who sees the photos). `review-consent` shows the notice and reco
 `penalty-status` (Phase J2) is READ-ONLY: the redemption hold and the barrier queue. `check-in-escalations` lists the Warnings from repeated
 missed check-ins; `confirm` / `dismiss` is the keyholder's decision (owner only, --yes), and only `confirm` can lead to a Penalty Window.
 
+`coach-status` (Phase J3) is READ-ONLY: the local model, and counts of the coach's proposals, refusal codes and commitments.
+
 `freeze-lock` is the other guarded LIVE command (Phase D): owner only, --yes, runtime halt, managed locks only, audited.
 """
 
@@ -653,7 +655,7 @@ def build_research_model(timeout: float):
     if not is_local_host(config.ollama_host):
         raise ValueError("OLLAMA_HOST is not this machine")
     return OllamaConversationModel(host=config.ollama_host, model_name=config.research_ollama_model or config.ollama_model,
-                                   read_timeout_seconds=timeout, keep_alive=config.ollama_keep_alive)
+                                   read_timeout_seconds=timeout, keep_alive=config.ollama_keep_alive, num_ctx=config.ollama_num_ctx)
 
 
 _DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm")
@@ -740,6 +742,30 @@ def _state(value: str) -> bool:
     raise argparse.ArgumentTypeError("expected true or false")
 
 
+def _coach_status(args, out: TextIO) -> int:
+    """Phase J3, read-only: is the local model there, and what did the coach propose, refuse and record. Codes and counts; proposal texts stay in the DM."""
+    from conversation_engine.ollama_adapter import OllamaConversationModel
+    from infrastructure.database import Database as CoreDatabase
+
+    config = Config.load()
+    if not config.owner_user_id or args.owner_id != config.owner_user_id:
+        print("Refused: --owner-id must match OWNER_USER_ID.", file=out)
+        return 1
+    ready = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model).check_ready()
+    print(f"ENABLE_COACH: {config.enable_coach}. Model {config.ollama_model}: "
+          f"{'installed' if ready.installed else 'NOT installed' if ready.reachable else 'Ollama did not answer'}; "
+          f"context window: {config.ollama_num_ctx or 'Ollama default (the model maximum)'}.", file=out)
+    core = CoreDatabase(config.db_path)
+    with core.transaction() as tx:
+        proposals = tx.fetch_all("SELECT kind, status, COUNT(*) AS n FROM coach_proposals GROUP BY kind, status ORDER BY kind, status")
+        refusals = tx.fetch_all("SELECT reason, COUNT(*) AS n FROM coach_refusals GROUP BY reason ORDER BY n DESC")
+        commitments = tx.fetch_all("SELECT status, COUNT(*) AS n FROM daily_commitments GROUP BY status ORDER BY status")
+    print("Proposals: " + (", ".join(f"{r['kind']} {r['status']} {r['n']}" for r in proposals) or "none"), file=out)
+    print("Refused: " + (", ".join(f"{r['reason']} {r['n']}" for r in refusals) or "none"), file=out)
+    print("Commitments: " + (", ".join(f"{r['status']} {r['n']}" for r in commitments) or "none"), file=out)
+    return 0
+
+
 def main(argv: list[str], *, out: TextIO | None = None,
          directory_factory: Callable[[], tuple[LockDirectory, str | None, str | None]] = build_directory,
          now: Callable[[], datetime] | None = None, freeze_factory: Callable[[], object] = build_freeze_service,
@@ -798,6 +824,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         pd.add_argument("--yes", action="store_true")
     for pp in psub.choices.values():
         pp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    coach = sub.add_parser("coach-status", help="READ-ONLY: the local model, the coach's proposals, refusal codes and commitments (owner only).")
+    coach.add_argument("--owner-id", required=True, help="Your internal user id (OWNER_USER_ID).")
     status = sub.add_parser("penalty-status", help="READ-ONLY: the token redemption hold and the penalty barrier queue (owner only).")
     status.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     escalations = sub.add_parser("check-in-escalations", help="Warnings from repeated missed check-ins and the keyholder's decision on them.")
@@ -970,6 +998,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         if not result.done:
             return 3
         return 0 if result.revert is None or result.revert.outcome.value in ("applied", "nothing_to_revert") else 4
+    if args.command == "coach-status":
+        return _coach_status(args, out)
     if args.command in ("penalty-status", "check-in-escalations"):
         decisions, core = escalation_factory()
         refusal = decisions.authorize(args.owner_id)

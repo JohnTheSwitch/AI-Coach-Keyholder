@@ -5,6 +5,16 @@ Canonical design: `docs/architecture/conversation_engine_technical_design.md`
 whole document** — this README describes exactly which specific slice
 of that draft has been implemented here, and nothing more).
 
+## What is implemented here — coach turns (Phase J3)
+
+`generate_response(coach_guidance=...)` makes a turn a COACH turn: one JSON reply through `generate_structured`, with `build_coach_schema` adding a `proposal`
+field. The engine never reads a proposal: it goes unread to the injected coach port (`coach=`, `system/coach_dm.py::CoachDm`), whose answer comes back on
+`ConversationResponse.proposal_outcome`. Tools are never offered on a coach turn, `extra_system_context` stays in the prompt, and an untrusted channel
+(`allow_side_data=False`) never gets one. A failing port, unusable output or a model failure leaves the reply path as it was; `strip_proposal_echo` cuts a
+proposal the model pasted into its reply. `context_providers/coach_provider.py` passes a field whitelist; `prompt_builder._render_coach` quotes every text as
+cleaned data. `OllamaConversationModel` gained `num_ctx` and the read-only `check_ready()`. The plain payload is unchanged when `num_ctx` is unset, and
+`_SYSTEM_BOUNDARIES` is unchanged. See `coach/README.md`.
+
 ## What is implemented here — read-only tool calling (Chaster)
 
 **Approved scope:** model-initiated, **read-only**, on-demand tools
@@ -673,7 +683,7 @@ v0.35: `generate_response(..., remember_exchange=False)`. With `extra_system_con
 
 v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můžeš zkusit`, `chceš udělat`; never `můžeš zkus`). 2122 tests.
 
-v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 4062 tests.
+v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 4307 tests.
 
 ## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
 

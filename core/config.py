@@ -67,6 +67,7 @@ class Config:
     ollama_model: str = "llama3.1"  # TBD until a specific model is confirmed
     ollama_read_timeout_seconds: float = 30.0     # a large local model needs more (for example 120 for a 32B model)
     ollama_keep_alive: str | None = None          # e.g. "30m": keep the model loaded between messages
+    ollama_num_ctx: int | None = None             # context window; empty = Ollama's default, which is the model's maximum and very memory hungry
     research_ollama_model: str | None = None      # Phase G3: model for `python -m cli research analyze` (default: OLLAMA_MODEL)
     # Phase G4: opt-in research export (also needs each wearer's `research on`). The token and key are secrets (never logged).
     enable_research_telemetry: bool = False
@@ -76,6 +77,7 @@ class Config:
     conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data)
     enable_coaching_memory: bool = False          # Phase F2: store and use Coaching Memory (needs structured output)
     enable_ai_suggestions: bool = False           # Phase F3: the write-only idea box for the keyholder (needs structured output)
+    enable_coach: bool = False                    # Phase J3: goal and commitment proposals in conversation (the user's button applies them)
     enable_slave_training: bool = False           # Phase F4: Progressive Conditioning (also needs the per-database owner switch)
 
     # Database
@@ -212,6 +214,7 @@ class Config:
             ollama_model=get("OLLAMA_MODEL", "llama3.1"),
             ollama_read_timeout_seconds=float(get("OLLAMA_READ_TIMEOUT_SECONDS", "30") or "30"),
             ollama_keep_alive=get("OLLAMA_KEEP_ALIVE") or None,
+            ollama_num_ctx=int(get("OLLAMA_NUM_CTX") or "0") or None,
             research_ollama_model=get("RESEARCH_OLLAMA_MODEL") or None,
             enable_research_telemetry=(get("ENABLE_RESEARCH_TELEMETRY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             telemetry_endpoint=get("TELEMETRY_ENDPOINT") or None,
@@ -219,6 +222,7 @@ class Config:
             telemetry_hmac_key=get("TELEMETRY_HMAC_KEY") or None,
             conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_coach=(get("ENABLE_COACH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             enable_slave_training=(get("ENABLE_SLAVE_TRAINING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             db_path=Path(db_path_str) if db_path_str else DEFAULT_DB_PATH,
