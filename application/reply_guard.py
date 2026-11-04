@@ -10,8 +10,8 @@ Fixed rules for what a model's reply may and must contain, applied after the mod
 from __future__ import annotations
 
 import re
-import unicodedata
 
+from infrastructure.text import plain_text
 from supervision.checkin_evaluator import mentions_safety_issue
 
 __all__ = ["finish_reply", "needs_care_line", "reveals_internals", "CARE_LINE", "REFUSED_REPLY"]
@@ -28,13 +28,8 @@ _INTERNAL_MARKERS = ("authoritative application state", "system context (verifie
 _INTERNAL_SETTINGS = re.compile(r"\b(warmth|assertiveness|teasing|verbosity|formality)\s*[:=]?\s*[01]\.\d")
 
 
-def _fold(text: str) -> str:
-    plain = "".join(ch for ch in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(ch))
-    return plain.replace("’", "'")
-
-
 def needs_care_line(user_message: str) -> bool:
-    return isinstance(user_message, str) and (_PLEA.search(_fold(user_message)) is not None or mentions_safety_issue(user_message))
+    return isinstance(user_message, str) and (_PLEA.search(plain_text(user_message)) is not None or mentions_safety_issue(user_message))
 
 
 def reveals_internals(reply: str) -> bool:

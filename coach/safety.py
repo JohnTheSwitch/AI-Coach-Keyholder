@@ -11,9 +11,11 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from infrastructure.text import plain_text
 from supervision.checkin_evaluator import mentions_safety_issue
 
 _DONE = re.compile(r"\b(i('ve| have)?( already| just)? (done|did|finished|completed|managed)( it| that| them| those| all)?(?! not)\b|done it|all done|finished it|got it done"
+                   r"|mark (it|that|them|this)( as)? (done|finished|complete|completed|kept)|set (it )?as done|commitment\b.*\b(done|finished|complete|completed|kept)\b"
                    r"|hotovo|splneno|mam hotovo|(udelal|zvladl|dokoncil|splnil)a? jsem)")
 _NOT_DONE = re.compile(r"\bnot\b|n't\b|\bnever\b|\bdidnt\b|\bhavent\b|\bnestihl|\bneudelal|\bnezvladl")
 
@@ -22,7 +24,7 @@ def reports_done(text: object) -> bool:
     """Deterministic: the user says they did something. It only offers the outcome buttons, so a misreading costs one card and never records anything."""
     if not isinstance(text, str) or len(text) > 400:
         return False
-    folded = "".join(ch for ch in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(ch)).replace("’", "'")
+    folded = plain_text(text)
     return _DONE.search(folded) is not None and _NOT_DONE.search(folded) is None
 
 

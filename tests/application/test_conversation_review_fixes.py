@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from application.natural_queries import read_only_command
 from application.reply_guard import CARE_LINE, REFUSED_REPLY, finish_reply, needs_care_line, reveals_internals
 from application.service import ApplicationService
 from coach.safety import reports_done
@@ -56,6 +57,50 @@ class TestSayingItIsDoneOffersTheButtons:
 
     def test_the_model_is_told_not_to_ask_in_chat(self) -> None:
         assert "Never ask whether they kept a commitment" in COACH_GUIDANCE
+
+
+APOSTROPHES = ("'", "\u2019", "\u00b4", "`", "\u02bc")          # \u00b4 is what a Czech keyboard types
+
+
+class TestEveryKindOfApostrophe:
+    """The matchers only knew two of them, so one keyboard layout silently got none of the deterministic behaviour, and a test written with a straight apostrophe could not see it."""
+
+    def test_nfkd_alone_would_break_the_word(self) -> None:
+        from infrastructure.text import plain_text
+        assert plain_text("I\u00b4ve") == "i've"
+
+    @pytest.mark.parametrize("mark", APOSTROPHES)
+    def test_done_is_recognised(self, mark) -> None:
+        assert reports_done(f"I{mark}ve done them") and reports_done(f"I{mark}ve already done it")
+        assert not reports_done(f"I haven{mark}t done it")
+
+    @pytest.mark.parametrize("mark", APOSTROPHES)
+    def test_a_natural_question_is_recognised(self, mark) -> None:
+        assert read_only_command(f"what{mark}s my task?") == "task active"
+
+    @pytest.mark.parametrize("mark", APOSTROPHES)
+    def test_a_plea_is_recognised(self, mark) -> None:
+        assert needs_care_line(f"I can{mark}t take it")
+
+    def test_the_whole_way_through_the_application(self, core) -> None:  # noqa: F811
+        w = World(core)
+        w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
+        assert [a.label for a in w.say("I\u00b4ve done them", at=FIXED_TIME + timedelta(hours=1)).actions] == ["Kept", "Partly", "Not kept"]
+
+
+class TestAskingAboutACommitment:
+    """Asking to mark one as done, or whether it is, got a model's guess and no way to do it."""
+
+    @pytest.mark.parametrize("text", ["Can we mark it as done then?", "mark it done", "please mark that as complete", "Is my commitment set as done?", "is my commitment done?", "set it as done"])
+    def test_these_bring_the_buttons(self, text) -> None:
+        assert reports_done(text)
+
+    @pytest.mark.parametrize("text", ["I want a new commitment", "is it done yet, the laundry? no idea" * 12, "my commitment isn't done"])
+    def test_these_do_not(self, text) -> None:
+        assert not reports_done(text)
+
+    def test_the_model_may_not_send_them_to_do_it_again(self) -> None:
+        assert "never tell them to do it again" in COACH_GUIDANCE
 
 
 class TestTimeOfDay:

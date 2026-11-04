@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from infrastructure.text import plain_text
+
 __all__ = ["read_only_command", "READ_ONLY_TARGETS", "CAPABILITIES_TEXT"]
 
 CAPABILITIES_TEXT = (
@@ -38,8 +40,6 @@ _QUESTIONS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 )
 READ_ONLY_TARGETS = frozenset(command for command, _ in _QUESTIONS)
 
-_FOLD = str.maketrans("áčďéěíňóřšťúůýž", "acdeeinorstuuyz")
-_NOISE = re.compile(r"['’`]")
 _EDGES = re.compile(r"^[\s,.!?]+|[\s,.!?]+$")
 
 
@@ -47,7 +47,7 @@ def read_only_command(message: str) -> str | None:
     """The read-only command this whole message asks for, or None."""
     if not isinstance(message, str) or len(message) > 120:
         return None
-    text = _EDGES.sub("", _NOISE.sub("", message.lower().translate(_FOLD)))
+    text = _EDGES.sub("", plain_text(message).replace("'", ""))
     text = re.sub(r"\s+", " ", text)
     for command, pattern in _QUESTIONS:
         if pattern.fullmatch(text):
