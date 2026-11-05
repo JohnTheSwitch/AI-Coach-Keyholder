@@ -9,7 +9,7 @@ import pytest
 from application.natural_queries import read_only_command
 from application.reply_guard import CARE_LINE, REFUSED_REPLY, finish_reply, needs_care_line, reveals_internals
 from application.service import ApplicationService
-from coach.safety import reports_done
+from coach.safety import reports_done, strip_record_claims
 from conversation_engine.context_providers.coach_provider import CoachContextProvider
 from conversation_engine.prompt_builder import _render_coach
 from system.coach_dm import COACH_GUIDANCE, describe_time_of_day
@@ -101,6 +101,44 @@ class TestAskingAboutACommitment:
 
     def test_the_model_may_not_send_them_to_do_it_again(self) -> None:
         assert "never tell them to do it again" in COACH_GUIDANCE
+
+
+class TestAModelCannotClaimToHaveRecordedAnything:
+    """Twice a model said a commitment was noted or marked when nothing was. Only the buttons record, so the claim is removed in code rather than asked of the model."""
+
+    @pytest.mark.parametrize("text", ["I've got that noted down.", "I\u00b4ve marked it.", "I agree, the commitment is marked as done.", "It has been logged.", "That's recorded.", "Your commitment is now marked as complete."])
+    def test_these_are_removed(self, text) -> None:
+        assert strip_record_claims(f"Well done. {text} Sleep well.") == ("Well done. Sleep well.", True)
+
+    @pytest.mark.parametrize("text", ["It isn't marked as done yet.", "Nothing has been recorded.", "It is still not logged.", "You can mark it with the button.", "Has it been marked?", "If it is marked, good.",
+                                      "Well done.", "I noticed you worked hard.", "The lock is set."])
+    def test_these_stay(self, text) -> None:
+        assert strip_record_claims(text) == (text, False)
+
+    def test_an_open_commitment_gets_its_buttons_and_the_truth(self, core) -> None:  # noqa: F811
+        w = World(core, text="Great. I've got that noted down.")
+        w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
+        reply = w.say("Nice weather.", at=FIXED_TIME + timedelta(hours=1))
+        assert "noted down" not in reply.text and "Nothing is recorded until you press a button" in reply.text
+        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept"]
+        with core.transaction() as tx:
+            assert tx.fetch_one("SELECT status FROM daily_commitments")["status"] == "open"
+
+    def test_with_no_commitment_it_says_so(self, core) -> None:  # noqa: F811
+        reply = World(core, text="I agree, it is marked as done.").say("Nice weather.")
+        assert reply.text == "Nothing was recorded: there is no open commitment to mark." and reply.actions == ()
+
+    def test_an_honest_reply_is_untouched(self, core) -> None:  # noqa: F811
+        assert World(core).say("Nice weather.").text == "Sounds good."
+
+    def test_a_proposal_card_does_not_read_as_a_claim(self, core) -> None:  # noqa: F811
+        assert "Nothing" not in World(core, proposal=COMMIT).say().text
+
+
+class TestMoreWaysOfSayingIt:
+    @pytest.mark.parametrize("text", ["I think that should be considered as a done commitment", "that counts as done", "consider it done", "I did my reading", "I\u00b4ve worked out today", "consider that finished"])
+    def test_these_bring_the_buttons(self, text) -> None:
+        assert reports_done(text)
 
 
 class TestTimeOfDay:

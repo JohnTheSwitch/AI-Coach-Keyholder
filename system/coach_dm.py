@@ -19,7 +19,7 @@ from typing import Callable
 
 from application.models import ActionSpec, OutgoingMessage
 from coach.actions import ACTION_INSTRUCTIONS, ACTION_SCHEMAS, ActionKind
-from coach.safety import reports_done
+from coach.safety import reports_done, strip_record_claims
 from coach.desk import Commitment, CoachDesk, Outcome, Proposal, SubmitResult
 from coaching_memory.service import MAX_CONTENT, WriteOutcome
 from goal_management.repository import GoalManager
@@ -137,12 +137,20 @@ class CoachDm:
             cards.append(proposal_card(outcome.proposal))
         if check_in_reply and user_id == self._desk.user_id:
             self._remember_check_in(user_id, user_message, now)
-        done = reports_done(user_message)
+        reply, claimed = strip_record_claims(outgoing.text)      # only the buttons record anything, whatever a model says it did
+        if claimed:
+            logger.info("A reply claiming something was recorded was corrected.")
+            outgoing = replace(outgoing, text=reply)
+        done = reports_done(user_message) or claimed
         if (check_in_reply or done) and user_id == self._desk.user_id:
             # Someone reporting pain or an emergency is never asked to account for a commitment in the same breath.
             commitment = None if mentions_safety_issue(user_message) else self._desk.commitment_to_review(now, include_today=done)
             if commitment is not None:
                 cards.append(review_card(commitment))
+        if claimed:
+            has_card = any(action.action_id.startswith(("coach:kept", "coach:partly", "coach:missed")) for _, actions in cards for action in actions)
+            note = "Nothing is recorded until you press a button below." if has_card else "Nothing was recorded: there is no open commitment to mark."
+            outgoing = replace(outgoing, text=f"{outgoing.text}\n\n{note}".strip())
         if not cards:
             return outgoing
         block = "\n\n".join(text for text, _ in cards)

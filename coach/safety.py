@@ -14,7 +14,7 @@ import unicodedata
 from infrastructure.text import plain_text
 from supervision.checkin_evaluator import mentions_safety_issue
 
-_DONE = re.compile(r"\b(i('ve| have)?( already| just)? (done|did|finished|completed|managed)( it| that| them| those| all)?(?! not)\b|done it|all done|finished it|got it done"
+_DONE = re.compile(r"\b(i('ve| have)?( already| just)? (done|did|finished|completed|managed)( it| that| them| those| all)?(?! not)\b|done it|all done|finished it|got it done|did my|worked out|done commitment|counts? as (done|kept)|consider(ed)?( it| that| this)?( as)? (done|kept|finished|complete)"
                    r"|mark (it|that|them|this)( as)? (done|finished|complete|completed|kept)|set (it )?as done|commitment\b.*\b(done|finished|complete|completed|kept)\b"
                    r"|hotovo|splneno|mam hotovo|(udelal|zvladl|dokoncil|splnil)a? jsem)")
 _NOT_DONE = re.compile(r"\bnot\b|n't\b|\bnever\b|\bdidnt\b|\bhavent\b|\bnestihl|\bneudelal|\bnezvladl")
@@ -28,7 +28,28 @@ def reports_done(text: object) -> bool:
     return _DONE.search(folded) is not None and _NOT_DONE.search(folded) is None
 
 
-__all__ = ["reports_done", "content_refusal", "fold"]
+_NEGATED = re.compile(r"\bnot\b|n't\b|\bnever\b|\bnothing\b|\bno\b|\bstill\b|\byet\b|\bcan\b|\bcould\b|\bif\b|\?$")
+_RECORD_CLAIM = re.compile(
+    r"\bi('ve| have)?( now| just| also)?( got)?( that| it| this| them| your \w+)? (noted|marked|logged|recorded|saved|ticked|updated)\b"
+    r"|\b(is|are|was|were|been|be|it's|that's)( now| all)? (marked|logged|recorded|noted|ticked|saved|registered)\b"
+    r"|\b(marked|logged|recorded|set) as (done|complete|completed|kept|finished)\b")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
+def strip_record_claims(reply: str) -> tuple[str, bool]:
+    """A model cannot record a commitment, only the user's button can, yet a model will happily say it did. Sentences saying so are removed: (remaining text, whether any were). A sentence
+    that denies or only offers it stays, because that one is true."""
+    kept, removed = [], False
+    for sentence in _SENTENCE.split(reply.strip()):
+        folded = plain_text(sentence)
+        if _RECORD_CLAIM.search(folded) and not _NEGATED.search(folded):
+            removed = True
+        else:
+            kept.append(sentence)
+    return " ".join(kept), removed
+
+
+__all__ = ["strip_record_claims", "reports_done", "content_refusal", "fold"]
 
 _REGIME = re.compile(
     r"\b(un)?lock(s|ed|ing)?\b|\bkeyholders?\b|\bchaster\b|\bchastity\b|\bcage\w*\b|\bfr[eo]ez\w*\b|\bfrozen\b|\bunfreeze\w*\b|\brelease\w*\b|"
