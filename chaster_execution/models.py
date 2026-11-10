@@ -32,8 +32,6 @@ class ExecStatus(StrEnum):
     NEEDS_REVIEW = "needs_review"  # outcome unknown; NEVER retried automatically
 
 
-# Only time adjustments may execute in Phase 3 (freeze/unfreeze stay disabled).
-
 # v0.39: freeze/unfreeze may execute ONLY for barrier management, i.e. for decisions created by the
 # release engine under one of these rule ids. A freeze/unfreeze from any other rule (for example a
 # custom Rules Engine ruleset) never executes.

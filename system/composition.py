@@ -390,8 +390,8 @@ def build_rules_and_execution(
                 allow_barrier_actions=want_release,
                 window_check=(lambda now: classify(window_cfg, now) is WindowKind.DISCRETIONARY) if window_cfg else None,
             )
-            out.notes.append("Chaster execution plane active (time adjustments"
-                             + (" and barrier release" if want_release else "") + "; subject to the runtime halt).")
+            out.notes.append("Chaster execution plane active (" + ("barrier release and re-freeze" if want_release else "nothing to execute without the release engine")
+                             + "; never time, never unlock; subject to the runtime halt).")
 
     out.rules_engine = RulesEngineService(
         config.db_path, core=core, get_trust_state=trust.get_domain_state, get_lock_snapshot=snapshot_provider,
