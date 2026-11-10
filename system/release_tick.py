@@ -268,13 +268,20 @@ class ReleaseEnginePeriodicTask:
         return obs.status is ChasterProviderStatus.LOCKED and obs.has_keyholder is True and obs.is_frozen is True
 
     def _fresh_observation(self, now: datetime) -> ChasterProviderObservation | None:
+        """A reading from before the latest confirmed release says nothing about the lock now: right after the backstop unfroze a lock, the
+        15-minute-old reading still said "frozen since 6 days" and the backstop fired again every minute (live, 2026-11-10; the cooldown blocked
+        each one before Chaster). Such a reading is refreshed, and if no newer one comes it counts as unknown."""
         obs = self._get_obs()
-        if obs is None or now - obs.fetched_at > LOCK_DATA_MAX_AGE:
+        last = self._engine.last_confirmed_release(self._user)
+        released_at = last[1] if last is not None else None
+        if obs is None or now - obs.fetched_at > LOCK_DATA_MAX_AGE or (released_at is not None and obs.fetched_at <= released_at):
             try:
                 self._refresh(now)
             except Exception:
                 logger.exception("Observation refresh failed in the release tick.")
             obs = self._get_obs()
+        if obs is not None and released_at is not None and obs.fetched_at <= released_at:
+            return None
         return obs
 
     def _requested(self, auth_id: str, state: ProviderState, now: datetime) -> None:

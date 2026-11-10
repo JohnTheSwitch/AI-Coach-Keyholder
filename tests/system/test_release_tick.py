@@ -349,6 +349,20 @@ class TestBackstop:
         world.cycle(local(MON, 18, 0))
         assert world.transport.calls == []
 
+    def test_a_reading_from_before_the_release_does_not_fire_it_again(self, tmp_path) -> None:
+        """Live 2026-11-10: the old reading still said frozen, and the backstop was recorded again every minute until the cooldown stopped it."""
+        world = World(tmp_path, frozen_since=timedelta(days=6))
+        world.cycle(local(MON, 18, 0))
+        assert world.auth_states() == ["provider_confirmed"]
+        world.refresh_effective = False                     # Chaster gives no newer reading yet
+        for minute in (1, 2, 3):
+            world.now = local(MON, 18, minute)
+            world.fetched_at = local(MON, 17, 59)           # the reading from before the release
+            world.task.run(world.now)
+            world.executor.run_once(now=world.now)
+            world.task.sync(world.now)
+        assert world.auth_states() == ["provider_confirmed"] and world.transport.calls == [("unfreeze", "lock-1")] and len(world.decisions()) == 1
+
     def test_planning_only_mode_never_runs_the_backstop(self, tmp_path) -> None:
         world = World(tmp_path, can_execute=False, frozen_since=timedelta(days=5))
         world.cycle(local(MON, 18, 0))
