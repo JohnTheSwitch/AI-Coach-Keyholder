@@ -124,7 +124,7 @@ class FakeClient:
     def get_verification_pictures(self, *, access_token, lock_id):
         self.calls.append(("pictures", lock_id))
         if "pictures" in self.fail:
-            raise ChasterLockApiError("x", status_code=404)
+            raise ChasterLockApiError("x", status_code=500)
         return self.pictures.get(lock_id, [])
 
 
@@ -138,7 +138,20 @@ class TestReader:
     def test_a_failing_source_is_a_problem_and_the_other_still_counts(self) -> None:
         client = FakeClient(tasks={LOCK: [task("pv1", "ongoing")]}, fail={"pictures"})
         report = PeerReviewReader(token_manager=FakeTokens(), lock_client=client).read(user_id="acct", lock_ids=[LOCK], now=NOW)
-        assert [o.review_id for o in report.observations] == ["pv1"] and report.problems == [f"{LOCK} verification-picture: api_error:404"]
+        assert [o.review_id for o in report.observations] == ["pv1"] and report.problems == [f"{LOCK} verification-picture: api_error:500"]
+
+    @pytest.mark.parametrize("status", [404, 403])
+    def test_a_source_the_lock_does_not_have_is_no_failure(self, status) -> None:
+        """A lock the account only wears, without the tasks or picture extension, answered 404 and 403, and the keyholder got an alert every time."""
+        class Missing(FakeClient):
+            def get_task_history(self, *, access_token, lock_id):
+                raise ChasterLockApiError("x", status_code=status)
+
+            def get_verification_pictures(self, *, access_token, lock_id):
+                raise ChasterLockApiError("x", status_code=status)
+
+        report = PeerReviewReader(token_manager=FakeTokens(), lock_client=Missing()).read(user_id="acct", lock_ids=[LOCK], now=NOW)
+        assert report.problems == [] and report.unavailable == [f"{LOCK} tasks", f"{LOCK} verification-picture"]
 
     def test_token_problems(self) -> None:
         report = PeerReviewReader(token_manager=FakeTokens(ChasterNotConnectedError("x")), lock_client=FakeClient()).read(

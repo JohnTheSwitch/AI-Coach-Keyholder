@@ -125,6 +125,7 @@ class PeerReviewWatch:
         self._account = account_user_id
         self._list_lock_ids = list_lock_ids
         self._register = register_incident
+        self._unavailable: set[str] = set()
 
     # ------------------------------------------------------------------ the poll
 
@@ -136,6 +137,10 @@ class PeerReviewWatch:
         if lock_ids:
             report: PeerReviewReport = self._reader.read(user_id=self._account, lock_ids=lock_ids, now=now)
             result.problems += report.problems
+            unavailable = set(getattr(report, "unavailable", ()))
+            if unavailable - self._unavailable:
+                logger.info("Community review watch: nothing to read on %s (not on that lock).", "; ".join(sorted(unavailable - self._unavailable)))
+            self._unavailable = unavailable
             failed = {p.split(" ", 1)[0] for p in report.problems}
             for lock_id in lock_ids:
                 found = [o for o in report.observations if o.lock_id == lock_id]

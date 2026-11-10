@@ -38,6 +38,9 @@ __all__ = ["ReviewSource", "ReviewStatus", "PeerReviewObservation", "PeerReviewR
            "parse_task_history", "parse_verification_pictures"]
 
 _REVIEW_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# A lock without the tasks extension answers 404 to its history, and a lock the account only wears without picture verification answers 403
+# (seen live 2026-11-09). Neither is a broken poll: there is simply nothing there to review, and an alert would cry wolf every 10 minutes.
+_NOT_ON_THIS_LOCK = frozenset({"api_error:404", "api_error:403"})
 
 
 class ReviewSource(StrEnum):
@@ -66,6 +69,7 @@ class PeerReviewObservation:
 class PeerReviewReport:
     observations: list[PeerReviewObservation] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)       # "<lock id> <source>: <code>"
+    unavailable: list[str] = field(default_factory=list)    # "<lock id> <source>": the lock has nothing of that kind to read (404 / 403), not a failure
 
 
 def _count(value) -> int | None:
@@ -130,7 +134,9 @@ class PeerReviewReader:
         for lock_id in dict.fromkeys(lock_ids):
             for source, method, parse in _SOURCES:
                 problem = self._read_one(user_id, lock_id, now, method, parse, report)
-                if problem:
+                if problem in _NOT_ON_THIS_LOCK:
+                    report.unavailable.append(f"{lock_id} {source.value}")
+                elif problem:
                     report.problems.append(f"{lock_id} {source.value}: {problem}")
         return report
 
