@@ -41,11 +41,14 @@ COACH_GUIDANCE = (
     "deadlines, assigned tasks and check-ins. While they are locked they can still add goals and commitments, but an agreed goal's target stays as it is. "
     "Never ask whether they kept a commitment and never say it is recorded: when they tell you they did it, just be glad with them, and the app shows them buttons for that. "
     "A commitment listed as open only means those buttons were not pressed yet. It says nothing about whether they did it: never doubt them, and never tell them to do it again. "
-    "Mind the time of day you are told. Late in the evening, do not push anything new for tonight: rest is fine, and a next step belongs to tomorrow. Do not suggest again what they already said they did."
+    "Mind the time of day you are told. Help them PLAN: before the evening, today's one or two concrete goals; from the evening on, tomorrow's. "
+    "Late in the evening, do not push anything new for tonight. A commitment is real work toward a goal, specific enough to check (what, how much, "
+    "when): never filler like sleeping, resting or relaxing, and never vague like \"try to be better\". Do not suggest again what they already said they did."
 )
 CHECK_IN_GUIDANCE = (
-    "This message answers today's check-in. Say in one short sentence what you heard. Then, if they named something they could do next, or you can see a small "
-    "next step toward one of their goals, use `proposal` for exactly one commitment for tomorrow, using their own words and numbers. Do not ask them to repeat it."
+    "This message answers today's check-in. Say in one short sentence what you heard. Then, if they named something they could do, or you can see a real "
+    "next step toward one of their goals, use `proposal` for exactly one commitment: for today before the evening, for tomorrow from the evening on, using "
+    "their own words and numbers. Do not ask them to repeat it."
 )
 
 _MAX_MESSAGE = 1950                                       # a Discord message holds 2000 characters
@@ -229,4 +232,5 @@ def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Cal
                      paused=lambda now: paused(user_id, now), active_task=active_task)
     if local_now is not None:
         desk.time_of_day = lambda now: describe_time_of_day(local_now(now))
+        desk.local_now = local_now
     return CoachDm(desk, core=core, clock=clock, memory=memory if getattr(config, "enable_coaching_memory", False) else None)

@@ -432,6 +432,12 @@ def main() -> None:
                                            read_timeout_seconds=config.ollama_read_timeout_seconds, keep_alive=config.ollama_keep_alive,
                                            num_ctx=config.ollama_num_ctx)
     working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
+    # A restart no longer wipes the conversation: the last day's stored exchanges are put back (owner, 2026-11-10).
+    from datetime import timedelta as _timedelta
+    from system.memory_seed import seed_working_memory
+    restored = seed_working_memory(working_memory, core, subject_key=config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id,
+                                   since=clock.now() - _timedelta(hours=24))
+    logger.info("Conversation restored: %d recent exchange(s).", restored)
     conversation_queue = SubjectConversationQueue()
 
     # Slice D: LockState/TaskRuntime/TaskCatalog are constructed ONCE
@@ -691,10 +697,43 @@ def main() -> None:
         return found
 
     bot.research_export = research_export_loop_for(config, research_exporters, clock)
-    # Phase I4: community review results -> UNCONFIRMED Incidents for the keyholder's review (its own loop, read-only towards Chaster).
+    if bot.research_export is not None:
+        logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
+    # The detectors and the one question-and-judge path every finding takes (owner, 2026-11-10: there is no second person to press a keyholder button).
+    def judge_complete(system_prompt: str, user_message: str) -> str:
+        # The language model only judges whether the wearer's own explanation accounts for a finding (infractions/judge.py). Health and safety are decided in code first.
+        return ollama_model.generate(request=ModelGenerationRequest(
+            messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt),
+                      ModelMessage(role=ModelMessageRole.USER, content=user_message)),
+            max_output_characters=600,
+        ))
+
+    detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
+                                connections=chaster_connections, vacation=wiring.vacation, complete=judge_complete)
+    for note in detectors.notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if detectors.signals is not None:
+        bot.dm_actions["infraction"] = InfractionDm(detectors.signals, resolve_user=resolve_user, now=clock.now)
+        application_service.explanations = detectors.signals
+    if detectors.hygiene is not None:
+        bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
+    if detectors.active:
+        bot.detectors = detector_loop(detectors, clock)
+    # Phase I4: community review results. A rejection becomes the same question to the wearer (read-only towards Chaster, its own loop).
     from peer_review.wiring import build_peer_review_watch, peer_review_loop
+    ask_wearer = None
+    if detectors.signals is not None:
+        from infractions.signals import SignalKind
+        review_domain = config.peer_review_trust_domain or "routine"
+        review_wearer = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
+
+        def ask_wearer(incident_id, description, now):
+            detectors.signals.raise_signal(user_id=review_wearer, kind=SignalKind.PHOTO_REJECTED, subject_id=incident_id, trust_domain=review_domain, now=now,
+                                           detail="A verification photo was rejected by community review.",
+                                           wearer_text="The community rejected your verification photo. What happened?",
+                                           facts=description, window=(now, now), incident_id=incident_id)
     peer = build_peer_review_watch(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
-                                   connections=chaster_connections)
+                                   connections=chaster_connections, ask_wearer=ask_wearer)
     for note in peer.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if peer.watch is not None:
@@ -704,20 +743,8 @@ def main() -> None:
                                                           owner_discord_id=peer.owner_target, now=clock.now)
         bot.peer_reviews = peer_review_loop(peer.watch, clock, interval_seconds=peer.interval_seconds,
                                             send=queued_send(notification_queue, user_id=config.owner_user_id, clock=clock),
-                                            owner_target=peer.owner_target, view_for=decision_actions, embed_for=lambda spec: spec)
-    if bot.research_export is not None:
-        logger.info("Research telemetry link configured (records only with ENABLE_RESEARCH_TELEMETRY and each wearer's `research on`).")
-    # The two detectors: read-only towards Chaster, UNCONFIRMED records only, and the keyholder's button is the only way further.
-    detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
-                                connections=chaster_connections, vacation=wiring.vacation)
-    for note in detectors.notes:
-        (logger.warning if "NOT active" in note else logger.info)(note)
-    if detectors.signals is not None:
-        bot.dm_actions["infraction"] = InfractionDm(detectors.signals, resolve_user=resolve_user, now=clock.now)
-    if detectors.hygiene is not None:
-        bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
-    if detectors.active:
-        bot.detectors = detector_loop(detectors, clock)
+                                            owner_target=peer.owner_target, view_for=decision_actions, embed_for=lambda spec: spec,
+                                            incident_notices=peer.incident_notices)
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:

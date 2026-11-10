@@ -60,6 +60,7 @@ RESPONSE_TIMEOUT = timedelta(minutes=60)     # CHECKIN_RESPONSE_TIMEOUT_MINUTES
 FOLLOW_UP_WINDOW = timedelta(minutes=30)     # after an INSUFFICIENT verdict
 STRICT_RESPONSE_TIMEOUT = timedelta(minutes=30)   # strict Supervision Mode (Trust < 0.40)
 STRICT_FOLLOW_UP_WINDOW = timedelta(minutes=15)
+QUIET_AFTER_ANSWER = timedelta(hours=3)       # owner, 2026-11-10: an hour after answering, the same question came again
 MAX_LATE = timedelta(minutes=30)             # a slot that is this overdue is skipped, not sent
 _STALE_SENDING = timedelta(minutes=5)
 RELEASE_SLOT = 100                           # above any scheduled slot index: one release check-in per local day
@@ -67,10 +68,9 @@ RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
 
 PROMPTS = {
-    TrustLevel.LEVEL_1: "Check-in time. Tell me plainly what you've done today toward your goals and how you're "
-                        "holding up. I expect a real answer.",
-    TrustLevel.LEVEL_2: "Check-in. What have you done toward your goals today, and how are you doing?",
-    TrustLevel.LEVEL_3: "Evening check-in: how did today go with your goals?",
+    TrustLevel.LEVEL_1: "Report in. What did you actually get done today, and how are you holding up? A real answer, not a one-liner.",
+    TrustLevel.LEVEL_2: "Hey you. What did you get done today, and how are you doing?",
+    TrustLevel.LEVEL_3: "So, how did today go?",
 }
 
 
@@ -301,8 +301,10 @@ class CheckInService:
                                "ORDER BY due_at", (self._user, _iso(now)))
             awaiting = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND status IN "
                                     "('sent', 'responded', 'insufficient_pending', 'sending')", (self._user,))
+            answered = tx.fetch_one("SELECT MAX(responded_at) AS at FROM check_ins WHERE user_id = ? AND responded_at IS NOT NULL", (self._user,))["at"]
+        recently_answered = answered is not None and now - _parse_iso(answered) < QUIET_AFTER_ANSWER
         for row in due:
-            if now - _parse_iso(row["due_at"]) > MAX_LATE or classify(self._cfg, now) is not WindowKind.DISCRETIONARY:
+            if now - _parse_iso(row["due_at"]) > MAX_LATE or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or recently_answered:
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
             if awaiting is not None:            # one open check-in at a time; this one waits (or is skipped later)

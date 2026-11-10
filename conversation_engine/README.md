@@ -696,3 +696,7 @@ The Chaster tool path and the extra-context path stay plain; untrusted channels 
 v0.39 Phase G2: `ConversationEngine(runtime_sink=, monotonic=)`. One `llm_generation` sample per model turn (latency, path, outcome, structured status, trusted) goes to the injected in-memory sink through `_observe`, which never raises; `_generate_structured` now returns (reply, status). The engine still imports no database module (guard test in tests/behavioral_telemetry).
 
 v0.39 Phase G6: `IronContractContextProvider` (namespace `contract`) puts `[STATE: LOCKED]` into the domain-context section when the wearer is locked and the Iron Contract applies; guardrail rule 7 holds the matching behaviour (no negotiation, real life and safety first). Nothing is added inside the fenced memory block; `_SYSTEM_BOUNDARIES` is unchanged.
+
+## Voice (owner, 2026-11-10)
+
+`prompt_builder.VOICE_GUIDE` follows the personality block: short, human, a keyholder's teasing confidence instead of assistant phrases, suggestive but never explicit, and warm and direct the moment pain, health or distress comes up. Style only: `_SYSTEM_BOUNDARIES` (unchanged) and the authoritative state still decide everything.

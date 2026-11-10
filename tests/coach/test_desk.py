@@ -53,7 +53,9 @@ class World:
 
 @pytest.fixture
 def w(tmp_path) -> World:
-    return World(tmp_path)
+    world = World(tmp_path)
+    world.desk.local_now = lambda now: now - timedelta(hours=8)          # NOW (18:00 UTC) is a morning here: "today" stays today
+    return world
 
 
 class TestGates:
@@ -333,8 +335,8 @@ class TestContext:
 
     def test_the_prompt_suffix_names_todays_commitment(self, w) -> None:
         w.desk.decide(U, w.submit({**COMMIT, "when": "today"}).proposal.id, accept=True, now=NOW)
-        assert f'"{COMMIT["text"]}"' in w.desk.prompt_suffix(NOW) and "commit to next" in w.desk.prompt_suffix(NOW)
-        assert w.desk.prompt_suffix(NOW + timedelta(days=1)).startswith(" Is there")
+        assert w.desk.prompt_suffix(NOW) == f' Today\'s plan: "{COMMIT["text"]}".'
+        assert "what are you getting done today" in w.desk.prompt_suffix(NOW + timedelta(days=1)).lower()
 
 
 class TestForgetAll:

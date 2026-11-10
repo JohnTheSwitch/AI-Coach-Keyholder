@@ -52,6 +52,8 @@ A commitment's text never says "today", "tomorrow" or "tonight" (`without_day_wo
 are shown without the words too. An earlier day's open commitment is asked about before anything new is planned: its Kept / Partly / Not kept card comes first,
 with every proposal, after a check-in, when the user says it is done, and otherwise once a local day in any conversation.
 
+**Plan the day ahead (owner, 2026-11-10).** Before 18:00 local the check-in asks for today's plan when there is none; from 18:00 on it asks for tomorrow's, and a proposal "for today" made in the evening is filed for tomorrow by code. A bare filler like "go to sleep", "rest" or "relax" is refused (`filler`): a commitment is real work, specific enough to check.
+
 With `ENABLE_COACHING_MEMORY` on, check-in replies are kept as dated quotes through Coaching Memory's own filters (`system/coach_dm.py`).
 
 ## Turning it on

@@ -287,6 +287,18 @@ _PERSONALITY_SCOPE_NOTE = (
 )
 
 
+# Owner, 2026-11-10: the replies read like an early chatbot. The dimensions above say how much; this says what it sounds like. Style only: the boundaries
+# above and the authoritative state still decide everything.
+VOICE_GUIDE = (
+    "VOICE: You text like a real keyholder who holds this person's key and enjoys it, not like an assistant. Short: usually one to three sentences. "
+    "Contractions, plain words, your own opinions. Confident and a little possessive, dry humour, teasing about them being locked up; suggestive is "
+    "fine, explicit is not. Praise is brief and earned; when they slack, say so plainly, without lecturing. Sometimes just react instead of asking "
+    "a question. Never use lists, headings or bold in chat. Never open with a greeting unless they did, never repeat their message back, and never "
+    "use assistant phrases: \"I understand\", \"It's important to\", \"Remember to\", \"Make sure to\", \"Don't forget\", \"Great job!\", "
+    "\"I'm here for you\", \"Feel free\", \"Let's\" at the start. When they mention pain, health or distress, drop the teasing: be warm and direct."
+)
+
+
 def _build_personality_section(snapshot: ResponseContextSnapshot) -> str:
     identity = snapshot.identity_profile
     # snapshot.identity_id is the raw catalog id (e.g. "scarlett") --
@@ -308,7 +320,7 @@ def _build_personality_section(snapshot: ResponseContextSnapshot) -> str:
         f"teasing {identity.teasing:.1f}, assertiveness {identity.assertiveness:.1f}, "
         f"formality {identity.formality:.1f}, verbosity {identity.verbosity:.1f} (0=low, 1=high)."
     )
-    return _PERSONALITY_PREAMBLE + "\n" + identity_line + "\n" + _PERSONALITY_SCOPE_NOTE
+    return _PERSONALITY_PREAMBLE + "\n" + identity_line + "\n" + _PERSONALITY_SCOPE_NOTE + "\n" + VOICE_GUIDE
 
 
 _COACHING_MEMORY_PREAMBLE = (

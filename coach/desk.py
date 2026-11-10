@@ -39,6 +39,7 @@ from typing import Callable, Mapping
 
 from coach.actions import ActionKind, Refusal, ValidatedAction, validate_action
 from coach.safety import content_refusal, fold
+from infrastructure.text import plain_text
 from goal_management.models import GoalInterventionType
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
@@ -65,6 +66,12 @@ TASK_WINDOW = timedelta(days=7)
 _SIMILAR = 0.6
 _WORD = re.compile(r"[a-z0-9]+")
 _STALE_CLAIM = timedelta(minutes=5)
+EVENING_HOUR = 18                       # from here on, planning is for tomorrow
+# Not a commitment: what happens anyway, or no plan at all (owner, 2026-11-10: "let's say go to sleep").
+# Only the bare phrase: "Sleep 8 hours" is a plan, "go to sleep" is not.
+_FILLER = re.compile(r"^\s*(just\s+)?(go(ing)?\s+to\s+(sleep|bed)|sleep|rest|relax|chill(\s+out)?|take\s+it\s+easy|try(ing)?\s+to\s+(sleep|rest|relax)|"
+                     r"get\s+(some\s+)?(sleep|rest)|have\s+a\s+(good\s+)?(night|rest))(\s+(early|tonight|now|well|soon|a\s+bit|properly|today))?\s*[.!]*\s*$",
+                     re.IGNORECASE)
 _DAY_WORDS = re.compile(r"\s*,?\s*\b(?:(?:for |by )?(?:today|tomorrow|tonight)|this (?:morning|afternoon|evening))\b(?!['\u2019\u00b4])", re.IGNORECASE)
 
 
@@ -123,6 +130,7 @@ class CoachDesk:
         self._goals = goals
         self.today = today
         self.time_of_day: Callable[[datetime], str] | None = None      # a coarse word for the model; set by build_coach
+        self.local_now: Callable[[datetime], datetime] | None = None   # the user's local time; set by build_coach (None: UTC)
         self._targets_frozen = targets_frozen
         self._paused = paused
         self._active_task = active_task
@@ -183,8 +191,11 @@ class CoachDesk:
             if self._targets_frozen(user_id):
                 return Refusal(reason="locked")
             return {"goal_group_id": goal["id"], "goal_title": goal["title"], "target": action.target, "reason": action.reason}
+        if _FILLER.search(plain_text(action.text)):
+            return Refusal(reason="filler")
         today = self.today(now)
-        for_date = today if action.when == "today" else today + timedelta(days=1)
+        # From the evening on, the day is done: whatever is planned belongs to tomorrow, whatever the model said (owner, 2026-11-10).
+        for_date = today if action.when == "today" and not self._evening(now) else today + timedelta(days=1)
         task = self._active_task(user_id) if action.active_task else None      # only a link: without an active task the commitment stands on its own
         task_id, task_title = task if task is not None else (None, None)
         with self._core.transaction() as tx:
@@ -393,13 +404,23 @@ class CoachDesk:
         }
 
     def prompt_suffix(self, now: datetime) -> str:
-        """Added to a scheduled check-in question (never to the release check-in, whose wording is the owner's)."""
-        today = self.today(now).isoformat()
+        """Added to a scheduled check-in question (never to the release check-in, whose wording is the owner's). Before the evening it asks for today's
+        plan when there is none; from the evening on, for tomorrow's (owner, 2026-11-10: plan the day ahead, never filler for tonight)."""
+        today = self.today(now)
+        evening = self._evening(now)
         with self._core.transaction() as tx:
-            row = tx.fetch_one("SELECT text FROM daily_commitments WHERE user_id = ? AND for_date = ? AND status = 'open' ORDER BY created_at LIMIT 1",
-                               (self.user_id, today))
-        opening = f' Your commitment for today: "{without_day_words(row["text"])}".' if row is not None else ""
-        return f"{opening} Is there one small thing you want to commit to next?"
+            rows = tx.fetch_all("SELECT for_date, text FROM daily_commitments WHERE user_id = ? AND for_date IN (?, ?) AND status IN ('open', 'kept', 'partly') "
+                                "ORDER BY created_at", (self.user_id, today.isoformat(), (today + timedelta(days=1)).isoformat()))
+        todays = [without_day_words(r["text"]) for r in rows if r["for_date"] == today.isoformat()]
+        tomorrows = [without_day_words(r["text"]) for r in rows if r["for_date"] != today.isoformat()]
+        if not evening:
+            return f' Today\'s plan: "{"; ".join(todays)}".' if todays else " And what are you getting done today? Give me one or two concrete things."
+        said = f' Today you said: "{"; ".join(todays)}".' if todays else ""
+        return said + (f' Tomorrow: "{"; ".join(tomorrows)}".' if tomorrows else " What's the plan for tomorrow?")
+
+    def _evening(self, now: datetime) -> bool:
+        local = self.local_now(now) if self.local_now is not None else now
+        return local.hour >= EVENING_HOUR or local.hour < 4
 
     # ------------------------------------------------------------------ internals
 
