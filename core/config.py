@@ -178,6 +178,7 @@ class Config:
     chaster_api_budget_per_minute: int = 30   # shared request budget of the keyholder account (multi-wearer)
     daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
     enable_exemptions: bool = True            # the Temporary Wear Exemption flow in DM (the keyholder's button decides; needs OWNER_USER_ID)
+    release_lock_id: str | None = None        # the owner's own keyholder lock the release engine works on, read as its keyholder (no wearer connection needed)
     exemption_lock_id: str | None = None      # the lock an approved exemption opens; defaults to PENALTY_FREEZE_LOCK_ID. Unset: an exemption opens nothing
     enable_hygiene_watch: bool = False        # follow Chaster's temporary openings; planned breaks past the limits -> UNCONFIRMED Incidents
     hygiene_trust_domain: str = "hygiene"     # never another domain: a hygiene finding stays in its own area (philosophy 3.7)
@@ -283,6 +284,7 @@ class Config:
             chaster_api_budget_per_minute=int(get("CHASTER_API_BUDGET_PER_MINUTE", "30") or "30"),
             daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",
             enable_exemptions=(get("ENABLE_EXEMPTIONS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            release_lock_id=get("RELEASE_LOCK_ID") or None,
             exemption_lock_id=get("EXEMPTION_LOCK_ID") or None,
             enable_hygiene_watch=(get("ENABLE_HYGIENE_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
             hygiene_trust_domain=get("HYGIENE_TRUST_DOMAIN", "hygiene") or "hygiene",

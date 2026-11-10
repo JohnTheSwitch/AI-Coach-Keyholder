@@ -54,6 +54,11 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
   composition root hands it to the prompt through `ReleasePhaseContextProvider` (guardrail rule 6 forbids any timing).
 - Weekends and public holidays use a 10:00 base (`WEEKEND_RELEASE_START`) + the same 30-210 minute offset.
 
+## Release lock read as its keyholder (`RELEASE_LOCK_ID`, owner 2026-11-10)
+Without a wearer connection the tick had nothing to observe, so it never ran. With `RELEASE_LOCK_ID` set, `system/keyholder_lock_source.py` reads that one
+lock with the keyholder connection (`GET /locks/{id}`) and hands it on only when the connected account's role is `keyholder` and it is `locked`. The
+release belongs to `CHASTER_EXECUTION_WEARER_USER_ID`, else `CHECK_IN_USER_ID`, else `OWNER_USER_ID`. Everything after the observation is unchanged.
+
 ## Phase 3: token earning and the re-freeze
 - **Earning (owner rule, superseding the per-goal token):** tokens come EXCLUSIVELY from the daily Token Progress Pool
   (`token_pool.py`, evaluated at local midnight by `system/daily_evaluation.py`): `P_daily = (0.75 * goals_met/goals_assigned

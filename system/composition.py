@@ -234,6 +234,11 @@ def build_rules_and_execution(
     kh_tokens = keyholder_token_manager if keyholder_token_manager is not None else token_manager
     trust = TrustManager(config.db_path, core=core)
     wearer_id = getattr(config, "chaster_execution_wearer_user_id", None)
+    # RELEASE_LOCK_ID (owner's own system only): one keyholder lock read as its keyholder. Its wearer need not have connected Chaster, so the
+    # release belongs to the configured wearer, else the check-in user, else the owner.
+    release_lock = getattr(config, "release_lock_id", None) if observation_source is None else None
+    if release_lock and not wearer_id:
+        wearer_id = getattr(config, "check_in_user_id", None) or getattr(config, "owner_user_id", None)
     from iron_contract.guard import IronContract
     from iron_contract.vacation import VacationService
     try:
@@ -326,6 +331,14 @@ def build_rules_and_execution(
     observations = recorder = obs_service = None
     if observation_source is not None and wearer_id:
         get_obs, refresh_obs = observation_source.get_latest, observation_source.refresh
+    elif release_lock and wearer_id and kh_tokens is not None and lock_client is not None and keyholder_id:
+        from system.keyholder_lock_source import KeyholderLockObservationSource
+        source = KeyholderLockObservationSource(config.db_path, core=core, lock_id=release_lock, wearer_user_id=wearer_id, keyholder_user_id=keyholder_id,
+                                                keyholder_tokens=kh_tokens, lock_client=lock_client, clock=clock or SystemClock())
+        get_obs, refresh_obs = source.get_latest, source.refresh
+        out.notes.append(f"Release lock {release_lock}: observed as its keyholder.")
+    elif release_lock:
+        out.notes.append("RELEASE_LOCK_ID is set but NOT used: it needs Chaster fully configured and CHASTER_EXECUTION_KEYHOLDER_USER_ID.")
     elif connections is not None and oauth_client is not None and lock_client is not None and wearer_id:
         from chaster.provider_observation_repository import (
             ChasterProviderObservationRecorder,
