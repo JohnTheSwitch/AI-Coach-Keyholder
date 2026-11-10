@@ -323,11 +323,11 @@ class TestReadOnlyAndMemoryBoundaries:
 
 
 class TestConfig:
-    def test_tools_flag_defaults_to_off_and_parses_truthy_values(self, tmp_path, monkeypatch) -> None:
+    def test_tools_flag_defaults_to_on_and_parses_values(self, tmp_path, monkeypatch) -> None:
         from core.config import Config
         monkeypatch.setenv("DISCORD_TOKEN", "x")
         monkeypatch.delenv("CHASTER_LLM_TOOLS_ENABLED", raising=False)
-        assert Config.load(env_path=tmp_path / "missing.env").chaster_llm_tools_enabled is False
+        assert Config.load(env_path=tmp_path / "missing.env").chaster_llm_tools_enabled is True       # on by default (owner, 2026-11-10)
         for value in ("true", "1", "YES", "on"):
             monkeypatch.setenv("CHASTER_LLM_TOOLS_ENABLED", value)
             assert Config.load(env_path=tmp_path / "missing.env").chaster_llm_tools_enabled is True

@@ -255,5 +255,5 @@ class TestInvariants:
     def test_config_defaults(self) -> None:
         from core.config import Config
         f = Config.__dataclass_fields__
-        assert f["conversation_structured_output"].default is False and f["ollama_keep_alive"].default is None
+        assert f["conversation_structured_output"].default is True and f["ollama_keep_alive"].default is None
         assert f["ollama_read_timeout_seconds"].default == 30.0

@@ -541,6 +541,6 @@ def test_the_migration_is_additive(tmp_path) -> None:
 def test_the_flag_and_defaults() -> None:
     from core.config import Config
     f = Config.__dataclass_fields__
-    assert f["enable_chaster_messaging"].default is False and f["chaster_chat_poll_seconds"].default == 30
+    assert f["enable_chaster_messaging"].default is True and f["chaster_chat_poll_seconds"].default == 30
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert "ENABLE_CHASTER_MESSAGING=false" in text and "CHASTER_CHAT_POLL_SECONDS=30" in text
+    assert "ENABLE_CHASTER_MESSAGING=true" in text and "CHASTER_CHAT_POLL_SECONDS=30" in text

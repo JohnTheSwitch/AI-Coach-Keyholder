@@ -58,6 +58,6 @@ python -m cli peer-reviews dismiss <incident id> --owner-id <id> --yes   # stays
 
 ## Configuration
 
-`ENABLE_PEER_REVIEW_WATCH` (default false), `PEER_REVIEW_TRUST_DOMAIN` (default `routine`; must exist, otherwise the watch reports
+`ENABLE_PEER_REVIEW_WATCH` (default true), `PEER_REVIEW_TRUST_DOMAIN` (default `routine`; must exist, otherwise the watch reports
 "NOT active"), `PEER_REVIEW_POLL_SECONDS` (default 600). It also needs Chaster fully configured and `CHASTER_EXECUTION_KEYHOLDER_USER_ID`.
 Migration 043 holds the ledger. Specification: `docs/architecture/phase_i_proposal.md` section 7.

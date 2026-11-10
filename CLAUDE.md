@@ -49,7 +49,7 @@ Incident (trust_manager) -> Trust Score -> Penalty Window (penalty_engine) -> Re
 
 **Message path.** `bot/discord_bot.py` converts a DM to `IncomingMessage` and calls `ApplicationService.handle_message()` in `application/service.py`, which never raises. The order there is onboarding, then `CommandRouter` (exact matches only), then the deterministic Chaster status and read-only natural-query matchers, and only then `conversation_engine` (Ollama). `application/` must not import `discord`. `bot/` handles messages only through `ApplicationService`, but it is also the composition root, so it does import and construct many modules. The README's claim that it imports no domain modules is out of date.
 
-**Background work.** Startup runs `on_system_startup()` in `system/startup.py`: per-module `recover_*_state()`, then the outbox publisher. `setup_hook()` then starts the asyncio loops. `system/composition.py` builds the rules, execution, release and supervision machinery. Features are behind `ENABLE_*` flags and off by default, so check `.env.example` before assuming something runs.
+**Background work.** Startup runs `on_system_startup()` in `system/startup.py`: per-module `recover_*_state()`, then the outbox publisher. `setup_hook()` then starts the asyncio loops. `system/composition.py` builds the rules, execution, release and supervision machinery. Features are behind `ENABLE_*` flags, on by default since 2026-11-10 (owner: easy setup) except the research export and multi-wearer; each one reports "NOT active" in the log when its settings are missing, and nothing touches a lock until the owner clears the runtime halt.
 
 **Planes to keep distinct:**
 

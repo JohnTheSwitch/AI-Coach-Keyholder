@@ -280,8 +280,8 @@ class TestConsentAndWiring:
 
     def test_config_defaults_and_env(self) -> None:
         from core.config import Config
-        assert Config.__dataclass_fields__["enable_coaching_memory"].default is False
-        assert "ENABLE_COACHING_MEMORY=false" in (ROOT / ".env.example").read_text(encoding="utf-8")
+        assert Config.__dataclass_fields__["enable_coaching_memory"].default is True
+        assert "ENABLE_COACHING_MEMORY=true" in (ROOT / ".env.example").read_text(encoding="utf-8")
 
 
 class TestTenantIsolation:

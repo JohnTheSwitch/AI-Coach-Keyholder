@@ -201,8 +201,8 @@ class TestNeverFedBack:
 
     def test_flags(self) -> None:
         from core.config import Config
-        assert Config.__dataclass_fields__["enable_ai_suggestions"].default is False
-        assert "ENABLE_AI_SUGGESTIONS=false" in (ROOT / ".env.example").read_text(encoding="utf-8")
+        assert Config.__dataclass_fields__["enable_ai_suggestions"].default is True
+        assert "ENABLE_AI_SUGGESTIONS=true" in (ROOT / ".env.example").read_text(encoding="utf-8")
 
 
 class TestOwnerCli:

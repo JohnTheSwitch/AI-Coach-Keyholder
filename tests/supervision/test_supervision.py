@@ -164,10 +164,10 @@ class TestRealWiring:
         assert build_rules_and_execution(SimpleNamespace(**base, enable_supervision=False), core).supervision is None
         assert build_rules_and_execution(SimpleNamespace(**base, enable_supervision=True), core).supervision is not None
 
-    def test_default_config_is_off(self) -> None:
+    def test_default_config_is_on(self) -> None:
         from core.config import Config
-        assert Config.__dataclass_fields__["enable_supervision"].default is False
-        assert "ENABLE_SUPERVISION=false" in (ROOT / ".env.example").read_text(encoding="utf-8")
+        assert Config.__dataclass_fields__["enable_supervision"].default is True
+        assert "ENABLE_SUPERVISION=true" in (ROOT / ".env.example").read_text(encoding="utf-8")
 
 
 class TestIsolation:

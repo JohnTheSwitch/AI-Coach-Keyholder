@@ -74,11 +74,11 @@ class Config:
     telemetry_endpoint: str | None = None         # https:// base URL of the receiver (G5); records go to /v1/records, erasures to /v1/erase
     telemetry_token: str | None = field(default=None, repr=False)
     telemetry_hmac_key: str | None = field(default=None, repr=False)
-    conversation_structured_output: bool = False  # Phase F1: JSON replies (reply + optional side data)
-    enable_coaching_memory: bool = False          # Phase F2: store and use Coaching Memory (needs structured output)
-    enable_ai_suggestions: bool = False           # Phase F3: the write-only idea box for the keyholder (needs structured output)
-    enable_coach: bool = False                    # Phase J3: goal and commitment proposals in conversation (the user's button applies them)
-    enable_slave_training: bool = False           # Phase F4: Progressive Conditioning (also needs the per-database owner switch)
+    conversation_structured_output: bool = True  # Phase F1: JSON replies (reply + optional side data)
+    enable_coaching_memory: bool = True          # Phase F2: store and use Coaching Memory (needs structured output)
+    enable_ai_suggestions: bool = True           # Phase F3: the write-only idea box for the keyholder (needs structured output)
+    enable_coach: bool = True                    # Phase J3: goal and commitment proposals in conversation (the user's button applies them)
+    enable_slave_training: bool = True           # Phase F4: Progressive Conditioning (also needs the per-database owner switch)
 
     # Database
     db_path: Path = DEFAULT_DB_PATH
@@ -127,16 +127,16 @@ class Config:
     # (conversation_engine/tools.py, chaster/llm_tools.py). OFF by
     # default: it needs an Ollama model that supports tool calling, and
     # puts provider-reported Chaster data in front of the model.
-    chaster_llm_tools_enabled: bool = False
+    chaster_llm_tools_enabled: bool = True
 
     # Rules Engine (Phase 2). STRICT DRY RUN: when enabled it only records
     # auditable Decisions; it never calls Chaster. OFF unless explicitly enabled.
-    enable_rules_engine: bool = False
+    enable_rules_engine: bool = True
 
     # Chaster execution plane (Phase 3). Master switch, OFF by default. Even when
     # on, nothing is sent unless a real transport is available, both identities
     # below are set, and the runtime halt (execution_control) is cleared.
-    enable_chaster_execution: bool = False
+    enable_chaster_execution: bool = True
     chaster_execution_wearer_user_id: str | None = None      # internal user whose lock is observed
     chaster_execution_keyholder_user_id: str | None = None   # internal user holding the keyholder OAuth connection
     chaster_execution_interval_seconds: int = 60
@@ -159,10 +159,10 @@ class Config:
     # window regardless of tokens (placeholder value pending owner tuning).
     max_barrier_hold_hours: int = 72
     # Proactive supervision (trust-driven state; consumes trust_domain.recalculated). OFF by default.
-    enable_supervision: bool = False
+    enable_supervision: bool = True
     # v0.39 Phase 2 (all OFF by default).
-    enable_release_engine: bool = False       # periodic Single Barrier release tick
-    enable_check_ins: bool = False            # proactive Discord check-ins (needs a trust domain + user)
+    enable_release_engine: bool = True       # periodic Single Barrier release tick
+    enable_check_ins: bool = True            # proactive Discord check-ins (needs a trust domain + user)
     check_in_trust_domain: str | None = "routine"  # the Trust domain whose score sets the level and takes the evidence
     # Check-in deadlines (minutes). Strict Supervision Mode (Trust < 0.40) uses the shorter strict values.
     checkin_response_timeout_minutes: int = 60
@@ -173,24 +173,24 @@ class Config:
     platform_db_path: Path | None = None      # default: platform.sqlite next to the main database
     tenant_cap: int = 5                       # most non-removed tenants, tenant zero included (protects Chaster API rate limits)
     owner_user_id: str | None = None          # internal user id of the owner; the only identity `python -m cli freeze-lock` accepts
-    enable_chaster_messaging: bool = False    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
+    enable_chaster_messaging: bool = True    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
     chaster_chat_poll_seconds: int = 30
     chaster_api_budget_per_minute: int = 30   # shared request budget of the keyholder account (multi-wearer)
     daily_evaluation_trust_domain: str = "routine"   # Trust domain of the clean-day streak bonus and the pool's Trust factor
     enable_exemptions: bool = True            # the Temporary Wear Exemption flow in DM (the keyholder's button decides; needs OWNER_USER_ID)
     release_lock_id: str | None = None        # the owner's own keyholder lock the release engine works on, read as its keyholder (no wearer connection needed)
     exemption_lock_id: str | None = None      # the lock an approved exemption opens; defaults to PENALTY_FREEZE_LOCK_ID. Unset: an exemption opens nothing
-    enable_hygiene_watch: bool = False        # follow Chaster's temporary openings; planned breaks past the limits -> UNCONFIRMED Incidents
+    enable_hygiene_watch: bool = True        # follow Chaster's temporary openings; planned breaks past the limits -> UNCONFIRMED Incidents
     hygiene_trust_domain: str = "hygiene"     # never another domain: a hygiene finding stays in its own area (philosophy 3.7)
-    enable_lock_claim_watch: bool = False     # compare lock reports with Chaster; a report that was false when made -> UNCONFIRMED Incident
+    enable_lock_claim_watch: bool = True     # compare lock reports with Chaster; a report that was false when made -> UNCONFIRMED Incident
     lock_claim_trust_domain: str = "routine"
     detector_poll_seconds: int = 120          # how often the two watches read Chaster (at least 60)
     enable_extension_guard: bool = True       # keep the owner's required lock settings true on Chaster (subject to the runtime halt)
     extension_guard_poll_seconds: int = 900   # how often they are checked (at least 300)
-    enable_peer_review_watch: bool = False    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
+    enable_peer_review_watch: bool = True    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
-    enable_penalty_barrier: bool = False      # Phase J2: a Penalty Window really freezes PENALTY_FREEZE_LOCK_ID (off = logged and queued only)
+    enable_penalty_barrier: bool = True      # Phase J2: a Penalty Window really freezes PENALTY_FREEZE_LOCK_ID (off = logged and queued only)
     penalty_freeze_lock_id: str | None = None  # the one lock the account holds as KEYHOLDER; a worn lock is never called
     check_in_user_id: str | None = None       # internal user id; defaults to CHASTER_EXECUTION_WEARER_USER_ID, then OWNER_USER_ID
 
@@ -230,11 +230,11 @@ class Config:
             telemetry_endpoint=get("TELEMETRY_ENDPOINT") or None,
             telemetry_token=get("TELEMETRY_TOKEN") or None,
             telemetry_hmac_key=get("TELEMETRY_HMAC_KEY") or None,
-            conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_coach=(get("ENABLE_COACH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_slave_training=(get("ENABLE_SLAVE_TRAINING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            conversation_structured_output=(get("CONVERSATION_STRUCTURED_OUTPUT", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_coaching_memory=(get("ENABLE_COACHING_MEMORY", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_coach=(get("ENABLE_COACH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_ai_suggestions=(get("ENABLE_AI_SUGGESTIONS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_slave_training=(get("ENABLE_SLAVE_TRAINING", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             db_path=Path(db_path_str) if db_path_str else DEFAULT_DB_PATH,
             backup_retention_count=int(retention_str) if retention_str else 14,
             chaster_api_token=get("CHASTER_API_TOKEN"),
@@ -249,9 +249,9 @@ class Config:
             chaster_emergency_bind_host=get("CHASTER_EMERGENCY_BIND_HOST", "127.0.0.1") or "127.0.0.1",
             chaster_emergency_bind_port=int(get("CHASTER_EMERGENCY_BIND_PORT", "8421") or "8421"),
             chaster_emergency_unlock_secret=get("CHASTER_EMERGENCY_UNLOCK_SECRET"),
-            chaster_llm_tools_enabled=(get("CHASTER_LLM_TOOLS_ENABLED", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_rules_engine=(get("ENABLE_RULES_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_chaster_execution=(get("ENABLE_CHASTER_EXECUTION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            chaster_llm_tools_enabled=(get("CHASTER_LLM_TOOLS_ENABLED", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_rules_engine=(get("ENABLE_RULES_ENGINE", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_chaster_execution=(get("ENABLE_CHASTER_EXECUTION", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             chaster_execution_wearer_user_id=get("CHASTER_EXECUTION_WEARER_USER_ID"),
             chaster_execution_keyholder_user_id=get("CHASTER_EXECUTION_KEYHOLDER_USER_ID"),
             chaster_execution_interval_seconds=int(get("CHASTER_EXECUTION_INTERVAL_SECONDS", "60") or "60"),
@@ -266,9 +266,9 @@ class Config:
             unlock_window_min_offset_minutes=int(get("UNLOCK_WINDOW_MIN_OFFSET_MINUTES", "30") or "30"),
             unlock_window_max_offset_minutes=int(get("UNLOCK_WINDOW_MAX_OFFSET_MINUTES", "210") or "210"),
             max_barrier_hold_hours=int(get("MAX_BARRIER_HOLD_HOURS", "72") or "72"),
-            enable_supervision=(get("ENABLE_SUPERVISION", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_release_engine=(get("ENABLE_RELEASE_ENGINE", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
-            enable_check_ins=(get("ENABLE_CHECK_INS", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_supervision=(get("ENABLE_SUPERVISION", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_release_engine=(get("ENABLE_RELEASE_ENGINE", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_check_ins=(get("ENABLE_CHECK_INS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             check_in_trust_domain=get("CHECK_IN_TRUST_DOMAIN", "routine") or "routine",
             checkin_response_timeout_minutes=int(get("CHECKIN_RESPONSE_TIMEOUT_MINUTES", "60") or "60"),
             checkin_follow_up_minutes=int(get("CHECKIN_FOLLOW_UP_MINUTES", "30") or "30"),
@@ -279,23 +279,23 @@ class Config:
             platform_db_path=Path(get("PLATFORM_DB_PATH")) if get("PLATFORM_DB_PATH") else None,
             tenant_cap=int(get("TENANT_CAP", "5") or "5"),
             owner_user_id=get("OWNER_USER_ID"),
-            enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
             chaster_api_budget_per_minute=int(get("CHASTER_API_BUDGET_PER_MINUTE", "30") or "30"),
             daily_evaluation_trust_domain=get("DAILY_EVALUATION_TRUST_DOMAIN", "routine") or "routine",
             enable_exemptions=(get("ENABLE_EXEMPTIONS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             release_lock_id=get("RELEASE_LOCK_ID") or None,
             exemption_lock_id=get("EXEMPTION_LOCK_ID") or None,
-            enable_hygiene_watch=(get("ENABLE_HYGIENE_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_hygiene_watch=(get("ENABLE_HYGIENE_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             hygiene_trust_domain=get("HYGIENE_TRUST_DOMAIN", "hygiene") or "hygiene",
-            enable_lock_claim_watch=(get("ENABLE_LOCK_CLAIM_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_lock_claim_watch=(get("ENABLE_LOCK_CLAIM_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "routine") or "routine",
             detector_poll_seconds=max(60, int(get("DETECTOR_POLL_SECONDS", "120") or "120")),
             enable_extension_guard=(get("ENABLE_EXTENSION_GUARD", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             extension_guard_poll_seconds=max(300, int(get("EXTENSION_GUARD_POLL_SECONDS", "900") or "900")),
-            enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",
             peer_review_poll_seconds=max(120, int(get("PEER_REVIEW_POLL_SECONDS", "600") or "600")),
-            enable_penalty_barrier=(get("ENABLE_PENALTY_BARRIER", "false") or "false").strip().lower() in ("1", "true", "yes", "on"),
+            enable_penalty_barrier=(get("ENABLE_PENALTY_BARRIER", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             penalty_freeze_lock_id=(get("PENALTY_FREEZE_LOCK_ID") or "").strip() or None,
         )

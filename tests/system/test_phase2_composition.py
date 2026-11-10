@@ -59,13 +59,15 @@ class TestFlags:
     def test_defaults_in_the_real_config(self) -> None:
         from core.config import Config
         f = Config.__dataclass_fields__
-        assert f["enable_release_engine"].default is False and f["enable_check_ins"].default is False
+        assert f["enable_release_engine"].default is True and f["enable_check_ins"].default is True       # on by default (owner, 2026-11-10)
+        # Still off: sending data off the machine and the multi-wearer layout are deliberate choices, never a default.
+        assert f["enable_research_telemetry"].default is False and f["enable_multi_wearer"].default is False
         assert f["weekend_release_start"].default == "10:00" and f["max_barrier_hold_hours"].default == 72
 
     def test_env_example_documents_the_flags(self) -> None:
         from pathlib import Path
         text = (Path(__file__).parent.parent.parent / ".env.example").read_text(encoding="utf-8")
-        for line in ("ENABLE_RELEASE_ENGINE=false", "ENABLE_CHECK_INS=false", "WEEKEND_RELEASE_START=10:00",
+        for line in ("ENABLE_RELEASE_ENGINE=true", "ENABLE_CHECK_INS=true", "ENABLE_RESEARCH_TELEMETRY=false", "ENABLE_MULTI_WEARER=false", "WEEKEND_RELEASE_START=10:00",
                      "MAX_BARRIER_HOLD_HOURS=72"):
             assert line in text
 

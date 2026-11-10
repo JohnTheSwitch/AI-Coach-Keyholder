@@ -40,7 +40,7 @@ existing token manager: transparent refresh, one refresh-and-retry on a 401), an
     the state the barrier action expects; a lock id exists; the release limits are re-applied against executed
     history only (executed / executing / needs_review).
   - Only freeze / unfreeze execute, and only for barrier rule ids.
-- **Switches**: `ENABLE_CHASTER_EXECUTION` (default false) and the runtime halt
+- **Switches**: `ENABLE_CHASTER_EXECUTION` (default true since 2026-11-10) and the runtime halt
   `execution_control` (migration 026), which is seeded **halted**, treats a missing
   or unreadable row as halted, and is changed only by
   `python -m scripts.execution_control status|halt|clear "reason"`. Both are
@@ -147,7 +147,7 @@ Phase J2 (`penalty_barrier.py`, migration 044, `docs/architecture/phase_j_propos
 intents of a Penalty Window on the one configured lock, only if a fresh read shows role `keyholder`. Freeze / unfreeze only, never time. Its queue is
 separate from `lock_decisions`, so an intent survives a halt of any length (logged once, nothing read or sent) while the 15-minute decision expiry
 stays as it is. At most once: the claim is committed before the call and an ambiguous outcome is `needs_review`. It acts on window events only, so
-it never re-freezes a lock the 72-hour backstop released. Off by default (`ENABLE_PENALTY_BARRIER`, `PENALTY_FREEZE_LOCK_ID`).
+it never re-freezes a lock the 72-hour backstop released. On by default (`ENABLE_PENALTY_BARRIER`), but it acts only with `PENALTY_FREEZE_LOCK_ID` set.
 
 ## Extension guard
 

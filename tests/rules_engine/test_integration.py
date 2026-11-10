@@ -163,11 +163,11 @@ class TestFlagAndIsolation:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM lock_decision_triggers")["n"] == 0
         assert calls["n"] == 0
 
-    def test_config_flag_defaults_off_and_parses(self, monkeypatch) -> None:
+    def test_config_flag_defaults_on(self, monkeypatch) -> None:
         from core.config import Config
-        assert Config.__dataclass_fields__["enable_rules_engine"].default is False
+        assert Config.__dataclass_fields__["enable_rules_engine"].default is True
         text = (ROOT / ".env.example").read_text(encoding="utf-8")
-        assert "ENABLE_RULES_ENGINE=false" in text
+        assert "ENABLE_RULES_ENGINE=true" in text
 
     def test_incident_driven_recalculations_do_not_trigger_the_engine(self) -> None:
         """Only goal assessments trigger evaluations (no double punishment of an incident)."""

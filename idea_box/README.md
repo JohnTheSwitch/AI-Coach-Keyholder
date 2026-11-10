@@ -1,6 +1,6 @@
 # idea_box
 
-v0.39 Phase F3 (`service.py`, table `ai_suggestions`, migration 037; `ENABLE_AI_SUGGESTIONS`, default off, needs `CONVERSATION_STRUCTURED_OUTPUT=true`).
+v0.39 Phase F3 (`service.py`, table `ai_suggestions`, migration 037; `ENABLE_AI_SUGGESTIONS`, default on, needs `CONVERSATION_STRUCTURED_OUTPUT=true`).
 
 A one-way channel from the model to the keyholder. The model may add a `submit_suggestion` (type `rule_tweak`, `new_punishment` or `system_flaw`, at most
 500 characters) to its structured reply; the engine's sink stores it in the CURRENT database (each tenant has its own), only for trusted turns, and never when the

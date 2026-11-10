@@ -1,6 +1,6 @@
 # infractions
 
-The automated detectors (migration 047). Canonical: `docs/architecture/backlog_completion.md`, section 3. Off by default: `ENABLE_HYGIENE_WATCH`, `ENABLE_LOCK_CLAIM_WATCH`.
+The automated detectors (migration 047). Canonical: `docs/architecture/backlog_completion.md`, section 3. On by default: `ENABLE_HYGIENE_WATCH`, `ENABLE_LOCK_CLAIM_WATCH` (each needs its Trust domain to exist, or it reports NOT active).
 
 - **`signals.py`**: the one path from a detection to an Incident: waiting, open, confirmed or dismissed. Only the keyholder's button confirms.
 - **`excuses.py`**: Emergency Override, exemption, vacation. A failed read excuses too.

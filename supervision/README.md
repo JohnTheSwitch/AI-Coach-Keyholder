@@ -29,7 +29,7 @@ the periodic cycle gains no model call, and a failure leaves the plain question.
 coach turn with the negotiation instruction (`system/coach_dm.py`), and with `ENABLE_COACHING_MEMORY` on a filtered, dated copy goes to Coaching Memory. The check-in
 user now falls back to `OWNER_USER_ID`, like the coach. `mentions_safety_issue` no longer matches "number" (`numb\w*` was too broad).
 
-## Phase 2: proactive check-ins (migration 029, `ENABLE_CHECK_INS`, default off)
+## Phase 2: proactive check-ins (migration 029, `ENABLE_CHECK_INS`, default on)
 
 `checkins.py` (service), `checkin_schedule.py` (pure slot placement), `checkin_evaluator.py` (rubric).
 - **Scheduling:** each local day, `n` check-ins by level, placed only in the discretionary window (never quiet or work

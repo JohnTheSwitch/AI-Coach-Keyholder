@@ -1,6 +1,6 @@
 # coach — Phase J3
 
-Canonical: `docs/architecture/phase_j_proposal.md`, section 5. Off by default (`ENABLE_COACH`).
+Canonical: `docs/architecture/phase_j_proposal.md`, section 5. On by default (`ENABLE_COACH`).
 
 The coach lets the local model propose goals and daily commitments in the Discord DM. The model proposes and the user decides (philosophy 2.5): nothing the
 model writes changes anything, and only the user's own button applies a proposal.

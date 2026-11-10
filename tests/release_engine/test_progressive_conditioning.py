@@ -320,5 +320,5 @@ class TestOwnerCli:
 
     def test_flag_default(self) -> None:
         from core.config import Config
-        assert Config.__dataclass_fields__["enable_slave_training"].default is False
-        assert "ENABLE_SLAVE_TRAINING=false" in (ROOT / ".env.example").read_text(encoding="utf-8")
+        assert Config.__dataclass_fields__["enable_slave_training"].default is True        # the owner switch and the wearer's consent still gate it
+        assert "ENABLE_SLAVE_TRAINING=true" in (ROOT / ".env.example").read_text(encoding="utf-8")

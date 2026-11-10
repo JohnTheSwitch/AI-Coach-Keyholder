@@ -57,7 +57,7 @@ real architectural findings surfaced while building it:
   (hidden token ledger, secret adaptive target, commit point; not yet wired).
 - [`supervision/README.md`](supervision/README.md) -- v0.39 trust-driven supervision state and levels.
 - [`chaster_execution/README.md`](chaster_execution/README.md) -- Phase 3 execution
-  plane (state machine, audit, halt switch, Chaster HTTP transport; execution off by default).
+  plane (state machine, audit, halt switch, Chaster HTTP transport; execution on by default, behind the runtime halt a new install starts halted).
 - [`penalty_engine/README.md`](penalty_engine/README.md) -- the
   PenaltyWindow state machine, freeze-as-a-set-of-reasons, Extension
   (`should_extend()`), and Recovery Credit.
@@ -478,6 +478,12 @@ your application -> Bot -> Token). The bot needs to be invited to a
 server with permission to read and send messages, and **Message
 Content Intent** needs to be enabled in the Developer Portal (without
 it the bot won't see message content -- `discord_bot.py` relies on it).
+
+Every feature is **on by default** except the research export (it sends data off the machine) and multi-wearer mode. A feature whose settings
+are missing does not fail: the bot logs one line saying it is "NOT active" and what it needs, so the startup log is the setup checklist. The
+usual next steps are an Ollama model (`OLLAMA_MODEL`), Chaster (`chaster connect` in DM, plus the `CHASTER_*` settings), your internal user id
+as `OWNER_USER_ID`, and the Trust domains the check-ins and detectors name. Nothing ever acts on a lock until you clear the runtime halt,
+which a new install starts halted: `python -m scripts.execution_control clear "why"`.
 
 ## Running
 

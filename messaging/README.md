@@ -17,7 +17,7 @@ Phase C (below) added the Chaster channel. Still not done: moving the bot's `on_
 check-in sender onto the adapter (the check-in port needs the delivered / undeliverable / unknown distinction, which a boolean cannot carry).
 `bot.messaging_router` is built in `main()` with the Discord adapter only.
 
-## Phase C: the Chaster chat channel (migration 033, `ENABLE_CHASTER_MESSAGING`, default off)
+## Phase C: the Chaster chat channel (migration 033, `ENABLE_CHASTER_MESSAGING`, default on; each user still opts in)
 
 - `chaster/conversation_client.py`: `POST /conversations/{id}` (send), `GET /conversations/{id}/messages` (poll), `GET /conversations/by-user/{userId}`
   (find); scope `messaging`.

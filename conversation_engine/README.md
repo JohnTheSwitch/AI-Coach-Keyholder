@@ -685,7 +685,7 @@ v0.36: `CZECH_LANGUAGE_RULES` adds the infinitive-after-helper-verb rule (`můž
 
 v0.37: `CZECH_LANGUAGE_RULES` removed; `ENGLISH_BEHAVIOR_RULES` (direct wording, coaching voice, never guess) is appended to the general guardrails and `build_guardrails()` takes no language. Earlier `CZECH_LANGUAGE_RULES` entries (v0.33-v0.36) are historical. 4336 tests.
 
-## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default off)
+## v0.39 Phase F1: structured output (`structured_output.py`, `CONVERSATION_STRUCTURED_OUTPUT`, default on)
 
 When enabled and the model supports it, the engine asks Ollama for a JSON object (`format` = `RESPONSE_SCHEMA`): `reply_to_user` plus optional
 `save_to_memory` / `submit_suggestion`. Only the reply reaches the user (validated and stored in working memory as before). Side data is parsed strictly,
