@@ -296,14 +296,17 @@ class CoachKeyholderBot(discord.Client):
                 last = await asyncio.to_thread(self._last_handled_message_id)
                 if last is not None:
                     since = self.clock.now() - REPLAY_MAX_AGE
+                    from messaging.discord_adapter import dm_history_channel
                     for external_id in await asyncio.to_thread(self._known_discord_ids):
-                        from messaging.discord_adapter import dm_history_channel
-                        channel = await dm_history_channel(self, int(external_id))
-                        async for message in channel.history(after=discord.Object(id=last), oldest_first=True, limit=REPLAY_MAX_MESSAGES):
-                            if message.author == self.user or message.created_at < since or not (message.content or "").strip():
-                                continue
-                            await self._handle_dm(message, received_at=message.created_at, late=True)
-                            replayed += 1
+                        try:                                            # one unknown or closed account never stops the others
+                            channel = await dm_history_channel(self, int(external_id))
+                            async for message in channel.history(after=discord.Object(id=last), oldest_first=True, limit=REPLAY_MAX_MESSAGES):
+                                if message.author == self.user or message.created_at < since or not (message.content or "").strip():
+                                    continue
+                                await self._handle_dm(message, received_at=message.created_at, late=True)
+                                replayed += 1
+                        except Exception as exc:
+                            logger.info("No missed messages could be read for one account (%s).", type(exc).__name__)
         except Exception:
             logger.exception("Catching up on messages sent while offline failed; carrying on.")
         finally:

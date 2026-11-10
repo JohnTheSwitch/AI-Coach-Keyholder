@@ -70,6 +70,25 @@ class TestMessagesSentWhileOffline:
         _run(bot._replay_missed_dms())
         assert bot._caught_up.is_set()
 
+    def test_one_unknown_account_does_not_stop_the_others(self, bot, core) -> None:  # noqa: F811
+        _complete_onboarding(bot)
+        with core.raw_connection() as conn:
+            conn.execute("INSERT INTO user_channel_identities (id, user_account_id, channel, external_id, created_at) "
+                         "SELECT 'x', user_account_id, 'discord', '1', created_at FROM user_channel_identities LIMIT 1")
+            conn.commit()
+        missed = _sent_at(_fake_dm_message("help", message_id=500), FIXED_TIME - timedelta(hours=1))
+        channel = Mock()
+        channel.history = History([missed])
+
+        async def fetch(discord_id):
+            if discord_id == 1:
+                raise discord.NotFound(Mock(status=404), "Unknown User")
+            return Mock(dm_channel=channel)
+
+        bot.fetch_user = fetch
+        _run(bot._replay_missed_dms())
+        assert missed.channel.send.called
+
     def test_the_timed_loops_wait_for_it(self, bot) -> None:  # noqa: F811
         order = []
 
