@@ -58,7 +58,13 @@ from core.config import Config, ConfigError
 from memory_system.working_memory import InMemoryWorkingMemory
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
+from datetime import timedelta
+
 from infrastructure.clock import Clock, SystemClock
+
+REPLAY_MAX_AGE = timedelta(days=3)          # older unanswered DMs are history, not something to answer now
+REPLAY_MAX_MESSAGES = 30
+REPLAY_WAIT_SECONDS = 180
 from infrastructure.database import Database as CoreDatabase
 from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
@@ -154,6 +160,9 @@ class CoachKeyholderBot(discord.Client):
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
         self.penalty_notices = None              # system.penalty_notices handlers, registered as outbox consumers
+        # Owner, 2026-11-10: what was sent while the PC was off is handled on start, BEFORE any deadline is judged.
+        self._caught_up: asyncio.Event | None = None
+        self._replay_started = False
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -167,12 +176,13 @@ class CoachKeyholderBot(discord.Client):
         being unavailable must never take down the whole bot."""
         if self.periodic is not None:
             core, rules_engine, executor, interval, supervision, release_task, check_ins, daily, telemetry = self.periodic
-            self._periodic_task = asyncio.create_task(
+            self._caught_up = self._caught_up or asyncio.Event()
+            self._periodic_task = asyncio.create_task(self._after_catch_up(
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
                               interval_seconds=interval, supervision=supervision,
                               release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
                               penalty_barrier=self.penalty_barrier, exemptions=self.exemptions, penalty_notices=self.penalty_notices)
-            )
+            ))
         if self.tenant_supervisor is not None:
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
         if self.invitations is not None:
@@ -184,7 +194,8 @@ class CoachKeyholderBot(discord.Client):
         if self.notifications is not None:
             self._notification_task = asyncio.create_task(self.notifications, name="notifications")
         if self.detectors is not None:
-            self._detector_task = asyncio.create_task(self.detectors, name="detectors")
+            self._caught_up = self._caught_up or asyncio.Event()
+            self._detector_task = asyncio.create_task(self._after_catch_up(self.detectors), name="detectors")
         if self.extension_guard is not None:
             self._extension_guard_task = asyncio.create_task(self.extension_guard, name="extension-guard")
         if self.dm_actions:
@@ -263,6 +274,55 @@ class CoachKeyholderBot(discord.Client):
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
         logger.info("Ready. Listening for direct messages only (Phase 3.1 scope).")
+        if not self._replay_started:
+            self._replay_started = True
+            asyncio.create_task(self._replay_missed_dms(), name="replay-missed-dms")
+
+    async def _after_catch_up(self, coroutine) -> None:
+        """Deadlines are judged only after the messages sent meanwhile were read: a reply sent while the bot was off still counts."""
+        if self._caught_up is not None:
+            try:
+                await asyncio.wait_for(self._caught_up.wait(), timeout=REPLAY_WAIT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning("Catching up on missed messages took too long; the timed loops start anyway.")
+        await coroutine
+
+    async def _replay_missed_dms(self) -> None:
+        """Discord never redelivers a DM sent while the bot was offline. Everything a known user sent after the last message this bot handled
+        is handled now, oldest first, at the time it was SENT (a check-in answer before its deadline still counts)."""
+        replayed = 0
+        try:
+            if self.gateway is None:
+                last = await asyncio.to_thread(self._last_handled_message_id)
+                if last is not None:
+                    since = self.clock.now() - REPLAY_MAX_AGE
+                    for external_id in await asyncio.to_thread(self._known_discord_ids):
+                        from messaging.discord_adapter import dm_history_channel
+                        channel = await dm_history_channel(self, int(external_id))
+                        async for message in channel.history(after=discord.Object(id=last), oldest_first=True, limit=REPLAY_MAX_MESSAGES):
+                            if message.author == self.user or message.created_at < since or not (message.content or "").strip():
+                                continue
+                            await self._handle_dm(message, received_at=message.created_at, late=True)
+                            replayed += 1
+        except Exception:
+            logger.exception("Catching up on messages sent while offline failed; carrying on.")
+        finally:
+            if replayed:
+                logger.info("Caught up on %d message(s) sent while the bot was offline.", replayed)
+            if self._caught_up is not None:
+                self._caught_up.set()
+
+    def _last_handled_message_id(self) -> int | None:
+        with self.application_service._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT discord_message_id FROM conversation_messages WHERE role = 'user' AND discord_message_id IS NOT NULL "
+                                "ORDER BY created_at DESC LIMIT 20")
+        ids = [int(r["discord_message_id"]) for r in rows if str(r["discord_message_id"]).isdigit()]
+        return max(ids) if ids else None
+
+    def _known_discord_ids(self) -> list[str]:
+        with self.application_service._core.transaction() as tx:
+            return [r["external_id"] for r in tx.fetch_all("SELECT external_id FROM user_channel_identities WHERE channel = 'discord'")
+                    if str(r["external_id"]).isdigit()]
 
     async def on_message(self, message: discord.Message) -> None:
         # Ignore the bot's own messages so it doesn't loop on itself.
@@ -279,7 +339,10 @@ class CoachKeyholderBot(discord.Client):
             await self._on_message_via_gateway(message)
             return
 
-        now = self.clock.now()
+        await self._handle_dm(message, received_at=self.clock.now())
+
+    async def _handle_dm(self, message: discord.Message, *, received_at, late: bool = False) -> None:
+        now = received_at
 
         # Audit logging is best-effort and never blocks the actual
         # conversation -- a failure here must not prevent a reply from
@@ -309,6 +372,8 @@ class CoachKeyholderBot(discord.Client):
             # infrastructure/database.py's own thread-local guard).
             outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
+            if late:
+                reply_text = f"*(You sent this while I was offline: {discord.utils.format_dt(message.created_at, 't')}.)*\n{reply_text}"
             reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
             reply_view = actions_view(outgoing.actions) if outgoing.actions else None      # Phase J1: buttons, if any
         except Exception:
@@ -719,6 +784,14 @@ def main() -> None:
         bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
     if detectors.active:
         bot.detectors = detector_loop(detectors, clock)
+    if detectors.signals is not None:
+        with core.transaction() as tx:
+            lease = tx.fetch_one("SELECT acquired_at FROM system_startup_lease WHERE id = 1")
+        if lease is not None and lease["acquired_at"]:
+            from infrastructure.time_format import parse_iso as _parse_iso
+            moved = detectors.signals.extend_for_downtime(down_since=_parse_iso(lease["acquired_at"]), back_at=clock.now())
+            if moved:
+                logger.info("The bot was down for a while: %d open question deadline(s) moved by that time.", moved)
     # Phase I4: community review results. A rejection becomes the same question to the wearer (read-only towards Chaster, its own loop).
     from peer_review.wiring import build_peer_review_watch, peer_review_loop
     ask_wearer = None

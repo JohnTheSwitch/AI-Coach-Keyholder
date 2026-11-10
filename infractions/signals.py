@@ -252,6 +252,22 @@ class InfractionSignals:
                 logger.exception("Could not confirm a decided signal; it stays decided.")
         return counted
 
+    def extend_for_downtime(self, *, down_since: datetime, back_at: datetime) -> int:
+        """Owner, 2026-11-10: nobody can answer a bot that is off. Every deadline still open when it went down moves by the time it was down."""
+        gap = back_at - down_since
+        if gap <= timedelta(minutes=5):
+            return 0
+        seconds = int(gap.total_seconds())
+
+        def write(tx: Transaction, _s: object) -> int:
+            moved = tx.execute("UPDATE infraction_signals SET review_after = strftime('%Y-%m-%dT%H:%M:%fZ', review_after, ?) "
+                               "WHERE status = 'waiting' AND review_after > ?", (f"+{seconds} seconds", _iso(down_since))).rowcount
+            moved += tx.execute("UPDATE infraction_signals SET confirm_after = strftime('%Y-%m-%dT%H:%M:%fZ', confirm_after, ?) "
+                                "WHERE status = 'decided' AND confirm_after > ?", (f"+{seconds} seconds", _iso(down_since))).rowcount
+            return moved
+
+        return apply_transition(self._core, write=write)
+
     def rows(self) -> list[dict]:
         with self._core.transaction() as tx:
             return [dict(r) for r in tx.fetch_all("SELECT id, kind, status, verdict, created_at, decided_at, cleared_reason FROM infraction_signals "

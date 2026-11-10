@@ -16,7 +16,7 @@ py -m pytest tests/path/test_x.py::TestClass::test_name         # one test
 py -m compileall ai bot core database integrations observations # all that CI runs
 ```
 
-The whole suite (4,854 tests) takes about 15 minutes, so run it in the background and use targeted runs while iterating. `pytest.ini` sets `--strict-markers`, so an unregistered marker is an error. There is no linter or formatter configured. CI (`.github/workflows/python-ci.yml`) only does the `compileall` above and doesn't run the tests, so a passing CI says nothing about behaviour. The README's "No CI currently exists" is out of date.
+The whole suite (4,865 tests) takes about 15 minutes, so run it in the background and use targeted runs while iterating. `pytest.ini` sets `--strict-markers`, so an unregistered marker is an error. There is no linter or formatter configured. CI (`.github/workflows/python-ci.yml`) only does the `compileall` above and doesn't run the tests, so a passing CI says nothing about behaviour. The README's "No CI currently exists" is out of date.
 
 The receiver has its own suite and dependencies, and runs from the sibling `hive-venv`, not the bot's environment. The bot's suite doesn't need FastAPI; it checks only isolation and the contract, in `tests/hive_mind_receiver/`.
 

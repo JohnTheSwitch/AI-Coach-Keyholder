@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**4854 passing tests** across the whole repository (`pytest`), including
+**4865 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -484,6 +484,8 @@ are missing does not fail: the bot logs one line saying it is "NOT active" and w
 usual next steps are an Ollama model (`OLLAMA_MODEL`), Chaster (`chaster connect` in DM, plus the `CHASTER_*` settings), your internal user id
 as `OWNER_USER_ID`, and the Trust domains the check-ins and detectors name. Nothing ever acts on a lock until you clear the runtime halt,
 which a new install starts halted: `python -m scripts.execution_control clear "why"`.
+
+**After the PC was off** (owner, 2026-11-10), the bot catches up on start before any deadline is judged: DMs sent meanwhile are read from Discord and handled at the time they were sent (a check-in answer still counts), open question deadlines move by the downtime, the last check-in of the day that fell into it is sent late if nothing else is planned, the daily evaluation catches up missed days, the release tick re-freezes or releases what is due, and queued messages go out. The last day's conversation is restored too.
 
 ## Running
 

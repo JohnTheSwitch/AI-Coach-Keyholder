@@ -24,7 +24,7 @@ from messaging.models import ChannelType, UnifiedMessage
 
 logger = logging.getLogger("ai_coach_keyholder.messaging.discord")
 
-__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY", "DmOutcome", "send_dm"]
+__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY", "DmOutcome", "send_dm", "dm_history_channel"]
 
 DISCORD_MAX_MESSAGE_CHARS = 2000
 FAILURE_REPLY = "Something went wrong handling that. It's been logged."
@@ -50,11 +50,21 @@ class DmOutcome(StrEnum):
     UNKNOWN = "unknown"                            # a timeout or server error: it may or may not have arrived
 
 
+async def _user(client, discord_id: int):
+    return await client.fetch_user(discord_id)
+
+
+async def dm_history_channel(client, discord_id: int):
+    """The DM channel with this user, to READ what they sent while the bot was offline (owner, 2026-11-10). Sends nothing."""
+    user = await _user(client, discord_id)
+    return user.dm_channel or await user.create_dm()
+
+
 async def send_dm(client, discord_id: int, content: str, *, view=None, embed=None) -> DmOutcome:
     """The only place in the project that opens a DM. Everything proactive ends here, the check-in prompts included. The exception names are compared because
     this package stays free of `discord` imports; a chunked message that fails half way is UNKNOWN, since part of it arrived."""
     try:
-        user = await client.fetch_user(discord_id)
+        user = await _user(client, discord_id)
         if embed is not None:                      # Phase J1: the embed carries the whole message; `content` is the fallback text
             await user.send(embed=embed, **({"view": view} if view is not None else {}))
             return DmOutcome.DELIVERED

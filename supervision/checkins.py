@@ -302,9 +302,16 @@ class CheckInService:
             awaiting = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND status IN "
                                     "('sent', 'responded', 'insufficient_pending', 'sending')", (self._user,))
             answered = tx.fetch_one("SELECT MAX(responded_at) AS at FROM check_ins WHERE user_id = ? AND responded_at IS NOT NULL", (self._user,))["at"]
+            today = self._cfg.local(now).date().isoformat()
+            later_today = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND status = 'scheduled' AND local_date = ? AND due_at > ?",
+                                       (self._user, today, _iso(now))) is not None
         recently_answered = answered is not None and now - _parse_iso(answered) < QUIET_AFTER_ANSWER
+        # Owner, 2026-11-10: a check-in that fell into a time the PC was off is not simply lost. The latest overdue one of today is sent late, once,
+        # when nothing else is planned for the rest of the day; older ones are skipped as before.
+        late_ok = None if later_today else next((r["id"] for r in reversed(due) if r["local_date"] == today), None)
         for row in due:
-            if now - _parse_iso(row["due_at"]) > MAX_LATE or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or recently_answered:
+            too_late = now - _parse_iso(row["due_at"]) > MAX_LATE and row["id"] != late_ok
+            if too_late or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or recently_answered:
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
             if awaiting is not None:            # one open check-in at a time; this one waits (or is skipped later)
