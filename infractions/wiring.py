@@ -28,7 +28,7 @@ from infractions.judge import ExplanationJudge
 from infractions.hygiene import HygieneWatch, OpeningNotAvailable
 from infractions.lock_claims import LockClaimWatch
 from infractions.signals import EVIDENCE, RULE_GROUPS, InfractionSignals, Signal, SignalKind
-from trust_manager.models import ConfirmationSource, IncidentConfirmation
+from trust_manager.models import ConfirmationSource, CooperationAssessment, IncidentConfirmation
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.infractions.wiring")
@@ -115,10 +115,11 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
         trust.register_incident_report(rule_group_id=signal.rule_group or RULE_GROUPS[signal.kind], trust_domain=signal.trust_domain, description=signal.detail,
                                        evidence=EVIDENCE[signal.kind], now=now, incident_id=signal.incident_id)
 
-    def confirm(incident_id: str, evidence: str, now: datetime) -> None:
-        # The system is the keyholder (owner, 2026-11-10): it confirms what the wearer could not explain.
+    def confirm(incident_id: str, evidence: str, now: datetime, admitted: bool = False) -> None:
+        # The system is the keyholder (owner, 2026-11-10): it confirms what the wearer could not explain. Owning up softens it (philosophy 5.3).
         trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
-                               evidence_description=evidence[:1000], now=now)
+                               evidence_description=evidence[:1000], now=now,
+                               cooperation=CooperationAssessment(self_disclosed=True, notes="Owned up when asked.") if admitted else None)
 
     out.signals = InfractionSignals(config.db_path, core=core, excuses=excuses, judge=ExplanationJudge(complete), register_incident=register, confirm_incident=confirm)
     out.signals.set_wearer(getattr(config, "check_in_user_id", None) or getattr(config, "chaster_execution_wearer_user_id", None) or owner)

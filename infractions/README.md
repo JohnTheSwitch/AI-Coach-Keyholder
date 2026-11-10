@@ -11,7 +11,9 @@ There is no second person to press a keyholder button: the Keyholder is the syst
 2. **Health and safety, by code.** The health button, or an answer that mentions a health need, pain, an injury or an emergency, clears it without any
    model (3.9, 3.10). An Emergency Override, an approved exemption or a vacation overlapping the finding clears it at every step.
 3. **Judged by the model** (`judge.py`), against the detector's facts, not on trust: `explained` clears it; `unclear` gets one follow-up question, and
-   still unclear clears it (2.12); `not_explained` decides it.
+   still unclear clears it (2.12); `not_explained` decides it. An apology or admission is not a reason (live, 2026-11-10, the model took one for one):
+   it decides it too, and `admitted` makes the confirmed Incident self-disclosed, which softens its Trust effect. "Already explained" is judged on
+   the wearer's recent answers to the same kind of finding.
 4. **Silence.** An unanswered hygiene finding never counts (it may be the health need Mandatory Access exists for). Anything else unanswered is decided,
    filed under `DETECTION_UNANSWERED`, which is warning-only: Trust and a Warning, never a Penalty Window.
 5. **Appeal.** A decided finding counts after two hours. In that time the wearer may appeal once; an accepted appeal clears it, a rejected one counts at once.

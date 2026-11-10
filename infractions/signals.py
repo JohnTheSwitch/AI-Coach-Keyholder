@@ -92,6 +92,8 @@ _NOT_EXPLAINED = ("That doesn't explain it, so it will count as an incident in t
 _SILENCE = ("You didn't explain this in time, so it will count as an incident in two hours. If there's something I should know, you can appeal once: "
             "press **Appeal**.")
 _APPEAL_ACCEPTED = "You're right. It doesn't count."
+_ADMITTED = ("Owning it counts for something, and it'll weigh less because you did. But a sorry isn't a reason, so it counts as an incident in two hours. "
+             "If there was an actual reason, press **Appeal** and tell me.")
 _APPEAL_REJECTED = "I've looked at your appeal, and it doesn't change the decision. It counts as an incident."
 _COUNTED = "It now counts as an incident."
 _PENDING = "Thank you. I'll look at it shortly and let you know."
@@ -135,7 +137,7 @@ class InfractionSignals:
     def __init__(self, db_path: str | Path | None = None, *, core: CoreDatabase | None = None, excuses: Excuses, judge: ExplanationJudge,
                  register_incident: Callable[[Signal, datetime], None], confirm_incident: Callable[[str, str, datetime], None], owner_user_id: str | None = None) -> None:
         """`register_incident(signal, now)` files the Incident under `signal.incident_id` and `signal.rule_group`, chosen in advance so a retry cannot duplicate it.
-        `confirm_incident(incident_id, evidence, now)` confirms it as the system's own decision. `owner_user_id` is no longer used: nobody else decides."""
+        `confirm_incident(incident_id, evidence, now, admitted)` confirms it as the system's own decision; `admitted` = the wearer owned up. `owner_user_id` is no longer used: nobody else decides."""
         self._core = core if core is not None else CoreDatabase(Path(db_path))
         self._excuses = excuses
         self._judge = judge
@@ -284,7 +286,12 @@ class InfractionSignals:
             stage, text, earlier = "follow_up", row["follow_up"], row["explanation"]
         else:
             stage, text, earlier = "explanation", row["explanation"], None
-        judgement = self._judge.judge(detail=row["detail"], facts=row["facts"] or "", explanation=text or "", earlier=earlier, appeal=stage == "appeal")
+        with self._core.transaction() as tx:
+            related = tuple(r["explanation"] for r in tx.fetch_all(
+                "SELECT explanation FROM infraction_signals WHERE user_id = ? AND kind = ? AND id != ? AND explanation IS NOT NULL AND explanation_at >= ? "
+                "ORDER BY explanation_at DESC LIMIT 3", (row["user_id"], row["kind"], signal_id, _iso(now - timedelta(days=3)))))
+        judgement = self._judge.judge(detail=row["detail"], facts=row["facts"] or "", explanation=text or "", earlier=earlier, appeal=stage == "appeal",
+                                      related=related)
         if judgement is None:
             if now - parse_iso(row["judge_pending_since"]) > JUDGE_GIVE_UP:
                 self._clear(signal_id, "unjudged", now)
@@ -294,6 +301,11 @@ class InfractionSignals:
 
     def _apply(self, row, stage: str, judgement: Judgement, now: datetime) -> OutgoingMessage:
         signal_id = row["id"]
+        if judgement.admitted:
+            def mark(tx: Transaction, _s: object) -> None:
+                tx.execute("UPDATE infraction_signals SET admitted = 1 WHERE id = ?", (signal_id,))
+
+            apply_transition(self._core, write=mark)
         if judgement.verdict is Verdict.EXPLAINED:
             self._clear(signal_id, "appeal_accepted" if stage == "appeal" else "health" if judgement.by_code else "explained", now, note=judgement.reason)
             return OutgoingMessage(text=_HEALTH if judgement.by_code else _APPEAL_ACCEPTED if stage == "appeal" else _EXPLAINED)
@@ -313,7 +325,7 @@ class InfractionSignals:
             self._clear(signal_id, "uncertain", now, note=judgement.reason)        # 2.12: still uncertain after asking -> no consequence
             return OutgoingMessage(text=_UNCERTAIN)
         self._decide(signal_id, Verdict.NOT_EXPLAINED.value, judgement.reason, RULE_GROUPS[SignalKind(row["kind"])], now)
-        return OutgoingMessage(text=_NOT_EXPLAINED, actions=_appeal_buttons(signal_id))
+        return OutgoingMessage(text=_ADMITTED if judgement.admitted else _NOT_EXPLAINED, actions=_appeal_buttons(signal_id))
 
     def _record_appeal_verdict(self, signal_id: str, judgement: Judgement, now: datetime) -> None:
         def write(tx: Transaction, _s: object) -> None:
@@ -354,7 +366,9 @@ class InfractionSignals:
             exists = tx.fetch_one("SELECT 1 FROM incidents WHERE id = ?", (signal.incident_id,))
         if exists is None:
             self._register(signal, now)                 # outside the write below: the Trust Manager opens its own transaction
-        self._confirm(signal.incident_id, f"Judged by the system: {signal.detail} Verdict: {row['verdict']}. {row['verdict_reason'] or ''}".strip(), now)
+        admitted = "admitted" in row.keys() and row["admitted"] == 1
+        self._confirm(signal.incident_id, f"Judged by the system: {signal.detail} Verdict: {row['verdict']}. {row['verdict_reason'] or ''}".strip(), now,
+                      admitted)
 
         def write(tx: Transaction, _s: object) -> bool:
             cursor = tx.execute("UPDATE infraction_signals SET status = 'confirmed', incident_registered_at = COALESCE(incident_registered_at, ?), decided_at = ? "

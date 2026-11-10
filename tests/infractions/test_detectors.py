@@ -77,10 +77,10 @@ class World:
             self.trust.register_incident_report(rule_group_id=signal.rule_group, trust_domain=signal.trust_domain, description=signal.detail,
                                                 evidence=EVIDENCE[signal.kind], now=now, incident_id=signal.incident_id)
 
-        def confirm(incident_id, evidence, now):
+        def confirm(incident_id, evidence, now, admitted=False):
             self.trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
                                         evidence_description=evidence, now=now)
-            self.confirmed.append(incident_id)
+            self.confirmed.append((incident_id, admitted))
 
         self.model = Model()
         self.signals = InfractionSignals(core=self.core, excuses=self.excuses, judge=ExplanationJudge(self.model), register_incident=register, confirm_incident=confirm)
@@ -532,6 +532,43 @@ class TestTheSystemDecides:
         assert w.signals.forget_words(USER) == 1
         row = w.q("SELECT explanation, status, verdict FROM infraction_signals")[0]
         assert row == {"explanation": None, "status": "decided", "verdict": "not_explained"}
+
+
+class TestAnAdmissionIsNotAReason:
+    """Live 2026-11-10: "I take responsibility, I wasn't answering and I apologise" was accepted as a plausible reason, three times, once as an appeal."""
+
+    def test_owning_up_counts_but_softened(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = TestTheSystemDecides()._signal(w)
+        w.model.replies = ['{"verdict": "not_explained", "admitted": true, "reason": "An apology, not a reason."}']
+        reply = TestTheSystemDecides()._answer(w, signal, "I take responsibility and I apologise.")
+        assert "sorry isn't a reason" in reply.text and w.status() == [("hygiene_duration", "decided")]
+        w.advance(NOW + GRACE)
+        assert w.confirmed == [(signal["incident_id"], True)]
+
+    def test_a_model_that_admits_and_excuses_at_once_is_read_as_not_explained(self) -> None:
+        from infractions.judge import Verdict, parse_judgement
+        assert parse_judgement('{"verdict": "explained", "admitted": true, "reason": "r"}').verdict is Verdict.NOT_EXPLAINED
+
+    def test_the_judge_is_told(self) -> None:
+        from infractions.judge import _SYSTEM
+        assert "An apology, an admission" in _SYSTEM and "is NOT an explanation" in _SYSTEM
+
+    def test_already_explained_is_judged_on_what_it_points_to(self, tmp_path) -> None:
+        w = World(tmp_path)
+        first = TestTheSystemDecides()._signal(w)
+        w.model.replies = [verdict("explained")]
+        TestTheSystemDecides()._answer(w, first, "The app timer froze.")
+        w.break_(NOW + timedelta(days=1), 45)
+        second = w.q("SELECT id FROM infraction_signals WHERE status = 'waiting'")[0]
+        w.model.replies = [verdict("explained")]
+        TestTheSystemDecides()._answer(w, second, "Already explained this one", at=NOW + timedelta(days=1, hours=2))
+        assert "The app timer froze." in w.model.prompts[-1][1]
+
+    def test_an_appeal_is_told_that_repeating_is_not_new(self) -> None:
+        seen = []
+        ExplanationJudge(lambda s, u: seen.append(u) or verdict("not_explained")).judge(detail="d", facts="f", explanation="sorry", appeal=True)
+        assert "Repeating an answer, apologising or owning up is not new information." in seen[0]
 
 
 class TestSilenceElsewhere:
