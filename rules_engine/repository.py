@@ -248,7 +248,7 @@ class RulesEngineService:
                 write_event(tx, DomainEvent(
                     event_type="lock_decision.recorded", source_module="rules_engine",
                     payload={"decision_id": result.id, "trust_domain": trust_domain, "action_type": action.value,
-                             "hours": 0, "status": result.status.value},
+                             "hours": 0, "status": result.status.value, "rule_id": rule_id, "reason": reason},
                     occurred_at=now,
                 ))
 

@@ -499,3 +499,10 @@ imports `datetime` and calls `datetime.now()`/`datetime.utcnow()`
 itself. Any function that changes state takes a `Database`/`Transaction`
 and goes through `transaction()`/`apply_transition()` — never opens its
 own `sqlite3.connect()`.
+
+## `decision_log.py` (owner, 2026-11-10)
+
+`logs/decisions.log` and `logs/release.log`, installed by `bot/discord_bot.py` at start. `consumer_registry.process_pending_events` writes each
+event after it was published, so a rolled-back event never appears. `decision()` and `release_decision()` add lines with the reasoning from the
+modules that decide (the release engine and tick, the detector judge). A key containing "score" is written as `[hidden]`. A failing log never
+stops a decision.

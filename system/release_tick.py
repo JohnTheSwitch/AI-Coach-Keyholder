@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from chaster.models import ChasterProviderObservation, ChasterProviderStatus
+from infrastructure.decision_log import release_decision
 from release_engine.service import CommitStatus, ProviderState, ReleaseEngine, ReleaseGates
 from rules_engine.limits import LOCK_DATA_MAX_AGE
 from rules_engine.models import ActionType, DecisionStatus
@@ -86,6 +87,7 @@ class ReleaseEnginePeriodicTask:
         self.conditioning = None
         # Phase J2: system.release_notice.ReleaseNotifier when messages can be sent: the user is told before a release, never left wondering.
         self.notifier = None
+        self._last_logged: tuple[str, ...] = ()
 
     @property
     def engine(self) -> ReleaseEngine:
@@ -98,6 +100,30 @@ class ReleaseEnginePeriodicTask:
     # ------------------------------------------------------------------ public
 
     def run(self, now: datetime) -> TickReport:
+        report = self._run(now)
+        notes = tuple(report.notes)
+        if notes and notes != self._last_logged:          # the decision log (owner, 2026-11-10): each change of outcome once, not every minute
+            release_decision("Release tick: " + ", ".join(notes) + ".", **self._facts(now))
+        self._last_logged = notes
+        return report
+
+    def _facts(self, now: datetime) -> dict:
+        """The reasoning behind a tick's outcome, for the decision log only."""
+        facts: dict = {}
+        try:
+            obs = self._get_obs()
+            facts.update(
+                token_balance=self._engine.get_balance(self._user), plan_waiting=self._engine.has_planned_release(self._user),
+                execution_enabled=self._can_execute, halted=bool(self._halted()), penalty_window_active=bool(self._penalty_active()),
+                supervision_active=bool(self._supervision_active()),
+            )
+            if obs is not None:
+                facts.update(lock_status=obs.status.value, lock_frozen=obs.is_frozen, frozen_since=obs.frozen_at, lock_read_at=obs.fetched_at)
+        except Exception:
+            logger.debug("Could not gather the facts for the decision log.", exc_info=True)
+        return facts
+
+    def _run(self, now: datetime) -> TickReport:
         report = TickReport()
         self.sync(now, report)
         if self._engine.open_authorizations(self._user):
@@ -127,6 +153,8 @@ class ReleaseEnginePeriodicTask:
                 report.add("plan_created")
                 planned = True
 
+        if planned and (not self._can_execute or self._halted()) and self._engine.plan_is_due(self._user, now):
+            report.add("plan_due_but_execution_off" if not self._can_execute else "plan_due_but_halted")
         if planned and self._can_execute and not self._halted() and self._engine.plan_is_due(self._user, now):
             obs = self._fresh_observation(now)
             gates = self._gates(obs, now)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from chaster.lock_client import ChasterLockApiError
 from chaster.lock_directory import LockDirectory
@@ -32,6 +32,7 @@ from trust_manager.models import ConfirmationSource, CooperationAssessment, Inci
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.infractions.wiring")
+SLEEP_GAP = timedelta(minutes=10)          # a pass this much later than planned means the PC slept
 
 __all__ = ["DetectorWiring", "build_detectors", "detector_loop", "overrun_signal"]
 
@@ -163,9 +164,17 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
 
 async def detector_loop(wiring: DetectorWiring, clock: Clock, *, initial_delay_seconds: float = 30.0) -> None:
     await asyncio.sleep(initial_delay_seconds)
+    previous = None
     while True:
         try:
-            problems = await asyncio.to_thread(wiring.run, clock.now())
+            now = clock.now()
+            # Owner, 2026-11-10: the PC slept (the process lived on, but nothing ran). Nobody could answer meanwhile, so open deadlines move by that time.
+            if previous is not None and wiring.signals is not None and now - previous > timedelta(seconds=wiring.interval_seconds) + SLEEP_GAP:
+                moved = await asyncio.to_thread(wiring.signals.extend_for_downtime, down_since=previous, back_at=now)
+                if moved:
+                    logger.info("The PC was asleep for a while: %d open question deadline(s) moved by that time.", moved)
+            previous = now
+            problems = await asyncio.to_thread(wiring.run, now)
             if problems:
                 logger.warning("Detector pass: %s", "; ".join(problems)[:300])
         except asyncio.CancelledError:

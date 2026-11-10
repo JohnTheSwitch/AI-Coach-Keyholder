@@ -30,7 +30,9 @@ Running:
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
+from pathlib import Path
 import uuid
 
 import discord
@@ -163,6 +165,8 @@ class CoachKeyholderBot(discord.Client):
         # Owner, 2026-11-10: what was sent while the PC was off is handled on start, BEFORE any deadline is judged.
         self._caught_up: asyncio.Event | None = None
         self._replay_started = False
+        self._replay_lock = asyncio.Lock()
+        self._handled_ids: collections.deque[int] = collections.deque(maxlen=500)   # a message is never answered twice (live + replay)
 
     async def setup_hook(self) -> None:
         """Called once, on this same event loop, before the websocket
@@ -274,9 +278,9 @@ class CoachKeyholderBot(discord.Client):
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
         logger.info("Ready. Listening for direct messages only (Phase 3.1 scope).")
-        if not self._replay_started:
-            self._replay_started = True
-            asyncio.create_task(self._replay_missed_dms(), name="replay-missed-dms")
+        # Every (re)connection catches up, not only the first: after the PC slept, the process lived on but its session was gone.
+        self._replay_started = True
+        asyncio.create_task(self._replay_missed_dms(), name="replay-missed-dms")
 
     async def _after_catch_up(self, coroutine) -> None:
         """Deadlines are judged only after the messages sent meanwhile were read: a reply sent while the bot was off still counts."""
@@ -290,8 +294,10 @@ class CoachKeyholderBot(discord.Client):
     async def _replay_missed_dms(self) -> None:
         """Discord never redelivers a DM sent while the bot was offline. Everything a known user sent after the last message this bot handled
         is handled now, oldest first, at the time it was SENT (a check-in answer before its deadline still counts)."""
-        replayed = 0
+        replayed, holding = 0, False
         try:
+            await self._replay_lock.acquire()
+            holding = True
             if self.gateway is None:
                 last = await asyncio.to_thread(self._last_handled_message_id)
                 if last is not None:
@@ -301,7 +307,8 @@ class CoachKeyholderBot(discord.Client):
                         try:                                            # one unknown or closed account never stops the others
                             channel = await dm_history_channel(self, int(external_id))
                             async for message in channel.history(after=discord.Object(id=last), oldest_first=True, limit=REPLAY_MAX_MESSAGES):
-                                if message.author == self.user or message.created_at < since or not (message.content or "").strip():
+                                if (message.author == self.user or message.created_at < since or not (message.content or "").strip()
+                                        or message.id in self._handled_ids):
                                     continue
                                 await self._handle_dm(message, received_at=message.created_at, late=True)
                                 replayed += 1
@@ -310,6 +317,8 @@ class CoachKeyholderBot(discord.Client):
         except Exception:
             logger.exception("Catching up on messages sent while offline failed; carrying on.")
         finally:
+            if holding:
+                self._replay_lock.release()
             if replayed:
                 logger.info("Caught up on %d message(s) sent while the bot was offline.", replayed)
             if self._caught_up is not None:
@@ -345,6 +354,9 @@ class CoachKeyholderBot(discord.Client):
         await self._handle_dm(message, received_at=self.clock.now())
 
     async def _handle_dm(self, message: discord.Message, *, received_at, late: bool = False) -> None:
+        if message.id in self._handled_ids:
+            return
+        self._handled_ids.append(message.id)
         now = received_at
 
         # Audit logging is best-effort and never blocks the actual
@@ -467,6 +479,12 @@ def main() -> None:
         raise SystemExit(1) from e
 
     logging.getLogger("ai_coach_keyholder").setLevel(config.log_level)
+    # The decision log (owner, 2026-11-10): logs/decisions.log and logs/release.log, next to bot.log. Never stops the start.
+    try:
+        from infrastructure.decision_log import install_decision_files
+        install_decision_files(Path(__file__).resolve().parents[1] / "logs")
+    except Exception:
+        logger.exception("The decision log could not be opened; decisions still reach the main log.")
 
     clock = SystemClock()
     core = CoreDatabase(config.db_path)

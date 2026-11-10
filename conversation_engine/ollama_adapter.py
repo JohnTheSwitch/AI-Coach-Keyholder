@@ -13,6 +13,7 @@ model-initiated tool calls.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 
 import requests
@@ -24,6 +25,7 @@ from conversation_engine.model_types import (
     ModelTurn,
 )
 from conversation_engine.models import ToolCallRequest
+from infrastructure.decision_log import model_call
 from conversation_engine.tools import ToolDefinition
 
 __all__ = [
@@ -225,6 +227,22 @@ class OllamaConversationModel:
 
     def _post_chat(self, *, request: ModelGenerationRequest, tools: tuple[ToolDefinition, ...],
                    response_format: dict | None = None) -> dict:
+        """Every exchange goes to logs/model.log (owner, 2026-11-10): what the model was given and what it answered, so anyone can see why."""
+        started, payload, error = time.monotonic(), None, None
+        try:
+            payload = self._post_chat_once(request=request, tools=tools, response_format=response_format)
+            return payload
+        except LLMGenerationError as exc:
+            error = str(exc)
+            raise
+        finally:
+            answer = payload.get("message") if isinstance(payload, dict) else None
+            model_call(model=self._model_name, messages=[self._serialize_message(m) for m in request.messages],
+                       tools=[t.name for t in tools], structured=response_format is not None, answer=answer, error=error,
+                       seconds=round(time.monotonic() - started, 1))
+
+    def _post_chat_once(self, *, request: ModelGenerationRequest, tools: tuple[ToolDefinition, ...],
+                        response_format: dict | None = None) -> dict:
         body: dict = {
             "model": self._model_name,
             "messages": [self._serialize_message(m) for m in request.messages],

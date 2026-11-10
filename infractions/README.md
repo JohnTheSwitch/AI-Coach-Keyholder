@@ -23,6 +23,10 @@ A model that is down or answers nonsense is never a verdict: the answer waits as
 own words are kept for the audit and erased by `forget all`. Rejected community photos (`peer_review`, through the bot's wiring) and the check-in
 escalation's Incident (adopted from `incidents`) take the same path.
 
+Every question, verdict (with its reason and whether code or the model decided), clearing and confirmation is written to `logs/decisions.log`
+(`infrastructure/decision_log.py`). After the PC slept, the detector loop moves open deadlines by the time it was asleep (`SLEEP_GAP`, 10 minutes
+over the interval).
+
 ## Files
 
 - **`signals.py`**: the path above.

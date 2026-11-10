@@ -166,3 +166,49 @@ def test_the_bot_waits_at_most_a_few_minutes() -> None:
 
 
 _ = timezone
+
+
+class TestAfterTheComputerSlept:
+    def test_a_reconnect_catches_up_again(self, bot) -> None:  # noqa: F811
+        _complete_onboarding(bot)
+        missed = _sent_at(_fake_dm_message("help", message_id=500), FIXED_TIME - timedelta(hours=1))
+        _offline(bot, [missed])
+        started = []
+        bot._replay_missed_dms = lambda: started.append(1) or asyncio.sleep(0)
+        _run(bot.on_ready())
+        _run(bot.on_ready())
+        assert len(started) == 2
+
+    def test_a_message_is_never_answered_twice(self, bot) -> None:  # noqa: F811
+        _complete_onboarding(bot)
+        missed = _sent_at(_fake_dm_message("help", message_id=500), FIXED_TIME - timedelta(hours=1))
+        _offline(bot, [missed])
+        _run(bot._replay_missed_dms())
+        _run(bot._handle_dm(missed, received_at=FIXED_TIME))
+        _run(bot._replay_missed_dms())
+        assert missed.channel.send.call_count == 1
+
+    def test_question_deadlines_move_by_the_time_asleep(self) -> None:
+        from infractions.wiring import detector_loop
+
+        class Clock:
+            times = iter([NOW, NOW + timedelta(hours=8)])
+
+            def now(self):
+                return next(self.times)
+
+        moved = []
+        wiring = Mock(interval_seconds=0, run=Mock(return_value=[]))
+        wiring.signals.extend_for_downtime = lambda **kw: moved.append(kw) or 1
+
+        async def scenario():
+            task = asyncio.create_task(detector_loop(wiring, Clock(), initial_delay_seconds=0))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            task.cancel()
+
+        try:
+            _run(scenario())
+        except (asyncio.CancelledError, StopIteration, RuntimeError):
+            pass
+        assert moved == [{"down_since": NOW, "back_at": NOW + timedelta(hours=8)}]

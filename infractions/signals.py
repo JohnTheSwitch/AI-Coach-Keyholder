@@ -30,6 +30,7 @@ from uuid import uuid4
 
 from application.models import ActionSpec, OutgoingMessage
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
@@ -159,6 +160,8 @@ class InfractionSignals:
              _iso(start) if start else None, _iso(end) if end else None))
         if cursor.rowcount != 1:
             return False
+        decision("infractions", "Detector finding: the wearer is asked to explain.", kind=kind.value, detail=detail, facts=facts,
+                 answer_by=_iso(now + GRACE))
         enqueue_in_transaction(tx, user_id=user_id, kind="infraction_wearer", dedupe_key=f"infraction:wearer:{signal_id}", text=f"{wearer_text}\n\n{ASK_TEXT}",
                                now=now, actions=_explain_buttons(signal_id))
         return True
@@ -316,6 +319,8 @@ class InfractionSignals:
         return self._apply(row, stage, judgement, now)
 
     def _apply(self, row, stage: str, judgement: Judgement, now: datetime) -> OutgoingMessage:
+        decision("infractions", f"Judge verdict on the {stage}: {judgement.verdict.value}.", kind=row["kind"], detail=row["detail"],
+                 reason=judgement.reason, decided_by="code (health/safety)" if judgement.by_code else "model", admitted=judgement.admitted or None)
         signal_id = row["id"]
         if judgement.admitted:
             def mark(tx: Transaction, _s: object) -> None:
@@ -392,6 +397,9 @@ class InfractionSignals:
             return cursor.rowcount == 1
 
         counted = apply_transition(self._core, write=write)
+        if counted:
+            decision("infractions", "Detector finding confirmed as an incident after the appeal window.", signal_id=signal.id, detail=signal.detail,
+                     verdict=row["verdict"], reason=row["verdict_reason"], admitted=admitted or None)
         if counted and not quiet:
             self._tell(signal.id, "counted", OutgoingMessage(text=_COUNTED), now)
         return 1 if counted else 0
@@ -408,6 +416,7 @@ class InfractionSignals:
 
     def _clear(self, signal_id: str, reason: str, now: datetime, *, note: str | None = None) -> bool:
         detail = note
+        decision("infractions", f"Detector question closed without consequence: {reason}.", signal_id=signal_id, note=note)
 
         def write(tx: Transaction, _s: object) -> bool:
             cursor = tx.execute("UPDATE infraction_signals SET status = 'cleared', cleared_reason = ?, decided_at = ?, verdict_reason = COALESCE(?, verdict_reason), "

@@ -59,6 +59,13 @@ Without a wearer connection the tick had nothing to observe, so it never ran. Wi
 lock with the keyholder connection (`GET /locks/{id}`) and hands it on only when the connected account's role is `keyholder` and it is `locked`. The
 release belongs to `CHASTER_EXECUTION_WEARER_USER_ID`, else `CHECK_IN_USER_ID`, else `OWNER_USER_ID`. Everything after the observation is unchanged.
 
+## The release log (`logs/release.log`, owner 2026-11-10)
+The owner wants every release decision readable from the files, the release time included. `ensure_plan` writes the planned unfreeze time,
+`commit_authorization` and `commit_backstop` write every outcome except "not due" with the gates behind it, and the tick writes each change of its
+outcome once (not every minute) with the facts: token balance, plan, halt, execution, penalty window, supervision and the last lock reading. A plan
+that is due while the halt is on or execution is off now says so (`plan_due_but_halted`, `plan_due_but_execution_off`). The time goes only to the
+log file, never into an event payload, a message or a model, which still see no time (`infrastructure/decision_log.py`).
+
 ## Phase 3: token earning and the re-freeze
 - **Earning (owner rule, superseding the per-goal token):** tokens come EXCLUSIVELY from the daily Token Progress Pool
   (`token_pool.py`, evaluated at local midnight by `system/daily_evaluation.py`): `P_daily = (0.75 * goals_met/goals_assigned

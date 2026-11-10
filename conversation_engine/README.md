@@ -700,3 +700,7 @@ v0.39 Phase G6: `IronContractContextProvider` (namespace `contract`) puts `[STAT
 ## Voice (owner, 2026-11-10)
 
 `prompt_builder.VOICE_GUIDE` follows the personality block: short, human, a keyholder's teasing confidence instead of assistant phrases, suggestive but never explicit, and warm and direct the moment pain, health or distress comes up. Style only: `_SYSTEM_BOUNDARIES` (unchanged) and the authoritative state still decide everything.
+
+## The model log (owner, 2026-11-10)
+
+`OllamaConversationModel._post_chat` writes every exchange to `logs/model.log` (`infrastructure/decision_log.model_call`): the messages it sent, the tools offered, the raw answer or the error, and how long it took. Only to that file, never to `bot.log`. Nothing a model is never given (a release time, a Trust score) can appear there.

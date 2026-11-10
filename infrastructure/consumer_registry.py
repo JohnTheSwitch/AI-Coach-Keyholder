@@ -39,6 +39,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from infrastructure.database import Database, Transaction
+from infrastructure.decision_log import log_event
 from infrastructure.outbox import ClaimedDomainEvent, claim_pending_events, consume_event, mark_published
 
 logger = logging.getLogger("ai_coach_keyholder.consumer_registry")
@@ -171,4 +172,6 @@ def process_pending_events(
         for event in claimed:
             total_ran += registry.dispatch(db, event, now=now)
         mark_published(db, [e.id for e in claimed], now)
+        for e in claimed:                       # the decision log (owner, 2026-11-10): committed events only
+            log_event(e.event_type, e.source_module, e.payload, e.occurred_at)
     return total_ran

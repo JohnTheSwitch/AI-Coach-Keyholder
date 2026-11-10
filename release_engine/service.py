@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable
 
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import release_decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
@@ -149,6 +150,7 @@ class ReleaseEngine:
             if target is None:
                 return False
             plan_id = str(uuid.uuid4())
+            created.append(target)
             tx.execute(
                 "INSERT INTO release_plans (id, user_id, status, requirement_met_at, target_at, seed, created_at, updated_at) "
                 "VALUES (?, ?, 'planned', ?, ?, ?, ?, ?)",
@@ -157,7 +159,12 @@ class ReleaseEngine:
             self._emit(tx, "release_plan.created", {"plan_id": plan_id}, now)
             return True
 
-        return apply_transition(self._core, write=write)
+        created: list[datetime] = []
+        made = apply_transition(self._core, write=write)
+        if made and created:
+            release_decision("Release planned: a token is available and the barrier is up.", planned_unfreeze_at=_iso(created[-1]),
+                             balance=self.get_balance(user_id))
+        return made
 
     def cancel_plan(self, *, user_id: str, reason: str, now: datetime) -> bool:
         def write(tx: Transaction, _s: object) -> bool:
@@ -246,6 +253,7 @@ class ReleaseEngine:
                     return CommitOutcome(status=CommitStatus.GATE_NOT_MET, reason="no_valid_window")
                 tx.execute("UPDATE release_plans SET target_at = ?, updated_at = ? WHERE id = ?",
                            (_iso(new_target), _iso(now), plan["id"]))
+                moved.append(new_target)
                 self._emit(tx, "release_plan.retargeted", {"plan_id": plan["id"]}, now)
                 return CommitOutcome(status=CommitStatus.RETARGETED, reason="window_closed")
 
@@ -264,7 +272,13 @@ class ReleaseEngine:
             self._emit(tx, "release.authorized", {"authorization_id": auth_id, "kind": "token"}, now)
             return CommitOutcome(status=CommitStatus.AUTHORIZED, authorization_id=auth_id)
 
-        return apply_transition(self._core, write=write)
+        moved: list[datetime] = []
+        outcome = apply_transition(self._core, write=write)
+        if outcome.status is not CommitStatus.NOT_DUE:
+            release_decision(f"Release commit: {outcome.status.value}.", reason=outcome.reason, authorization_id=outcome.authorization_id,
+                             new_planned_unfreeze_at=_iso(moved[-1]) if moved else None, barrier_confirmed=gates.lock_barrier_confirmed,
+                             penalty_window_active=gates.penalty_window_active, supervision_active=gates.supervision_active)
+        return outcome
 
     def commit_backstop(self, *, user_id: str, barrier_since: datetime, gates: ReleaseGates, now: datetime) -> CommitOutcome:
         """MAX_BARRIER_HOLD_HOURS safety release: spends NO token and ignores token/veto gates,
@@ -294,7 +308,11 @@ class ReleaseEngine:
             self._emit(tx, "release.authorized", {"authorization_id": auth_id, "kind": "backstop"}, now)
             return CommitOutcome(status=CommitStatus.AUTHORIZED, authorization_id=auth_id)
 
-        return apply_transition(self._core, write=write)
+        outcome = apply_transition(self._core, write=write)
+        if outcome.status is not CommitStatus.NOT_DUE:
+            release_decision(f"Maximum-hold backstop: {outcome.status.value}.", reason=outcome.reason, authorization_id=outcome.authorization_id,
+                             barrier_frozen_since=_iso(barrier_since), max_hold_hours=self._max_hold.total_seconds() / 3600)
+        return outcome
 
     # ------------------------------------------------------------------ provider progress
 

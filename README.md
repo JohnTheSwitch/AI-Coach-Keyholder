@@ -79,7 +79,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**4866 passing tests** across the whole repository (`pytest`), including
+**4880 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -485,7 +485,9 @@ usual next steps are an Ollama model (`OLLAMA_MODEL`), Chaster (`chaster connect
 as `OWNER_USER_ID`, and the Trust domains the check-ins and detectors name. Nothing ever acts on a lock until you clear the runtime halt,
 which a new install starts halted: `python -m scripts.execution_control clear "why"`.
 
-**After the PC was off** (owner, 2026-11-10), the bot catches up on start before any deadline is judged: DMs sent meanwhile are read from Discord and handled at the time they were sent (a check-in answer still counts), open question deadlines move by the downtime, the last check-in of the day that fell into it is sent late if nothing else is planned, the daily evaluation catches up missed days, the release tick re-freezes or releases what is due, and queued messages go out. The last day's conversation is restored too.
+**After the PC was off** (owner, 2026-11-10), the bot catches up on start before any deadline is judged: DMs sent meanwhile are read from Discord and handled at the time they were sent (a check-in answer still counts), open question deadlines move by the downtime, the last check-in of the day that fell into it is sent late if nothing else is planned, the daily evaluation catches up missed days, the release tick re-freezes or releases what is due, and queued messages go out. The last day's conversation is restored too. The same holds after the PC slept: every reconnection to Discord catches up on DMs (none is ever answered twice), and the detector loop moves open question deadlines by the time it was asleep.
+
+**Decision log** (owner, 2026-11-10): what the system decided and why is written next to `logs/bot.log`, one line each, so anyone with the files can follow it without the database. `logs/decisions.log` holds every committed domain event (incidents, penalty windows, lock decisions and their execution, check-in warnings, goals, ...) and the detector questions with the judge's verdict and its reason. `logs/release.log` holds only the release decisions: the planned unfreeze time, each commit or backstop with its gates, and every change of the release tick's outcome with the facts behind it (token balance, halt, execution, lock state). It contains the secret release time, so a wearer who wants the surprise should not open it. `logs/model.log` holds every exchange with the local model: the whole prompt and the raw answer or the error, so a bad reply can be traced to what the model was given and the prompt improved. Trust scores are never written. The files rotate at 5 MB and keep 5 old copies (`infrastructure/decision_log.py`).
 
 ## Running
 
