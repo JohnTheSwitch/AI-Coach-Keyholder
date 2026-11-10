@@ -168,7 +168,7 @@ class TestACheckInReply:
         w = self.world(core, proposal={**COMMIT, "text": "Read twenty pages"})
         w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
         reply = w.say(at=FIXED_TIME + timedelta(days=1))
-        assert [a.label for a in reply.actions] == ["Accept", "Decline", "Kept", "Partly", "Not kept"]
+        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept", "Accept", "Decline"]      # the earlier one first
 
     def test_someone_reporting_pain_is_not_asked_about_a_commitment(self, core) -> None:  # noqa: F811
         w = self.world(core)

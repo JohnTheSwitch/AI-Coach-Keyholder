@@ -9,6 +9,7 @@ import pytest
 from application.natural_queries import read_only_command
 from application.reply_guard import CARE_LINE, REFUSED_REPLY, finish_reply, needs_care_line, reveals_internals
 from application.service import ApplicationService
+from coach.desk import Outcome
 from coach.safety import reports_done, strip_record_claims
 from conversation_engine.context_providers.coach_provider import CoachContextProvider
 from conversation_engine.prompt_builder import _render_coach
@@ -139,6 +140,61 @@ class TestMoreWaysOfSayingIt:
     @pytest.mark.parametrize("text", ["I think that should be considered as a done commitment", "that counts as done", "consider it done", "I did my reading", "I\u00b4ve worked out today", "consider that finished"])
     def test_these_bring_the_buttons(self, text) -> None:
         assert reports_done(text)
+
+
+class TestCommitmentTextHasNoDayWords:
+    """A commitment stored as "... tomorrow" was read back on its own day as the next day's, and the model planned around it as if it were still ahead."""
+
+    @pytest.mark.parametrize(("text", "expected"), [("Do a full workout tomorrow", "Do a full workout"), ("Stretch for 10 minutes today", "Stretch for 10 minutes"),
+                                                    ("Read 20 pages tonight, before bed", "Read 20 pages, before bed"), ("Walk this evening", "Walk"),
+                                                    ("Go for a run by tomorrow", "Go for a run"), ("Read tomorrow's chapter", "Read tomorrow's chapter"),
+                                                    ("Tomorrow", "Tomorrow"), ("Study for 30 minutes", "Study for 30 minutes")])
+    def test_the_words(self, text, expected) -> None:
+        from coach.desk import without_day_words
+        assert without_day_words(text) == expected
+
+    def test_they_are_not_stored(self, core) -> None:  # noqa: F811
+        w = World(core)
+        proposal = w.desk.submit(w.user, {**COMMIT, "text": "Do a full workout tomorrow"}, FIXED_TIME).proposal
+        w.desk.decide(w.user, proposal.id, accept=True, now=FIXED_TIME)
+        with core.transaction() as tx:
+            assert tx.fetch_one("SELECT text FROM daily_commitments")["text"] == "Do a full workout"
+
+    def test_an_older_one_is_shown_without_them(self, core) -> None:  # noqa: F811
+        w = World(core)
+        w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
+        with core.raw_connection() as conn:          # stored before this fix
+            conn.execute("UPDATE daily_commitments SET text = 'Do a full workout tomorrow'")
+            conn.commit()
+        assert w.desk.context(w.user, FIXED_TIME)["commitments"][0]["text"] == "Do a full workout"
+        assert w.desk.commitment_to_review(FIXED_TIME + timedelta(days=1)).text == "Do a full workout"
+
+
+class TestAnEarlierCommitmentIsAskedAboutFirst:
+    """The coach planned the next day while the previous day's commitment was still open and never asked about it, because the card came only after a check-in."""
+
+    def _yesterday(self, core, **kwargs):  # noqa: F811
+        w = World(core, **kwargs)
+        w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
+        return w
+
+    def test_it_comes_before_a_new_proposal(self, core) -> None:  # noqa: F811
+        reply = self._yesterday(core, proposal={**COMMIT, "text": "Leg day"}).say("Tomorrow I want leg day.", at=FIXED_TIME + timedelta(days=1))
+        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept", "Accept", "Decline"]
+        assert reply.text.index("How did it go?") < reply.text.index("Proposed commitment")
+
+    def test_it_comes_up_once_a_day_in_ordinary_chat(self, core) -> None:  # noqa: F811
+        w = self._yesterday(core)
+        later = FIXED_TIME + timedelta(days=1)
+        assert [a.label for a in w.say("Hi.", at=later).actions] == ["Kept", "Partly", "Not kept"]
+        assert w.say("Nice weather.", at=later + timedelta(minutes=5), message_id="m2").actions == ()
+
+    def test_not_after_it_is_answered(self, core) -> None:  # noqa: F811
+        w = self._yesterday(core)
+        later = FIXED_TIME + timedelta(days=1)
+        commitment = w.desk.commitment_to_review(later)
+        w.desk.record_outcome(w.user, commitment.id, Outcome.KEPT, later)
+        assert w.say("Hi.", at=later).actions == ()
 
 
 class TestTimeOfDay:

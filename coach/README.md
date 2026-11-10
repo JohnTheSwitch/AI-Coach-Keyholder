@@ -48,6 +48,10 @@ Each refusal stores a reason code in `coach_refusals`, never the text. `python -
 
 `forget all` erases proposals, refusals and commitments. Goals stay as agreed records, and Trust evidence is append-only.
 
+A commitment's text never says "today", "tomorrow" or "tonight" (`without_day_words`): it has its own date, and the word turned false the next day. Older rows
+are shown without the words too. An earlier day's open commitment is asked about before anything new is planned: its Kept / Partly / Not kept card comes first,
+with every proposal, after a check-in, when the user says it is done, and otherwise once a local day in any conversation.
+
 With `ENABLE_COACHING_MEMORY` on, check-in replies are kept as dated quotes through Coaching Memory's own filters (`system/coach_dm.py`).
 
 ## Turning it on

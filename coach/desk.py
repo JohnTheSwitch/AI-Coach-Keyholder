@@ -51,7 +51,7 @@ logger = logging.getLogger("ai_coach_keyholder.coach.desk")
 
 __all__ = [
     "CoachDesk", "Proposal", "SubmitResult", "Commitment", "Outcome", "MAX_PROPOSALS_PER_DAY", "MAX_COMMITMENTS_PER_DAY", "MAX_ACTIVE_GOALS",
-    "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW",
+    "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW", "without_day_words",
 ]
 
 MAX_PROPOSALS_PER_DAY = 3
@@ -65,6 +65,14 @@ TASK_WINDOW = timedelta(days=7)
 _SIMILAR = 0.6
 _WORD = re.compile(r"[a-z0-9]+")
 _STALE_CLAIM = timedelta(minutes=5)
+_DAY_WORDS = re.compile(r"\s*,?\s*\b(?:(?:for |by )?(?:today|tomorrow|tonight)|this (?:morning|afternoon|evening))\b(?!['\u2019\u00b4])", re.IGNORECASE)
+
+
+def without_day_words(text: str) -> str:
+    """A commitment has its own date, so "today" or "tomorrow" in its text turns false the next day: "Do a full workout tomorrow" was read back on its own
+    day as the next day's. The words are dropped when it is stored and when an older one is shown. Unchanged if nothing else would be left."""
+    cleaned = re.sub(r"\s{2,}", " ", _DAY_WORDS.sub("", text)).strip(" ,;-")
+    return cleaned or text
 
 
 class Outcome(StrEnum):
@@ -184,7 +192,7 @@ class CoachDesk:
                                  (self.user_id, for_date.isoformat()))["n"]
         if count >= MAX_COMMITMENTS_PER_DAY:
             return Refusal(reason="too_many_commitments")
-        return {"text": action.text, "for_date": for_date.isoformat(), "goal_group_id": goal["id"] if goal else None,
+        return {"text": without_day_words(action.text), "for_date": for_date.isoformat(), "goal_group_id": goal["id"] if goal else None,
                 "goal_title": goal["title"] if goal else None, "task_assignment_id": task_id, "task_title": task_title}
 
     def _limit_refusal(self, kind: ActionKind, fingerprint: str, now: datetime) -> str | None:
@@ -352,7 +360,7 @@ class CoachDesk:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT id, for_date, text FROM daily_commitments WHERE user_id = ? AND status = 'open' AND for_date < ? "
                                "ORDER BY for_date, created_at LIMIT 1", (self.user_id, (today + timedelta(days=1) if include_today else today).isoformat()))
-        return None if row is None else Commitment(id=row["id"], for_date=date.fromisoformat(row["for_date"]), text=row["text"])
+        return None if row is None else Commitment(id=row["id"], for_date=date.fromisoformat(row["for_date"]), text=without_day_words(row["text"]))
 
     def context(self, user_id: str, now: datetime) -> dict | None:
         """Everything the model sees about goals, commitments and tasks. Plain facts for this user; no Trust, no ids, no domain name."""
@@ -378,7 +386,7 @@ class CoachDesk:
         return {
             "time_of_day": self.time_of_day(now) if self.time_of_day is not None else None,
             "goals": goals,
-            "commitments": [{"day": _day_word(date.fromisoformat(c["for_date"]), today), "text": c["text"], "status": c["status"]} for c in commitments],
+            "commitments": [{"day": _day_word(date.fromisoformat(c["for_date"]), today), "text": without_day_words(c["text"]), "status": c["status"]} for c in commitments],
             "tasks": {"completed": sum(1 for t in tasks if t["status"] == "completed"), "cancelled": sum(1 for t in tasks if t["status"] == "cancelled"),
                       "recent": [{"title": t["title"], "status": t["status"]} for t in tasks[:3] if t["title"]]},
             "open_proposal": open_proposal,
@@ -390,7 +398,7 @@ class CoachDesk:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT text FROM daily_commitments WHERE user_id = ? AND for_date = ? AND status = 'open' ORDER BY created_at LIMIT 1",
                                (self.user_id, today))
-        opening = f' Your commitment for today: "{row["text"]}".' if row is not None else ""
+        opening = f' Your commitment for today: "{without_day_words(row["text"])}".' if row is not None else ""
         return f"{opening} Is there one small thing you want to commit to next?"
 
     # ------------------------------------------------------------------ internals

@@ -102,6 +102,7 @@ class CoachDm:
         self._core = core
         self._clock = clock
         self._memory = memory
+        self._reminded: dict[str, date] = {}               # commitment id -> the local day its card was last shown outside a check-in
 
     # ------------------------------------------------------------------ the engine's port
 
@@ -133,8 +134,7 @@ class CoachDm:
 
     def present(self, outgoing: OutgoingMessage, *, user_id: str, outcome: object, check_in_reply: bool, now: datetime, user_message: str = "") -> OutgoingMessage:
         cards: list[tuple[str, tuple[ActionSpec, ...]]] = []
-        if isinstance(outcome, SubmitResult) and outcome.proposal is not None:
-            cards.append(proposal_card(outcome.proposal))
+        proposed = isinstance(outcome, SubmitResult) and outcome.proposal is not None
         if check_in_reply and user_id == self._desk.user_id:
             self._remember_check_in(user_id, user_message, now)
         reply, claimed = strip_record_claims(outgoing.text)      # only the buttons record anything, whatever a model says it did
@@ -142,11 +142,15 @@ class CoachDm:
             logger.info("A reply claiming something was recorded was corrected.")
             outgoing = replace(outgoing, text=reply)
         done = reports_done(user_message) or claimed
-        if (check_in_reply or done) and user_id == self._desk.user_id:
-            # Someone reporting pain or an emergency is never asked to account for a commitment in the same breath.
-            commitment = None if mentions_safety_issue(user_message) else self._desk.commitment_to_review(now, include_today=done)
-            if commitment is not None:
+        if user_id == self._desk.user_id and not mentions_safety_issue(user_message):
+            # Someone reporting pain or an emergency is never asked to account for a commitment in the same breath. An earlier day's open commitment is
+            # asked about before anything new is planned: with every proposal, and otherwise once a day in any conversation, not only after a check-in.
+            commitment = self._desk.commitment_to_review(now, include_today=done)
+            if commitment is not None and (check_in_reply or done or proposed or self._reminded.get(commitment.id) != self._desk.today(now)):
+                self._reminded[commitment.id] = self._desk.today(now)
                 cards.append(review_card(commitment))
+        if proposed:
+            cards.append(proposal_card(outcome.proposal))
         if claimed:
             has_card = any(action.action_id.startswith(("coach:kept", "coach:partly", "coach:missed")) for _, actions in cards for action in actions)
             note = "Nothing is recorded until you press a button below." if has_card else "Nothing was recorded: there is no open commitment to mark."
