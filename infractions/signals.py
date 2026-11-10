@@ -419,7 +419,8 @@ class InfractionSignals:
         for incident in orphans:
             created = parse_iso(incident["created_at"])
             self.raise_signal(user_id=self._wearer, kind=ADOPTED_RULE_GROUPS[incident["rule_group_id"]], subject_id=incident["id"], trust_domain=incident["trust_domain"],
-                              detail=_ADOPTED_DETAIL[incident["rule_group_id"]], wearer_text=_ADOPTED_TEXT[incident["rule_group_id"]], now=now,
+                              detail=_ADOPTED_DETAIL[incident["rule_group_id"]], now=now,
+                              wearer_text=_ADOPTED_TEXT[incident["rule_group_id"]].format(day=f"{created.strftime('%A')} {created.day} {created.strftime('%B')}"),
                               facts=f"{incident['description']} Registered at {incident['created_at']}.", window=(created, created), incident_id=incident["id"])
 
     def set_wearer(self, user_id: str | None) -> None:
@@ -428,4 +429,4 @@ class InfractionSignals:
 
 
 _ADOPTED_DETAIL = {"CHECKIN_REPEATED_NONCOMPLIANCE": "Several check-ins in a row were missed."}
-_ADOPTED_TEXT = {"CHECKIN_REPEATED_NONCOMPLIANCE": "Several check-ins in a row went unanswered. Was there a reason?"}
+_ADOPTED_TEXT = {"CHECKIN_REPEATED_NONCOMPLIANCE": "{day}: you left my check-ins hanging, several in a row. What was going on?"}

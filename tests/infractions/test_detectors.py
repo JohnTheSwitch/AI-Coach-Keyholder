@@ -556,6 +556,7 @@ class TestSilenceElsewhere:
                                                     evidence=EVIDENCE[SignalKind.CHECKIN_NONCOMPLIANCE], now=NOW)
         w.advance(NOW + timedelta(minutes=1))
         assert w.status() == [("checkin_noncompliance", "waiting")] and len(w.wearer_cards()) == 1
+        assert w.wearer_cards()[0]["text"].startswith("Wednesday 4 November:")          # three of these came at once: each says which day it is
         w.advance(NOW + timedelta(minutes=2))
         assert len(w.status()) == 1
         w.advance(NOW + GRACE + timedelta(minutes=5))
