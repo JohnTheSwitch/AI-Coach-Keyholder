@@ -154,6 +154,9 @@ class ApplicationService:
         # Callable(user_id, text, now) -> OutgoingMessage | None: the exemption entry point (exemptions/service.py, injected by the bot). The word opens the
         # buttons; the buttons commit. Deterministic and BEFORE any model.
         self._exemption_reply = exemption_reply
+        # Set by the bot after the detectors are built: an object with `capture(user_id, text, now) -> OutgoingMessage | None` (the wearer's answer to a
+        # detector's question, after they pressed Explain or Appeal) and `forget_words(user_id)`. Deterministic routing, before any model.
+        self.explanations = None
         self._clock = clock                                  # only a button press needs it: a message brings its own time
 
         self.user_service = UserService(self.db_path, core=self._core)
@@ -276,6 +279,11 @@ class ApplicationService:
             # Phase J1 slice 2: "who can see my photos?" / "stop community review" -> the consent overview with buttons (owner only).
             if self._review_consent_reply is not None and self._is_owner(context) and is_review_consent_query(incoming.text):
                 return self._answer_review_consent()
+
+            if self.explanations is not None:
+                answered = self.explanations.capture(user.id, incoming.text, incoming.received_at)
+                if answered is not None:
+                    return answered
 
             if self._exemption_reply is not None:
                 exemption = self._exemption_reply(user.id, incoming.text, incoming.received_at)
@@ -1031,6 +1039,8 @@ class ApplicationService:
         if self._telemetry is not None:
             erased = self._telemetry.forget_all(ctx.user.id)
             parts.append(f"Erased {erased} behavioral telemetry record{'' if erased == 1 else 's'}.")
+        if self.explanations is not None and self.explanations.forget_words(ctx.user.id):
+            parts.append("Your answers to my questions are erased; what was decided stays.")
         if self._coach is not None:
             erased = self._coach.forget_all(ctx.user.id)
             parts.append(f"Erased {erased} coach proposal{'' if erased == 1 else 's'} and commitment{'' if erased == 1 else 's'}. Your goals stay.")

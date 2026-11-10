@@ -48,10 +48,8 @@ MAX_FOLLOW_GAP_INTERVALS = 3                # openings not seen for longer than 
 
 OPENING_QUESTION = ("I saw your lock open for a hygiene opening. Was this a planned break, or a health or comfort need? Either is fine, and a health need "
                     "never counts against anything.")
-DURATION_TEXT = ("Your planned hygiene break ran longer than allowed. If it was really a health or safety need, tell me below and that's the end of it. "
-                 "Otherwise it goes to your keyholder to look at.")
-FREQUENCY_TEXT = ("You've had more planned hygiene breaks this week than allowed. If this one was really a health or safety need, tell me below and it doesn't count. "
-                  "Otherwise it goes to your keyholder to look at.")
+DURATION_TEXT = "Your planned hygiene break ran longer than allowed. Why?"
+FREQUENCY_TEXT = "You've had more planned hygiene breaks this week than allowed. Why this one?"
 DURATION_DETAIL = "A planned hygiene break ran longer than allowed."
 FREQUENCY_DETAIL = "There were more planned hygiene breaks this week than allowed."
 
@@ -160,14 +158,19 @@ class HygieneWatch:
         tx.execute("UPDATE hygiene_openings SET evaluated_at = ? WHERE id = ?", (_iso(now), row["id"]))
         opened, closed = parse_iso(row["opened_at"]), parse_iso(row["closed_at"])
         raised = 0
-        if row["duration_known"] and closed - opened > timedelta(minutes=policy.session_minutes) + OVERRUN_GRACE:
-            raised += self._signals.raise_in_transaction(tx, user_id=self._user, kind=SignalKind.HYGIENE_DURATION, subject_id=row["id"], trust_domain=self._domain,
-                                                         detail=DURATION_DETAIL, wearer_text=DURATION_TEXT, now=now)
         count = tx.fetch_one("SELECT COUNT(*) AS n FROM hygiene_openings WHERE user_id = ? AND classification = 'planned' AND opened_at > ? AND opened_at <= ?",
                              (self._user, _iso(opened - ROLLING_WEEK), row["opened_at"]))["n"]
+        # For the judge only, never the wearer: the limits come from Trust.
+        facts = (f"The wearer answered 'planned break'. Opened {row['opened_at']}, closed {row['closed_at']}: {int((closed - opened).total_seconds() // 60)} minutes"
+                 f"{'' if row['duration_known'] else ' (the close time is uncertain)'}. Allowed: {policy.session_minutes} minutes per break "
+                 f"(plus {int(OVERRUN_GRACE.total_seconds() // 60)} minutes of grace) and {policy.breaks_per_week} planned breaks per rolling week; this was break "
+                 f"number {count} in the last 7 days.")
+        if row["duration_known"] and closed - opened > timedelta(minutes=policy.session_minutes) + OVERRUN_GRACE:
+            raised += self._signals.raise_in_transaction(tx, user_id=self._user, kind=SignalKind.HYGIENE_DURATION, subject_id=row["id"], trust_domain=self._domain,
+                                                         detail=DURATION_DETAIL, wearer_text=DURATION_TEXT, now=now, facts=facts, window=(opened, closed))
         if count > policy.breaks_per_week:
             raised += self._signals.raise_in_transaction(tx, user_id=self._user, kind=SignalKind.HYGIENE_FREQUENCY, subject_id=row["id"], trust_domain=self._domain,
-                                                         detail=FREQUENCY_DETAIL, wearer_text=FREQUENCY_TEXT, now=now)
+                                                         detail=FREQUENCY_DETAIL, wearer_text=FREQUENCY_TEXT, now=now, facts=facts, window=(opened, closed))
         return raised
 
     def _observe(self, lock_id: str, opened_at: str | None, now: datetime) -> None:

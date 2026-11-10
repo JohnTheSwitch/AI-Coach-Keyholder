@@ -39,8 +39,7 @@ CLOCK_MARGIN = timedelta(minutes=5)         # a report this close to the lock's 
 CURRENT_CLAIM = timedelta(hours=1)          # only a recent report can be compared with Chaster's present state
 
 MISMATCH_DETAIL = "A lock report said locked, but Chaster shows every worn lock had already ended."
-MISMATCH_TEXT = ("You reported yourself as locked, but Chaster shows your lock had already ended by then. If there was a health or safety reason, tell me below and "
-                 "that's the end of it. Otherwise it goes to your keyholder to look at.")
+MISMATCH_TEXT = "You reported yourself as locked, but Chaster shows your lock had already ended by then. Explain."
 UNLOCKED_NOTE = "For your information: the wearer reported being unlocked while Chaster shows a lock as locked. Nothing was recorded against anyone."
 
 
@@ -114,14 +113,17 @@ class LockClaimWatch:
         if self._excuses.reason(self._user, reported_at, reported_at) is not None:
             self._record(row["id"], "excused", now)
             return
-        self._record(row["id"], "contradicted", now, raises=True)
+        facts = (f"Reported 'locked' at {row['reported_at']}. Chaster lists {len(locks)} worn lock(s), all unlocked; the last one ended at {_iso(max(ended))}, "
+                 f"{int((reported_at - max(ended)).total_seconds() // 60)} minutes before the report.")
+        self._record(row["id"], "contradicted", now, raises=True, facts=facts, window=(reported_at, reported_at))
 
-    def _record(self, report_id: str, outcome: str, now: datetime, *, raises: bool = False, note: bool = False) -> None:
+    def _record(self, report_id: str, outcome: str, now: datetime, *, raises: bool = False, note: bool = False, facts: str = "",
+                window: tuple[datetime, datetime] | None = None) -> None:
         def write(tx: Transaction, _s: object) -> None:
             tx.execute("INSERT OR IGNORE INTO lock_claim_checks (report_id, outcome, checked_at) VALUES (?, ?, ?)", (report_id, outcome, _iso(now)))
             if raises:
                 self._signals.raise_in_transaction(tx, user_id=self._user, kind=SignalKind.LOCK_CLAIM, subject_id=report_id, trust_domain=self._domain,
-                                                   detail=MISMATCH_DETAIL, wearer_text=MISMATCH_TEXT, now=now)
+                                                   detail=MISMATCH_DETAIL, wearer_text=MISMATCH_TEXT, now=now, facts=facts, window=window)
             if note and self._owner:
                 enqueue_in_transaction(tx, user_id=self._owner, kind="lock_claim_note", dedupe_key=f"lock_claim:note:{report_id}", text=UNLOCKED_NOTE, now=now)
 

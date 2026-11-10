@@ -40,6 +40,10 @@ undelivered message is retried with the next poll; if the watch recovers before 
 `notices.py` turns the rejection notice into an embed ("Photo review rejected": lock, votes, incident id, how to decide) carrying the
 Confirm / Dismiss buttons, and the watch alert / recovery note into red / green embeds. The plain text remains the fallback.
 
+## The wearer is asked first (owner, 2026-11-10)
+
+With the detectors' path active (the bot's default), a rejection is not an UNCONFIRMED Incident for a keyholder button: it becomes the same question every detector asks (`infractions/README.md`). The wearer explains, the system judges, and an unexplained rejection is confirmed by the system itself. The owner still gets the poll-health alerts. The buttons and the CLI below remain only for the case without that path.
+
 ## The keyholder's decision: Discord buttons
 
 The owner's DM about a rejection carries two buttons, **Confirm Penalty** and **Dismiss Incident** (`discord_buttons.py`). They call the

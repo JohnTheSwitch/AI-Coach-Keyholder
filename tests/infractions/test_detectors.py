@@ -12,7 +12,8 @@ from chaster.managed_locks import LockRole, ManagedLock, parse_lock
 from infractions.excuses import Excuses
 from infractions.hygiene import ROLLING_WEEK, HygieneWatch, OpeningNotAvailable, parse_opened_at, policy_for
 from infractions.lock_claims import LockClaimWatch
-from infractions.signals import EVIDENCE, GRACE, RULE_GROUPS, Decision, InfractionSignals, SignalKind
+from infractions.judge import ExplanationJudge
+from infractions.signals import APPEAL_WINDOW, EVIDENCE, GRACE, JUDGE_GIVE_UP, RULE_GROUPS, UNANSWERED_RULE_GROUP, InfractionSignals, SignalKind
 from infractions.wiring import DetectorWiring, build_detectors
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import iso
@@ -40,6 +41,24 @@ def _lock(status="locked", unlocked_at=None, emergency=None, lock_id=LOCK) -> Ma
                        keyholder_chaster_id=None, keyholder_username=None, unlocked_at=unlocked_at, emergency_unlocked=emergency)
 
 
+class Model:
+    """The language model's port: scripted verdicts, every prompt kept. An exception or an unknown answer is "not judged yet"."""
+
+    def __init__(self) -> None:
+        self.replies, self.prompts = [], []
+
+    def __call__(self, system, user):
+        self.prompts.append((system, user))
+        reply = self.replies.pop(0) if self.replies else RuntimeError("model down")
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+def verdict(word, reason="Because."):
+    return '{"verdict": "%s", "reason": "%s"}' % (word, reason)
+
+
 class World:
     def __init__(self, tmp_path, *, score=HIGH_TRUST) -> None:
         self.core = CoreDatabase(tmp_path / "d.db")
@@ -55,15 +74,17 @@ class World:
         self.confirmed = []
 
         def register(signal, now):
-            self.trust.register_incident_report(rule_group_id=RULE_GROUPS[signal.kind], trust_domain=signal.trust_domain, description=signal.detail,
+            self.trust.register_incident_report(rule_group_id=signal.rule_group, trust_domain=signal.trust_domain, description=signal.detail,
                                                 evidence=EVIDENCE[signal.kind], now=now, incident_id=signal.incident_id)
 
         def confirm(incident_id, evidence, now):
-            self.trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.KEYHOLDER_REVIEW,
+            self.trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
                                         evidence_description=evidence, now=now)
             self.confirmed.append(incident_id)
 
-        self.signals = InfractionSignals(core=self.core, owner_user_id=USER, excuses=self.excuses, register_incident=register, confirm_incident=confirm)
+        self.model = Model()
+        self.signals = InfractionSignals(core=self.core, excuses=self.excuses, judge=ExplanationJudge(self.model), register_incident=register, confirm_incident=confirm)
+        self.signals.set_wearer(USER)
         self.locks, self.problems, self.opening, self.read_error = (_lock(),), [], None, None
         self.score = score
 
@@ -321,97 +342,230 @@ class TestReads:
         assert w.hygiene_dm.press(discord_user_id="999", action="health", ident=ident).text == "This isn't yours to answer."
 
 
-class TestKeyholderDecides:
-    def _open_signal(self, w):
-        w.break_(NOW, 45)
-        w.advance(NOW + GRACE + timedelta(hours=1))
+class TestTheSystemDecides:
+    """Owner, 2026-11-10: there is no second person. The wearer is asked, the answer is judged, and the system confirms what stays unexplained."""
+
+    def _signal(self, w, minutes=45):
+        w.break_(NOW, minutes)
         return w.q("SELECT id, incident_id FROM infraction_signals")[0]
 
-    def test_after_the_grace_there_is_one_unconfirmed_incident_and_a_card(self, tmp_path) -> None:
+    def _answer(self, w, signal, text, at=NOW + timedelta(hours=1), action="explain"):
+        w.at = at
+        w.dm.press(discord_user_id="42", action=action, ident=signal["id"])
+        return w.signals.capture(USER, text, at)
+
+    def test_the_question_has_explain_and_health_and_no_keyholder(self, tmp_path) -> None:
         w = World(tmp_path)
-        self._open_signal(w)
+        self._signal(w)
+        card = w.wearer_cards()[0]
+        assert "Explain" in card["actions_json"] and "health or safety" in card["actions_json"] and "keyholder" not in card["text"].lower()
+        assert w.q("SELECT * FROM notifications WHERE kind = 'infraction_keyholder'") == []
+
+    def test_an_accepted_explanation_clears_it(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("explained")]
+        reply = self._answer(w, signal, "The app timer froze and I could not relock until it updated.")
+        assert "doesn't count" in reply.text and w.status() == [("hygiene_duration", "cleared")]
+        w.advance(NOW + GRACE * 3)
+        assert w.incidents() == []
+
+    def test_the_model_checks_against_the_facts(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("explained")]
+        self._answer(w, signal, "It was quick.")
+        system, user = w.model.prompts[0]
+        assert "Do not simply believe it" in system and "45 minutes" in user and "<<<EXPLANATION\nIt was quick.\nEXPLANATION>>>" in user
+
+    def test_health_is_decided_by_code_without_a_model(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        reply = self._answer(w, signal, "My skin got irritated and I had to wash it properly.")
+        assert w.model.prompts == [] and "doesn't count" in reply.text and w.status() == [("hygiene_duration", "cleared")]
+
+    def test_unclear_asks_once_more_and_still_unclear_never_counts(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("unclear"), verdict("unclear")]
+        assert "a little more" in self._answer(w, signal, "Stuff happened.").text
+        reply = w.signals.capture(USER, "Just stuff, really.", NOW + timedelta(hours=1, minutes=5))
+        assert "can't be sure" in reply.text and w.status() == [("hygiene_duration", "cleared")]
+
+    def test_not_explained_counts_after_the_appeal_time(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained")]
+        reply = self._answer(w, signal, "I just felt like it.")
+        assert "appeal" in reply.text.lower() and [a.label for a in reply.actions][0] == "Appeal" and w.status() == [("hygiene_duration", "decided")]
+        w.advance(NOW + timedelta(hours=1) + APPEAL_WINDOW - timedelta(minutes=1))
+        assert w.incidents() == []
+        w.advance(NOW + timedelta(hours=1) + APPEAL_WINDOW + timedelta(minutes=1))
         incident = w.incidents()[0]
-        assert incident["confirmation"] == "unconfirmed" and incident["rule_group_id"] == "HYGIENE_MISUSE" and incident["trust_domain"] == DOMAIN
-        assert len(w.q("SELECT * FROM notifications WHERE kind = 'infraction_keyholder'")) == 1
+        assert incident["confirmation"] == "confirmed" and incident["rule_group_id"] == "HYGIENE_MISUSE" and w.status() == [("hygiene_duration", "confirmed")]
 
-    def test_an_open_signal_changes_nothing_until_the_keyholder_presses(self, tmp_path) -> None:
+    def test_an_accepted_appeal_clears_it(self, tmp_path) -> None:
         w = World(tmp_path)
-        before = w.trust.get_domain_state(DOMAIN).score
-        self._open_signal(w)
-        assert w.trust.get_domain_state(DOMAIN).score == before and w.confirmed == []
-        assert run_periodic_cycle(w.core, "p", FrozenClock(NOW + GRACE * 2), rules_engine=None, executor=None)
-        assert w.q("SELECT * FROM incident_warnings") == [] and w.q("SELECT * FROM penalty_windows") == []
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained"), verdict("explained")]
+        self._answer(w, signal, "I just felt like it.")
+        reply = self._answer(w, signal, "I forgot: the app showed the wrong time.", at=NOW + timedelta(hours=2), action="appeal")
+        assert "doesn't count" in reply.text and w.status() == [("hygiene_duration", "cleared")]
+        w.advance(NOW + GRACE * 3)
+        assert w.incidents() == []
 
-    def test_nothing_in_the_detectors_can_confirm(self) -> None:
-        for name in ("hygiene.py", "lock_claims.py"):
-            names = {n.attr for n in ast.walk(ast.parse((ROOT / "infractions" / name).read_text(encoding="utf-8"))) if isinstance(n, ast.Attribute)}
-            assert not names & {"decide", "confirm_incident", "_confirm"}
+    def test_a_rejected_appeal_counts_at_once_and_only_one_appeal(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained"), verdict("not_explained")]
+        self._answer(w, signal, "I just felt like it.")
+        assert "doesn't change" in self._answer(w, signal, "Still felt like it.", at=NOW + timedelta(hours=2), action="appeal").text
+        assert w.incidents()[0]["confirmation"] == "confirmed"
+        assert w.dm.press(discord_user_id="42", action="appeal", ident=signal["id"]).text.startswith("You can appeal once")
+        assert "Do not simply believe it" in w.model.prompts[1][0] and "APPEAL" in w.model.prompts[1][1]
+
+    def test_silence_about_a_hygiene_break_never_counts(self, tmp_path) -> None:
+        """An unanswered break may be exactly the health need Mandatory Access exists for (3.9)."""
+        w = World(tmp_path)
+        self._signal(w)
+        w.advance(NOW + GRACE + timedelta(hours=1))
+        w.advance(NOW + GRACE * 3)
+        assert w.status() == [("hygiene_duration", "cleared")] and w.incidents() == []
+
+    def test_a_model_that_is_down_is_never_a_verdict(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        assert "shortly" in self._answer(w, signal, "The app crashed.").text
+        assert w.status() == [("hygiene_duration", "judging")]
+        w.advance(NOW + GRACE * 2)                                   # still down, and the deadline does not apply to an answer
+        assert w.status() == [("hygiene_duration", "judging")]
+        w.model.replies = [verdict("explained")]
+        w.advance(NOW + GRACE * 2 + timedelta(minutes=5))
+        assert w.status() == [("hygiene_duration", "cleared")]
+
+    def test_an_answer_never_judged_is_dropped(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        self._answer(w, signal, "The app crashed.")
+        w.advance(NOW + timedelta(hours=1) + JUDGE_GIVE_UP + timedelta(minutes=1))
+        assert w.status() == [("hygiene_duration", "cleared")] and w.incidents() == []
+
+    def test_an_ordinary_message_is_not_an_answer(self, tmp_path) -> None:
+        w = World(tmp_path)
+        self._signal(w)
+        assert w.signals.capture(USER, "Good morning!", NOW + timedelta(hours=1)) is None
+
+    def test_an_answer_is_only_taken_soon_after_explain(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.at = NOW + timedelta(hours=1)
+        w.dm.press(discord_user_id="42", action="explain", ident=signal["id"])
+        assert w.signals.capture(USER, "Late answer.", NOW + timedelta(hours=3)) is None
+
+    def test_only_the_wearer_can_answer(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        assert w.dm.press(discord_user_id="99", action="explain", ident=signal["id"]).text == "This isn't yours to answer."
+        assert w.signals.press(user_id="someone", signal_id=signal["id"], action="health", now=NOW).text == "This isn't yours to answer."
+
+    def test_the_old_buttons_decide_nothing(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        assert "Nobody decides this by button" in w.dm.press(discord_user_id="42", action="confirm", ident=signal["id"]).text
+        assert w.status() == [("hygiene_duration", "waiting")]
+
+    def test_health_still_ends_it_after_a_verdict(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained")]
+        self._answer(w, signal, "No reason.")
+        assert "doesn't count" in w.dm.press(discord_user_id="42", action="health", ident=signal["id"]).text
+        w.advance(NOW + GRACE * 3)
+        assert w.incidents() == []
 
     def test_a_confirmed_first_overrun_is_a_warning_and_never_a_window(self, tmp_path) -> None:
         w = World(tmp_path)
-        signal = self._open_signal(w)
-        at = NOW + GRACE * 2
-        w.at = at
-        assert w.dm.press(discord_user_id="42", action="confirm", ident=signal["id"]).text.startswith("Confirmed")
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained")]
+        self._answer(w, signal, "No reason.")
+        at = NOW + GRACE
+        w.advance(at)
         assert run_periodic_cycle(w.core, "p", FrozenClock(at), rules_engine=None, executor=None)
         assert len(w.q("SELECT * FROM incident_warnings")) == 1 and w.q("SELECT * FROM penalty_windows") == []
 
     def test_a_confirmed_second_overrun_reaches_the_penalty_engine(self, tmp_path) -> None:
         w = World(tmp_path)
-        first = self._open_signal(w)
-        at = NOW + GRACE * 2
-        w.at = at
-        w.dm.press(discord_user_id="42", action="confirm", ident=first["id"])
+        first = self._signal(w)
+        w.model.replies = [verdict("not_explained"), verdict("not_explained")]
+        self._answer(w, first, "No reason.")
+        at = NOW + GRACE
+        w.advance(at)
         assert run_periodic_cycle(w.core, "p", FrozenClock(at), rules_engine=None, executor=None)
         w.break_(at + timedelta(days=1), 45)
-        later = at + timedelta(days=1) + GRACE + timedelta(hours=1)
-        w.advance(later)
-        w.at = later
-        second = w.q("SELECT id FROM infraction_signals WHERE status = 'open'")[0]["id"]
-        w.dm.press(discord_user_id="42", action="confirm", ident=second)
-        assert run_periodic_cycle(w.core, "q", FrozenClock(later), rules_engine=None, executor=None)
+        second = w.q("SELECT id FROM infraction_signals WHERE status = 'waiting'")[0]
+        later = at + timedelta(days=1, hours=2)
+        self._answer(w, second, "No reason again.", at=later)
+        w.advance(later + APPEAL_WINDOW + timedelta(minutes=1))
+        assert run_periodic_cycle(w.core, "q", FrozenClock(later + APPEAL_WINDOW + timedelta(minutes=2)), rules_engine=None, executor=None)
         assert len(w.q("SELECT * FROM penalty_windows")) == 1
-
-    def test_a_dismissal_leaves_it_unconfirmed_for_good(self, tmp_path) -> None:
-        w = World(tmp_path)
-        signal = self._open_signal(w)
-        assert w.dm.press(discord_user_id="42", action="dismiss", ident=signal["id"]).text.startswith("Dismissed")
-        assert w.incidents()[0]["confirmation"] == "unconfirmed" and w.status() == [("hygiene_duration", "dismissed")]
-
-    def test_only_the_keyholder_decides(self, tmp_path) -> None:
-        w = World(tmp_path)
-        signal = self._open_signal(w)
-        assert w.signals.decide(actor="someone-else", signal_id=signal["id"], confirm=True, now=NOW) is Decision.NOT_OWNER
-        assert w.confirmed == []
-
-    def test_a_decision_counts_once(self, tmp_path) -> None:
-        w = World(tmp_path)
-        signal = self._open_signal(w)
-        w.signals.decide(actor=USER, signal_id=signal["id"], confirm=False, now=NOW)
-        assert w.signals.decide(actor=USER, signal_id=signal["id"], confirm=True, now=NOW) is Decision.NOT_OPEN
-
-    def test_the_wearer_can_still_say_health_while_it_waits_for_the_keyholder(self, tmp_path) -> None:
-        w = World(tmp_path)
-        signal = self._open_signal(w)
-        w.dm.press(discord_user_id="42", action="health", ident=signal["id"])
-        assert w.status() == [("hygiene_duration", "cleared")]
-        assert w.signals.decide(actor=USER, signal_id=signal["id"], confirm=True, now=NOW) is Decision.NOT_OPEN
 
     def test_a_retry_after_a_crash_does_not_duplicate_the_incident(self, tmp_path) -> None:
         w = World(tmp_path)
-        w.break_(NOW, 45)
-        row = w.q("SELECT * FROM infraction_signals")[0]
-        from infractions.signals import _signal
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained")]
+        self._answer(w, signal, "No reason.")
         w.trust.register_incident_report(rule_group_id="HYGIENE_MISUSE", trust_domain=DOMAIN, description="d", evidence=EVIDENCE[SignalKind.HYGIENE_DURATION],
-                                         now=NOW, incident_id=row["incident_id"])
-        assert _signal(row).incident_id == row["incident_id"]
-        w.advance(NOW + GRACE + timedelta(hours=1))
-        assert len(w.incidents()) == 1 and w.status() == [("hygiene_duration", "open")]
+                                         now=NOW, incident_id=signal["incident_id"])
+        w.advance(NOW + GRACE)
+        assert len(w.incidents()) == 1 and w.status() == [("hygiene_duration", "confirmed")]
 
     def test_proportionate_severity(self) -> None:
         assert assess_severity(EVIDENCE[SignalKind.HYGIENE_DURATION]) is SeverityTier.MINOR
         assert assess_severity(EVIDENCE[SignalKind.HYGIENE_FREQUENCY]) is SeverityTier.MINOR
         assert assess_severity(EVIDENCE[SignalKind.LOCK_CLAIM]) is SeverityTier.MAJOR
+
+    def test_forget_all_erases_the_words_and_keeps_the_decision(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained")]
+        self._answer(w, signal, "My private words.")
+        assert w.signals.forget_words(USER) == 1
+        row = w.q("SELECT explanation, status, verdict FROM infraction_signals")[0]
+        assert row == {"explanation": None, "status": "decided", "verdict": "not_explained"}
+
+
+class TestSilenceElsewhere:
+    def test_an_unanswered_lock_claim_counts_but_only_as_a_warning(self, tmp_path) -> None:
+        w = World(tmp_path)
+        TestLockClaims()._armed(w)
+        w.locks = (_lock("unlocked", UNLOCKED_LONG_AGO),)
+        TestLockClaims()._claim(w)
+        deadline = NOW + timedelta(hours=1) + GRACE + timedelta(minutes=5)
+        w.advance(deadline)
+        assert w.status() == [("lock_claim", "decided")] and "Appeal" in w.wearer_cards()[-1]["actions_json"]
+        w.advance(deadline + APPEAL_WINDOW + timedelta(minutes=1))
+        incident = w.incidents()[0]
+        assert incident["confirmation"] == "confirmed" and incident["rule_group_id"] == UNANSWERED_RULE_GROUP
+        assert run_periodic_cycle(w.core, "p", FrozenClock(deadline + APPEAL_WINDOW * 2), rules_engine=None, executor=None)
+        assert w.q("SELECT * FROM penalty_windows") == [] and len(w.q("SELECT * FROM incident_warnings")) == 1
+
+    def test_an_escalation_incident_is_asked_about_instead_of_waiting_forever(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.trust.create_domain(domain_id="routine", display_name="R", description="d", created_via_consent_id="c", now=NOW - timedelta(days=30))
+        incident = w.trust.register_incident_report(rule_group_id="CHECKIN_REPEATED_NONCOMPLIANCE", trust_domain="routine", description="three missed",
+                                                    evidence=EVIDENCE[SignalKind.CHECKIN_NONCOMPLIANCE], now=NOW)
+        w.advance(NOW + timedelta(minutes=1))
+        assert w.status() == [("checkin_noncompliance", "waiting")] and len(w.wearer_cards()) == 1
+        w.advance(NOW + timedelta(minutes=2))
+        assert len(w.status()) == 1
+        w.advance(NOW + GRACE + timedelta(minutes=5))
+        w.advance(NOW + GRACE + APPEAL_WINDOW + timedelta(minutes=10))
+        row = w.q("SELECT id, confirmation, rule_group_id FROM incidents")[0]
+        assert row == {"id": incident.id, "confirmation": "confirmed", "rule_group_id": "CHECKIN_REPEATED_NONCOMPLIANCE"}
+
+    def test_the_warning_only_group_is_pinned(self) -> None:
+        from penalty_engine.repository import WARNING_ONLY_RULE_GROUPS
+        assert UNANSWERED_RULE_GROUP in WARNING_ONLY_RULE_GROUPS and "CHECKIN_REPEATED_NONCOMPLIANCE" in WARNING_ONLY_RULE_GROUPS
 
 
 class TestNoTrustInAnyText:
@@ -521,14 +675,13 @@ class TestLockClaims:
         assert w.status() == [] and w.incidents() == []
         assert len(w.q("SELECT * FROM notifications WHERE kind = 'lock_claim_note'")) == 1
 
-    def test_a_contradiction_follows_the_same_path_to_the_keyholder(self, tmp_path) -> None:
+    def test_a_contradiction_is_asked_about_with_the_facts(self, tmp_path) -> None:
         w = World(tmp_path)
         self._armed(w)
         w.locks = (_lock("unlocked", UNLOCKED_LONG_AGO),)
         self._claim(w)
-        w.advance(NOW + timedelta(hours=1) + GRACE + timedelta(hours=1))
-        incident = w.incidents()[0]
-        assert incident["confirmation"] == "unconfirmed" and incident["rule_group_id"] == "EPISTEMIC_MISREPRESENTATION"
+        row = w.q("SELECT status, facts FROM infraction_signals")[0]
+        assert row["status"] == "waiting" and "Reported 'locked'" in row["facts"] and "ended at" in row["facts"]
 
     def test_a_report_is_checked_once(self, tmp_path) -> None:
         w = World(tmp_path)

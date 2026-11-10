@@ -16,7 +16,8 @@ from chaster.managed_locks import LockRole
 from chaster_execution.models import TransportOutcome, TransportResult
 from chaster_execution.temporary_opening import CLEAR_COOLDOWN_REGULARITY, ExemptionOpening, OpeningOutcome, OpeningResult, OpeningStatus
 from infractions.excuses import Excuses
-from infractions.signals import GRACE, InfractionSignals, SignalKind
+from infractions.judge import ExplanationJudge
+from infractions.signals import APPEAL_WINDOW, UNANSWERED_RULE_GROUP, GRACE, InfractionSignals, SignalKind
 from infrastructure.clock import FrozenClock
 from infrastructure.time_format import iso
 from infractions.wiring import DetectorWiring, overrun_signal
@@ -263,7 +264,7 @@ class TestALateRelockTakesTheSignalsPath:
     def _world(self, tmp_path):
         w = World(tmp_path)
         self.registered = []
-        signals = InfractionSignals(core=w.core, owner_user_id=OWNER, excuses=Excuses(w.core), register_incident=lambda s, n: self.registered.append(s),
+        signals = InfractionSignals(core=w.core, excuses=Excuses(w.core), judge=ExplanationJudge(None), register_incident=lambda s, n: self.registered.append(s),
                                     confirm_incident=lambda *a: None)
         w.service.set_overrun_signal(overrun_signal(signals, trust_domain="routine"))
         return w, signals
@@ -293,8 +294,10 @@ class TestALateRelockTakesTheSignalsPath:
         w, signals = self._world(tmp_path)
         self._late(w)
         wiring = DetectorWiring(signals=signals, core=w.core)
-        assert signals.advance(NOW + timedelta(hours=7) + GRACE + timedelta(minutes=1), window_of=wiring._window_of) == 1
-        assert self.registered[0].kind is SignalKind.EXEMPTION_OVERRUN
+        silent = NOW + timedelta(hours=7) + GRACE + timedelta(minutes=1)
+        assert signals.advance(silent, window_of=wiring._window_of) == 0               # unanswered: decided, with time to appeal
+        assert signals.advance(silent + APPEAL_WINDOW + timedelta(minutes=1), window_of=wiring._window_of) == 1
+        assert self.registered[0].kind is SignalKind.EXEMPTION_OVERRUN and self.registered[0].rule_group == UNANSWERED_RULE_GROUP
 
     def test_it_is_minor_so_a_first_one_is_a_warning(self) -> None:
         from infractions.signals import EVIDENCE

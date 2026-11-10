@@ -16,7 +16,7 @@ py -m pytest tests/path/test_x.py::TestClass::test_name         # one test
 py -m compileall ai bot core database integrations observations # all that CI runs
 ```
 
-The whole suite (4,785 tests) takes about 15 minutes, so run it in the background and use targeted runs while iterating. `pytest.ini` sets `--strict-markers`, so an unregistered marker is an error. There is no linter or formatter configured. CI (`.github/workflows/python-ci.yml`) only does the `compileall` above and doesn't run the tests, so a passing CI says nothing about behaviour. The README's "No CI currently exists" is out of date.
+The whole suite (4,849 tests) takes about 15 minutes, so run it in the background and use targeted runs while iterating. `pytest.ini` sets `--strict-markers`, so an unregistered marker is an error. There is no linter or formatter configured. CI (`.github/workflows/python-ci.yml`) only does the `compileall` above and doesn't run the tests, so a passing CI says nothing about behaviour. The README's "No CI currently exists" is out of date.
 
 The receiver has its own suite and dependencies, and runs from the sibling `hive-venv`, not the bot's environment. The bot's suite doesn't need FastAPI; it checks only isolation and the contract, in `tests/hive_mind_receiver/`.
 
@@ -70,7 +70,7 @@ Several of these are enforced by repository-wide tests that scan the source, so 
 - The Chaster `/unlock` endpoint and lock destruction are banned from the execution plane. Only freeze and unfreeze execute.
 - Execution is doubly gated: `ENABLE_CHASTER_EXECUTION` plus a runtime halt that is seeded halted and fails closed if its row is missing or unreadable. New gates must also fail closed.
 - An ambiguous outcome (timeout, 5xx, unexpected status) ends as `needs_review` and is never retried.
-- Models can't change state. Known commands never reach the model, conversation context providers are read-only, and the coach only proposes from the closed catalogue in `coach/actions.py`, which applies only on the user's own button. Don't add a path where model output writes state or acts on a lock.
+- Models can't change state. Known commands never reach the model, conversation context providers are read-only, and the coach only proposes from the closed catalogue in `coach/actions.py`, which applies only on the user's own button. Don't add a path where model output writes state or acts on a lock. The one exception (owner, 2026-11-10, because there is no second person to decide): `infractions/judge.py` judges the wearer's explanation of a detector finding, and an unexplained finding is confirmed by the system. Health and emergencies are decided in code before any model, and a model failure is never a verdict.
 - Provider data is labelled provider-reported, never "verified". Unknown stays unknown, and unconfirmed Chaster fields are read only when present with the expected type.
 
 **Code conventions** (`docs/architecture/implementation_conventions.md`; read section 15 before adding a module):

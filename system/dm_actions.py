@@ -17,7 +17,7 @@ from application.models import OutgoingMessage
 from exemptions.service import ExemptionDecision, ExemptionService
 from infrastructure.database import Database as CoreDatabase
 from infractions.hygiene import HygieneWatch
-from infractions.signals import Decision, InfractionSignals
+from infractions.signals import InfractionSignals
 
 logger = logging.getLogger("ai_coach_keyholder.system.dm_actions")
 
@@ -63,6 +63,8 @@ class ExemptionDm:
 
 
 class InfractionDm:
+    """The wearer's buttons on a detector's question: Explain, Appeal, and "it was a health or safety need". Nobody else decides (owner, 2026-11-10)."""
+
     def __init__(self, signals: InfractionSignals, *, resolve_user: Callable[[str], str | None], now: Callable[[], datetime]) -> None:
         self._signals = signals
         self._resolve = resolve_user
@@ -72,15 +74,10 @@ class InfractionDm:
         user = self._resolve(discord_user_id)
         if user is None:
             return _NOT_YOURS
-        if action == "health":
-            cleared = self._signals.clear_as_health(user_id=user, signal_id=ident, now=self._now())
-            return OutgoingMessage(text="Thank you for telling me. It doesn't count, and that's the end of it." if cleared
-                                   else "Your keyholder has already decided this one, so please talk to them.")
+        if action in ("health", "explain", "appeal"):
+            return self._signals.press(user_id=user, signal_id=ident, action=action, now=self._now())
         if action in ("confirm", "dismiss"):
-            outcome = self._signals.decide(actor=user, signal_id=ident, confirm=action == "confirm", now=self._now())
-            return OutgoingMessage(text={Decision.CONFIRMED: "Confirmed. The Penalty Engine decides what follows.", Decision.DISMISSED: "Dismissed. It never counts.",
-                                         Decision.NOT_OWNER: "Only the keyholder can decide this.", Decision.NOT_OPEN: "This was already settled.",
-                                         Decision.FAILED: "That didn't go through and nothing was recorded. Please try again."}[outcome])
+            return OutgoingMessage(text="Nobody decides this by button any more: I ask, judge the answer and decide myself.")
         return OutgoingMessage(text="That isn't one of the options.")
 
 

@@ -46,8 +46,9 @@ from trust_manager.repository import TrustManager
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 
-# Never a Penalty Window, never an Extension: the check-in escalation (supervision/escalation.py), pinned by a test because this package does not import supervision.
-WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE"})
+# Never a Penalty Window, never an Extension: the check-in escalation (supervision/escalation.py), and a detection the wearer never answered
+# (infractions/signals.py UNANSWERED_RULE_GROUP, owner 2026-11-10: silence is Trust and a Warning only). Pinned by tests, because this package imports neither.
+WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE", "DETECTION_UNANSWERED"})
 
 
 def active_hours_elapsed_from_row(row, now: datetime) -> float:

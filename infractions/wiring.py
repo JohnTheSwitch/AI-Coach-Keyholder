@@ -3,8 +3,8 @@ infractions/wiring.py
 
 Builds the two detectors from the configuration and runs them as their own loop in the bot. Each is off unless switched on (`ENABLE_HYGIENE_WATCH`,
 `ENABLE_LOCK_CLAIM_WATCH`), and each needs its Trust domain to exist: a domain is never created here (philosophy 3.7), and a hygiene finding is never filed under
-another domain just because `hygiene` is missing. Both only read Chaster, write local UNCONFIRMED records and queue notices, so like the community review watch
-they keep running during an execution halt.
+another domain just because `hygiene` is missing. Both only read Chaster, write local records and queue notices, so like the community review watch they keep running during an execution
+halt. Every finding is asked about and judged (infractions/signals.py), and the wiring passes the Trust Manager's register and confirm in.
 
 The worn locks come from the connected account's own listing. The wearer is that same account; a tenant has no detectors, because its invitation never disclosed them.
 """
@@ -21,8 +21,10 @@ from chaster.lock_directory import LockDirectory
 from chaster.managed_locks import ManagedLock
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
 from infractions.excuses import Excuses
+from infractions.judge import ExplanationJudge
 from infractions.hygiene import HygieneWatch, OpeningNotAvailable
 from infractions.lock_claims import LockClaimWatch
 from infractions.signals import EVIDENCE, RULE_GROUPS, InfractionSignals, Signal, SignalKind
@@ -79,20 +81,24 @@ class DetectorWiring:
 def overrun_signal(signals: InfractionSignals, *, trust_domain: str):
     """`raise_overrun` for ExemptionService: a late relock takes the same path as every detection, health answer first."""
 
-    def raise_overrun(tx, row: dict, _relocked_at: datetime, now: datetime) -> bool:
+    def raise_overrun(tx, row: dict, relocked_at: datetime, now: datetime) -> bool:
+        expires = parse_iso(row["expires_at"]) if row.get("expires_at") else relocked_at
+        facts = (f"Approved {row.get('kind') or 'exemption'} until {_iso(expires)}; relocked at {_iso(relocked_at)}, "
+                 f"{int((relocked_at - expires).total_seconds() // 60)} minutes late.")
         return signals.raise_in_transaction(tx, user_id=row["user_id"], kind=SignalKind.EXEMPTION_OVERRUN, subject_id=row["id"], trust_domain=trust_domain, now=now,
                                             detail="An exemption's lock was relocked after the approved time.",
-                                            wearer_text="You relocked after your exemption's approved time. If it was a health or safety need, tell me below and that's the end of it. "
-                                                        "Otherwise it goes to your keyholder to look at.")
+                                            wearer_text="You relocked after the approved time. What happened?", facts=facts, window=(expires, relocked_at))
 
     return raise_overrun
 
 
-def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, connections, vacation=None) -> DetectorWiring:
+def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, connections, vacation=None, complete=None) -> DetectorWiring:
+    """`complete(system_prompt, user_message) -> raw model text` judges the wearer's explanations; None: only health and safety answers are judged (by code)."""
     out = DetectorWiring(interval_seconds=max(60, int(getattr(config, "detector_poll_seconds", 120) or 120)), core=core)
     want_hygiene = bool(getattr(config, "enable_hygiene_watch", False))
     want_claims = bool(getattr(config, "enable_lock_claim_watch", False))
-    want_signals = bool(getattr(config, "enable_exemptions", False))        # a late exemption relock takes the signals path even with both watches off
+    # The question-and-judge path also serves a late exemption relock, a rejected community review and the check-in escalation.
+    want_signals = any(bool(getattr(config, name, False)) for name in ("enable_exemptions", "enable_peer_review_watch", "enable_check_ins"))
     if not want_hygiene and not want_claims and not want_signals:
         return out
     account = getattr(config, "chaster_execution_keyholder_user_id", None)
@@ -106,14 +112,18 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
     excuses = Excuses(core, on_vacation=on_vacation)
 
     def register(signal: Signal, now: datetime) -> None:
-        trust.register_incident_report(rule_group_id=RULE_GROUPS[signal.kind], trust_domain=signal.trust_domain, description=signal.detail,
+        trust.register_incident_report(rule_group_id=signal.rule_group or RULE_GROUPS[signal.kind], trust_domain=signal.trust_domain, description=signal.detail,
                                        evidence=EVIDENCE[signal.kind], now=now, incident_id=signal.incident_id)
 
     def confirm(incident_id: str, evidence: str, now: datetime) -> None:
-        trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.KEYHOLDER_REVIEW,
-                               evidence_description=evidence, now=now)
+        # The system is the keyholder (owner, 2026-11-10): it confirms what the wearer could not explain.
+        trust.confirm_incident(incident_id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
+                               evidence_description=evidence[:1000], now=now)
 
-    out.signals = InfractionSignals(config.db_path, core=core, owner_user_id=owner, excuses=excuses, register_incident=register, confirm_incident=confirm)
+    out.signals = InfractionSignals(config.db_path, core=core, excuses=excuses, judge=ExplanationJudge(complete), register_incident=register, confirm_incident=confirm)
+    out.signals.set_wearer(getattr(config, "check_in_user_id", None) or getattr(config, "chaster_execution_wearer_user_id", None) or owner)
+    if complete is None:
+        out.notes.append("Detector questions: no language model, so only health and safety answers can be judged; other answers wait and are then dropped.")
 
     def worn(now: datetime) -> tuple[tuple[ManagedLock, ...], list[str]]:
         listing = directory.list_locks(wearer_user_id=account, keyholder_user_id=None, now=now)
@@ -138,7 +148,7 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
 
             out.hygiene = HygieneWatch(config.db_path, core=core, user_id=account, trust_domain=domain, signals=out.signals, list_worn_locks=worn,
                                        read_opening=read_opening, get_trust_score=score, interval_seconds=out.interval_seconds)
-            out.notes.append(f"Hygiene watch enabled: every {out.interval_seconds} s; planned breaks past the limits go to the keyholder as UNCONFIRMED incidents.")
+            out.notes.append(f"Hygiene watch enabled: every {out.interval_seconds} s; a planned break past the limits is asked about, then judged.")
     if want_claims:
         domain = getattr(config, "lock_claim_trust_domain", None) or "routine"
         if trust.get_domain_state(domain) is None:
@@ -146,7 +156,7 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
         else:
             out.lock_claims = LockClaimWatch(config.db_path, core=core, user_id=account, owner_user_id=owner, trust_domain=domain, signals=out.signals,
                                              excuses=excuses, list_worn_locks=worn)
-            out.notes.append(f"Lock-claim watch enabled: every {out.interval_seconds} s; a report that was false when made goes to the keyholder as an UNCONFIRMED incident.")
+            out.notes.append(f"Lock-claim watch enabled: every {out.interval_seconds} s; a report that was false when made is asked about, then judged.")
     return out
 
 

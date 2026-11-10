@@ -53,6 +53,7 @@ class PeerReviewWiring:
     watch: PeerReviewWatch | None = None
     interval_seconds: int = 600
     owner_target: str | None = None                 # the owner's Discord id for the notice, when known
+    incident_notices: bool = True                   # False: rejections go to the wearer as questions, not to the owner as cards
     notes: list[str] = field(default_factory=list)
 
 
@@ -69,7 +70,9 @@ def owner_discord_id(core: CoreDatabase, owner_user_id: str | None) -> str | Non
         return None
 
 
-def build_peer_review_watch(config, core: CoreDatabase, *, token_manager, lock_client, connections) -> PeerReviewWiring:
+def build_peer_review_watch(config, core: CoreDatabase, *, token_manager, lock_client, connections, ask_wearer=None) -> PeerReviewWiring:
+    """`ask_wearer(incident_id, description, now)` (owner, 2026-11-10): a rejection becomes the detectors' question to the wearer instead of an UNCONFIRMED
+    Incident for a keyholder button nobody presses; the system judges the answer. No owner card is sent then."""
     out = PeerReviewWiring(interval_seconds=max(120, int(getattr(config, "peer_review_poll_seconds", 600) or 600)))
     if not getattr(config, "enable_peer_review_watch", False):
         return out
@@ -94,10 +97,14 @@ def build_peer_review_watch(config, core: CoreDatabase, *, token_manager, lock_c
     out.watch = PeerReviewWatch(
         config.db_path, core=core, reader=PeerReviewReader(token_manager=token_manager, lock_client=lock_client), account_user_id=account,
         list_lock_ids=list_lock_ids,
-        register_incident=lambda incident_id, description, now: trust.register_incident_report(
+        register_incident=ask_wearer if ask_wearer is not None else (lambda incident_id, description, now: trust.register_incident_report(
             rule_group_id=RULE_GROUP, trust_domain=domain, description=description, evidence=PEER_REVIEW_EVIDENCE, now=now,
-            incident_id=incident_id))
+            incident_id=incident_id)))
     out.owner_target = owner_discord_id(core, getattr(config, "owner_user_id", None))
+    if ask_wearer is not None:
+        out.incident_notices = False                    # the wearer is asked instead; the owner still hears when polling breaks
+        out.notes.append(f"Community review watch enabled: every {out.interval_seconds} s; a rejection is asked about, then judged (Trust domain '{domain}').")
+        return out
     out.notes.append(f"Community review watch enabled: every {out.interval_seconds} s; a rejection becomes one UNCONFIRMED incident in "
                      f"Trust domain '{domain}'" + ("" if out.owner_target else " (no owner Discord id: no DM notice)") + ".")
     return out
@@ -128,7 +135,7 @@ def queued_send(queue, *, user_id: str, clock: Clock):
 
 async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_seconds: float, send=None, owner_target: str | None = None,
                            initial_delay_seconds: float = 30.0, view_for: Callable[[str], object] | None = None,
-                           health: PollHealth | None = None, embed_for: Callable[[object], object] | None = None) -> None:
+                           health: PollHealth | None = None, embed_for: Callable[[object], object] | None = None, incident_notices: bool = True) -> None:
     """Poll, then deliver the pending notices to the owner (`send(target, text) -> bool`, e.g. the Discord adapter); a notice is marked
     delivered only when the channel accepted it. With `view_for(incident_id)` the notice carries the decision buttons
     (`send(target, text, view=...)`). `health` counts consecutive failed polls and queues one alert DM at the threshold (and one
@@ -150,7 +157,7 @@ async def peer_review_loop(watch: PeerReviewWatch, clock: Clock, *, interval_sec
                 extra = {"embed": embed_for(health_embed(health.pending, alert=health.pending_is_alert))} if embed_for is not None else {}
                 if await send(owner_target, health.pending, **extra):
                     health.delivered()
-            if send is not None and owner_target:
+            if send is not None and owner_target and incident_notices:
                 for notice in await asyncio.to_thread(watch.pending_notifications):
                     extra = {"view": view_for(notice.incident_id)} if view_for is not None else {}
                     if embed_for is not None:
