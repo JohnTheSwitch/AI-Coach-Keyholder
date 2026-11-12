@@ -715,3 +715,9 @@ v0.39 Phase G6: `IronContractContextProvider` (namespace `contract`) puts `[STAT
   also bans counsellor talk. `_SYSTEM_BOUNDARIES` is unchanged.
 - The bot loads the model once Ollama is up (`warm_model` in `bot/discord_bot.py`), and a check-in answer that meets a failing model is told it was
   recorded (`application/service.py`).
+
+## The topic is in scope (2026-11-12)
+
+Live, a confession about edging got "That's not something I can discuss" and an unrelated sleep goal (the model's own filter). The voice guide now says
+arousal, edging, denial and orgasm control are the point of the arrangement: talk about them frankly and in charge, never dodge the topic; only explicit
+description stays out. A confession gets a keyholder's reaction; the self-report card under the reply (infractions/README.md) is what records it.

@@ -68,9 +68,22 @@ def is_exemption_request(message: str) -> bool:
     return isinstance(message, str) and len(message) <= 300 and _REQUEST.search(message) is not None
 
 
+# Live, 2026-11-12: "You're not worried about me misusing the hygiene opening?" opened a new card. Only a request does now: a request word, or the
+# phrase almost on its own ("hygiene opening", "hygiene break please").
+_ASKING = re.compile(r"\b(can i|could i|may i|i need|i'd like|i would like|i want|give me|let me|please|request|need a|need an|open (it|my lock|me)|"
+                     r"chci|potrebuj\w*|muzu|mohl\w* bych|prosim|otevri|dej mi|pust mi)\b")
+
+
 def is_hygiene_request(message: str) -> bool:
     """Deterministic, and it only offers buttons."""
-    return isinstance(message, str) and len(message) <= 300 and _HYGIENE.search(plain_text(message)) is not None
+    if not isinstance(message, str) or len(message) > 300:
+        return False
+    text = plain_text(message)
+    found = _HYGIENE.search(text)
+    if found is None:
+        return False
+    rest = re.sub(r"[^a-z ]+", " ", (text[:found.start()] + " " + text[found.end():])).split()
+    return _ASKING.search(text) is not None or len(rest) <= 2
 
 
 class ExemptionDecision(StrEnum):

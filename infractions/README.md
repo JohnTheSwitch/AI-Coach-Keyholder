@@ -51,3 +51,15 @@ Live, "What about my incident?" ten minutes after a finding was counted got "No 
 and those of the last 7 days (wording, stage, local deadline; never a score) to
 `conversation_engine/context_providers/detector_questions_provider.py`, rendered as authoritative state. Nothing said in the chat counts as the
 answer; the user still answers under the system's message.
+
+## Owning up (owner, 2026-11-12, option A; migration 052)
+
+Live, the wearer wrote that they had edged during a hygiene opening, and no rule saw it. Now `self_report.is_hygiene_confession` (deterministic, English
+and Czech, deliberately broad) puts a card under the bot's reply: "Did you just tell me you used a hygiene opening for something other than hygiene?".
+`InfractionSignals.offer_self_report` stores it as `offered` (kind `self_report_hygiene`, the wearer's words in `explanation`, erased by `forget all`).
+
+- **Yes, I did** -> `decided`, verdict `self_reported`, `admitted` = 1, rule group HYGIENE_MISUSE; after the appeal window it is confirmed with
+  `self_disclosed` cooperation, so it weighs less than a detected one. One appeal is possible, as everywhere.
+- **No, you misread me** -> cleared, nothing recorded. An unanswered card lapses after 12 hours, also without a trace.
+- An approved hygiene opening never excuses it (it happened during one by definition).
+- One open card at a time. The model sees the card as `awaiting_confirmation` in its detector-question context.

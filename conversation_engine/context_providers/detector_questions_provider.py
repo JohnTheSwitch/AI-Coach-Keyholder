@@ -17,7 +17,7 @@ from conversation_engine.models import ConversationContextFragment
 __all__ = ["DetectorQuestionsContextProvider"]
 
 _FIELDS = ("detail", "stage", "until", "closed")
-_STAGES = frozenset({"waiting_for_answer", "being_judged", "appeal_open", "counted", "dropped"})
+_STAGES = frozenset({"waiting_for_answer", "being_judged", "appeal_open", "counted", "dropped", "awaiting_confirmation"})
 
 
 class DetectorQuestionsContextProvider:

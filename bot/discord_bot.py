@@ -836,6 +836,16 @@ def main() -> None:
     if detectors.signals is not None:
         bot.dm_actions["infraction"] = InfractionDm(detectors.signals, resolve_user=resolve_user, now=clock.now)
         application_service.explanations = detectors.signals
+        from infractions.self_report import is_hygiene_confession
+        from infractions.signals import SELF_REPORT_QUESTION, self_report_buttons
+
+        def offer_self_report(user_id, text, now, signals=detectors.signals, domain=config.hygiene_trust_domain or "hygiene"):
+            if not is_hygiene_confession(text):
+                return None
+            signal_id = signals.offer_self_report(user_id=user_id, statement=text, trust_domain=domain, now=now)
+            return (SELF_REPORT_QUESTION, self_report_buttons(signal_id)) if signal_id else None
+
+        application_service.self_reports = offer_self_report
     if detectors.hygiene is not None:
         bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
     if detectors.active:

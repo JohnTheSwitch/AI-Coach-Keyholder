@@ -12,3 +12,8 @@ halt. `system/dm_actions.py` is the buttons' door.
 ## Decision log (owner, 2026-11-12)
 
 The first live hygiene opening left no line in any log. Every step now goes to `logs/decisions.log`: asked and offered (within the allowance or not), declined, approved (allowance, health, keyholder), sent to the keyholder, Chaster's answer to the opening, the relock (on time, late, unverified) with whether the lock's own settings were restored, and the end.
+
+## Only a request opens the hygiene card (2026-11-12)
+
+Live, "You're not worried about me misusing the hygiene opening?" got a new opening offered. `is_hygiene_request` now needs a request word ("can I",
+"I need", "please", Czech "chci", "potřebuju", "prosím", ...) or the phrase nearly on its own; talk about an opening goes to the conversation.

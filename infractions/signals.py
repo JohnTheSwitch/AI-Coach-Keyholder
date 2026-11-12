@@ -71,14 +71,16 @@ class SignalKind(StrEnum):
     EXEMPTION_OVERRUN = "exemption_overrun"
     PHOTO_REJECTED = "photo_rejected"
     CHECKIN_NONCOMPLIANCE = "checkin_noncompliance"
+    SELF_REPORT_HYGIENE = "self_report_hygiene"      # owner, 2026-11-12 (option A): the wearer owned up to misusing a hygiene opening
 
 
 RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
                SignalKind.EXEMPTION_OVERRUN: "HYGIENE_MISUSE", SignalKind.PHOTO_REJECTED: "peer_review_rejection",
-               SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE"}
+               SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE", SignalKind.SELF_REPORT_HYGIENE: "HYGIENE_MISUSE"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious; a community vote is one weak signal.
 EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
-            SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE}
+            SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE,
+            SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE}
 # Incidents another module registers UNCONFIRMED by itself; they are taken into this path instead of waiting for a button nobody presses.
 ADOPTED_RULE_GROUPS = {"CHECKIN_REPEATED_NONCOMPLIANCE": SignalKind.CHECKIN_NONCOMPLIANCE}
 _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIENE_FREQUENCY})
@@ -100,6 +102,17 @@ _COUNTED = "It now counts as an incident."
 _PENDING = "Thank you. I'll look at it shortly and let you know."
 _UNJUDGED = "I couldn't look at your explanation in time, so it doesn't count."
 _HEALTH = "Thank you for telling me. It doesn't count, and that's the end of it."
+SELF_REPORT_DETAIL = "The wearer said they used a hygiene opening for something other than hygiene."
+SELF_REPORT_QUESTION = ("**Owning up?** Did you just tell me you used a hygiene opening for something other than hygiene? If you did, say so: it counts, "
+                        "but it weighs less because you told me yourself.")
+_OWNED = ("Thank you for owning it. It counts as hygiene misuse in two hours, and it weighs less because you told me yourself. If I misread you, "
+          "you can appeal once.")
+_DISOWNED = "Okay, I misread you. Nothing is recorded."
+
+
+def self_report_buttons(signal_id: str) -> tuple[ActionSpec, ...]:
+    return (ActionSpec(action_id=f"infraction:own:{signal_id}", label="Yes, I did", style="danger"),
+            ActionSpec(action_id=f"infraction:disown:{signal_id}", label="No, you misread me"))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -166,6 +179,25 @@ class InfractionSignals:
                                now=now, actions=_explain_buttons(signal_id))
         return True
 
+    def offer_self_report(self, *, user_id: str, statement: str, trust_domain: str, now: datetime) -> str | None:
+        """Owner, 2026-11-12 (option A): the wearer's own words read as a confession. Nothing is decided yet: the returned id goes on a card, and only
+        their "Yes" decides it. One open offer at a time; an offer nobody answers lapses without a trace (`advance`)."""
+        def write(tx: Transaction, _s: object) -> str | None:
+            existing = tx.fetch_one("SELECT id FROM infraction_signals WHERE user_id = ? AND kind = ? AND status = 'offered'",
+                                    (user_id, SignalKind.SELF_REPORT_HYGIENE.value))
+            if existing is not None:
+                return existing["id"]
+            signal_id = str(uuid4())
+            tx.execute("INSERT INTO infraction_signals (id, user_id, kind, subject_id, trust_domain, detail, status, review_after, incident_id, created_at, "
+                       "facts, explanation, explanation_at) VALUES (?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?, ?)",
+                       (signal_id, user_id, SignalKind.SELF_REPORT_HYGIENE.value, signal_id, trust_domain, SELF_REPORT_DETAIL, _iso(now + GRACE), str(uuid4()),
+                        _iso(now), f"Self-reported in the chat at {_iso(now)}.", (statement or "")[:2000], _iso(now)))
+            return signal_id
+
+        signal_id = apply_transition(self._core, write=write)
+        decision("infractions", "The wearer's message read as owning up to hygiene misuse: asked whether that is right.", signal_id=signal_id)
+        return signal_id
+
     def raise_signal(self, **kwargs) -> bool:
         """`raise_in_transaction` in its own transaction, for a caller outside this package's transactions."""
         return apply_transition(self._core, write=lambda tx, _s: self.raise_in_transaction(tx, **kwargs))
@@ -184,12 +216,32 @@ class InfractionSignals:
             stage = "follow_up" if row["follow_up_asked_at"] else "explanation"
             self._await(signal_id, stage, now)
             return OutgoingMessage(text="Go ahead: tell me what happened in your next message." if stage == "explanation" else _FOLLOW_UP)
+        if action in ("own", "disown"):
+            return self._answer_offer(row, own=action == "own", now=now)
         if action == "appeal":
             if row["status"] != "decided" or row["appeal"] is not None:
                 return OutgoingMessage(text="You can appeal once, before it counts." if row["status"] != "decided" else "I already have your appeal.")
             self._await(signal_id, "appeal", now)
             return OutgoingMessage(text="Write your appeal in your next message: what did I get wrong, or what haven't you told me yet?")
         return OutgoingMessage(text="That isn't one of the options.")
+
+    def _answer_offer(self, row, *, own: bool, now: datetime) -> OutgoingMessage:
+        if row["status"] != "offered":
+            return OutgoingMessage(text="This one is already settled.")
+        if not own:
+            self._clear(row["id"], "wearer_said_misread", now)
+            return OutgoingMessage(text=_DISOWNED)
+
+        def write(tx: Transaction, _s: object) -> bool:
+            return tx.execute("UPDATE infraction_signals SET status = 'decided', verdict = 'self_reported', verdict_reason = ?, admitted = 1, judged_at = ?, "
+                              "decided_at = ?, confirm_after = ?, rule_group_id = ? WHERE id = ? AND status = 'offered'",
+                              ("The wearer owned up by themselves.", _iso(now), _iso(now), _iso(now + APPEAL_WINDOW),
+                               RULE_GROUPS[SignalKind.SELF_REPORT_HYGIENE], row["id"])).rowcount == 1
+
+        if not apply_transition(self._core, write=write):
+            return OutgoingMessage(text="This one is already settled.")
+        decision("infractions", "The wearer confirmed owning up to hygiene misuse: it counts after the appeal time, as self-disclosed.", signal_id=row["id"])
+        return OutgoingMessage(text=_OWNED, actions=(ActionSpec(action_id=f"infraction:appeal:{row['id']}", label="Appeal"),))
 
     def capture(self, user_id: str, text: str, now: datetime) -> OutgoingMessage | None:
         """The wearer's next message after Explain or Appeal is their answer, judged at once. None: this message is not an answer to anything."""
@@ -228,6 +280,10 @@ class InfractionSignals:
     def advance(self, now: datetime, *, window_of: Callable[[Signal], tuple[datetime, datetime]]) -> int:
         """One pass: take in what waits for nobody, retry judging, act on deadlines, confirm what stayed unexplained. Returns how many Incidents counted."""
         self._adopt(now)
+        with self._core.transaction() as tx:
+            lapsed = tx.fetch_all("SELECT id FROM infraction_signals WHERE status = 'offered' AND review_after <= ?", (_iso(now),))
+        for row in lapsed:
+            self._clear(row["id"], "self_report_not_confirmed", now)          # an unanswered offer records nothing
         with self._core.transaction() as tx:
             pending = tx.fetch_all("SELECT id FROM infraction_signals WHERE judge_pending_since IS NOT NULL AND status IN ('judging', 'decided') ORDER BY created_at")
         for row in pending:
@@ -405,6 +461,8 @@ class InfractionSignals:
         return 1 if counted else 0
 
     def _excused(self, row, signal: Signal, window_of) -> str | None:
+        if signal.kind is SignalKind.SELF_REPORT_HYGIENE:
+            return None                              # it happened during an approved opening by definition: that cannot excuse it
         if row["window_start"] and row["window_end"]:
             start, end = parse_iso(row["window_start"]), parse_iso(row["window_end"])
         elif window_of is not None:
@@ -420,7 +478,7 @@ class InfractionSignals:
 
         def write(tx: Transaction, _s: object) -> bool:
             cursor = tx.execute("UPDATE infraction_signals SET status = 'cleared', cleared_reason = ?, decided_at = ?, verdict_reason = COALESCE(?, verdict_reason), "
-                                "judge_pending_since = NULL, awaiting = NULL, awaiting_since = NULL WHERE id = ? AND status IN ('waiting', 'judging', 'decided', 'open')",
+                                "judge_pending_since = NULL, awaiting = NULL, awaiting_since = NULL WHERE id = ? AND status IN ('waiting', 'judging', 'decided', 'open', 'offered')",
                                 (reason, _iso(now), detail, signal_id))
             return cursor.rowcount == 1
 
@@ -471,7 +529,8 @@ _ADOPTED_DETAIL = {"CHECKIN_REPEATED_NONCOMPLIANCE": "Several check-ins in a row
 _ADOPTED_TEXT = {"CHECKIN_REPEATED_NONCOMPLIANCE": "{day}: you left my check-ins hanging, several in a row. What was going on?"}
 
 
-_STAGE = {"waiting": "waiting_for_answer", "judging": "being_judged", "decided": "appeal_open", "confirmed": "counted", "cleared": "dropped"}
+_STAGE = {"waiting": "waiting_for_answer", "judging": "being_judged", "decided": "appeal_open", "confirmed": "counted", "cleared": "dropped",
+          "offered": "awaiting_confirmation"}
 
 
 def get_recent_questions(core: CoreDatabase, user_id: str, now: datetime, *, local: Callable[[datetime], datetime],
@@ -480,7 +539,7 @@ def get_recent_questions(core: CoreDatabase, user_id: str, now: datetime, *, loc
     Open ones and those from the last `days` days, newest first: the finding's wording, the stage, and a local time. Never a score."""
     with core.transaction() as tx:
         rows = tx.fetch_all("SELECT detail, status, review_after, confirm_after, decided_at FROM infraction_signals WHERE user_id = ? "
-                            "AND (status IN ('waiting', 'judging', 'decided') OR created_at >= ?) ORDER BY created_at DESC, rowid DESC LIMIT 3",
+                            "AND (status IN ('waiting', 'judging', 'decided', 'offered') OR created_at >= ?) ORDER BY created_at DESC, rowid DESC LIMIT 3",
                             (user_id, _iso(now - timedelta(days=days))))
 
     def at(value: str | None) -> str | None:
@@ -492,7 +551,7 @@ def get_recent_questions(core: CoreDatabase, user_id: str, now: datetime, *, loc
         if stage is None:
             continue
         out.append({"detail": r["detail"], "stage": stage,
-                    "until": at(r["review_after"]) if stage == "waiting_for_answer" else at(r["confirm_after"]) if stage == "appeal_open" else None,
+                    "until": at(r["review_after"]) if stage in ("waiting_for_answer", "awaiting_confirmation") else at(r["confirm_after"]) if stage == "appeal_open" else None,
                     "closed": at(r["decided_at"]) if stage in ("counted", "dropped") else None})
     return out
 

@@ -74,7 +74,7 @@ class InfractionDm:
         user = self._resolve(discord_user_id)
         if user is None:
             return _NOT_YOURS
-        if action in ("health", "explain", "appeal"):
+        if action in ("health", "explain", "appeal", "own", "disown"):
             return self._signals.press(user_id=user, signal_id=ident, action=action, now=self._now())
         if action in ("confirm", "dismiss"):
             return OutgoingMessage(text="Nobody decides this by button any more: I ask, judge the answer and decide myself.")

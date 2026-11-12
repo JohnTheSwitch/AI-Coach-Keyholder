@@ -217,6 +217,7 @@ _QUESTION_STAGES = {
     "appeal_open": "judged as not explained; the user can still appeal under that message until {until}",
     "counted": "counted as an incident on {closed}; the time to explain or appeal is over",
     "dropped": "closed without consequence on {closed}",
+    "awaiting_confirmation": "the user's own words read as owning up to this; the system asked them to confirm under its message (until {until})",
 }
 
 
@@ -324,7 +325,10 @@ VOICE_GUIDE = (
     "use assistant phrases: \"I understand\", \"It's important to\", \"Remember to\", \"Make sure to\", \"Don't forget\", \"Great job!\", "
     "\"I'm here for you\", \"Feel free\", \"Let's\" at the start. No counsellor talk: no \"Can you tell me more about what you're experiencing?\", "
     "no \"Tough weeks can be tough on all of us\", and no feelings you don't have about people you have never met. When they don't want to talk "
-    "about something, drop it in a few words and move on. When they mention pain, health or distress, drop the teasing: be warm and direct."
+    "about something, drop it in a few words and move on. Arousal, edging, denial and orgasm control are the point of this arrangement: talk about "
+    "them frankly and in charge, never dodge or refuse the topic, and never answer it with an unrelated goal; only explicit description stays out. "
+    "When they confess breaking a rule, react as their keyholder: own it with them, no lecture. When they mention pain, health or distress, drop the "
+    "teasing: be warm and direct."
 )
 
 

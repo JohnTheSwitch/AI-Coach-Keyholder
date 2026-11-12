@@ -160,6 +160,8 @@ class ApplicationService:
         # Set by the bot after the detectors are built: an object with `capture(user_id, text, now) -> OutgoingMessage | None` (the wearer's answer to a
         # detector's question, after they pressed Explain or Appeal) and `forget_words(user_id)`. Deterministic routing, before any model.
         self.explanations = None
+        # Owner, 2026-11-12 (option A): (user_id, text, now) -> (card text, buttons) or None, when the wearer seems to own up to something.
+        self.self_reports = None
         self._clock = clock                                  # only a button press needs it: a message brings its own time
 
         self.user_service = UserService(self.db_path, core=self._core)
@@ -331,8 +333,9 @@ class ApplicationService:
             if check_in_reply and response.text == render_fallback(FallbackReason.GENERATION_UNAVAILABLE).text:
                 # Live, 2026-11-12: a check-in answer met a model that was still loading and got only "I can't generate a response". It was
                 # recorded all the same, so the user is told so instead of being left to wonder.
-                return OutgoingMessage(text=CHECK_IN_RECEIVED_WITHOUT_MODEL)
-            return self._with_coach_cards(OutgoingMessage(text=finish_reply(response.text, incoming.text), embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
+                return self._with_self_report(OutgoingMessage(text=CHECK_IN_RECEIVED_WITHOUT_MODEL), user.id, incoming.text, incoming.received_at)
+            reply = self._with_coach_cards(OutgoingMessage(text=finish_reply(response.text, incoming.text), embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
+            return self._with_self_report(reply, user.id, incoming.text, incoming.received_at)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
@@ -357,6 +360,20 @@ class ApplicationService:
         except Exception:
             logger.exception("ApplicationService.handle_conversation_only failed.")
             return None
+
+    def _with_self_report(self, outgoing: OutgoingMessage, user_id: str, text: str, now) -> OutgoingMessage:
+        """The reply stays the model's; a question card is added under it. Never raises: a failure only means no card."""
+        if self.self_reports is None:
+            return outgoing
+        try:
+            card = self.self_reports(user_id, text, now)
+        except Exception:
+            logger.exception("The self-report card could not be offered.")
+            return outgoing
+        if card is None:
+            return outgoing
+        card_text, actions = card
+        return replace(outgoing, text=f"{outgoing.text}\n\n{card_text}", actions=tuple(outgoing.actions) + tuple(actions))
 
     def _notify_check_in(self, user_id: str, text: str, now) -> bool:
         """Best effort and never raises: a check-in problem must not break a conversation. True when the message answered a check-in."""
