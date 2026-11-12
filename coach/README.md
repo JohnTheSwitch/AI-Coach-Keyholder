@@ -61,3 +61,7 @@ With `ENABLE_COACHING_MEMORY` on, check-in replies are kept as dated quotes thro
 `ENABLE_COACH=true`, a model that follows a JSON schema (`OLLAMA_MODEL`; `llama3.1` and `qwen3-vl` were tested), `OLLAMA_NUM_CTX=8192` or similar, a Trust domain
 to label goals with (`CHECK_IN_TRUST_DOMAIN`), and a user (`CHECK_IN_USER_ID`, `CHASTER_EXECUTION_WEARER_USER_ID` or `OWNER_USER_ID`). The check-in negotiation also
 needs `ENABLE_CHECK_INS`, and multi-day memory needs `ENABLE_COACHING_MEMORY`.
+
+## Only yesterday's commitment is asked about (owner, 2026-11-12)
+
+`OUTCOME_WINDOW` is one day: a Tuesday card shown on Thursday was stale. Older open commitments lapse, at no cost.

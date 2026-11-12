@@ -15,6 +15,7 @@ from datetime import datetime
 
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import iso as _iso
+from infrastructure.time_format import parse_iso as _parse_iso
 
 logger = logging.getLogger("ai_coach_keyholder.system.memory_seed")
 
@@ -27,15 +28,16 @@ def seed_working_memory(memory, core: CoreDatabase, *, subject_key: str | None, 
         return 0
     try:
         with core.transaction() as tx:
-            rows = tx.fetch_all("SELECT role, content FROM (SELECT role, content, created_at, rowid AS r FROM conversation_messages WHERE created_at >= ? "
+            rows = tx.fetch_all("SELECT role, content, created_at FROM (SELECT role, content, created_at, rowid AS r FROM conversation_messages WHERE created_at >= ? "
                                 "ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, r", (_iso(since), limit))
-        restored, pending = 0, None
+        restored, pending, pending_at = 0, None, None
         for row in rows:
             content = (row["content"] or "").strip()
             if row["role"] == "user":
-                pending = content or None
+                pending, pending_at = content or None, (row["created_at"] if "created_at" in row.keys() else None)
             elif row["role"] == "assistant" and pending is not None and content:
-                memory.commit_exchange(subject_key=subject_key, user_content=pending, assistant_content=content)
+                memory.commit_exchange(subject_key=subject_key, user_content=pending, assistant_content=content,
+                                       at=_parse_iso(pending_at) if pending_at else None)
                 restored, pending = restored + 1, None
         return restored
     except Exception:

@@ -704,3 +704,14 @@ v0.39 Phase G6: `IronContractContextProvider` (namespace `contract`) puts `[STAT
 ## The model log (owner, 2026-11-10)
 
 `OllamaConversationModel._post_chat` writes every exchange to `logs/model.log` (`infrastructure/decision_log.model_call`): the messages it sent, the tools offered, the raw answer or the error, and how long it took. Only to that file, never to `bot.log`. Nothing a model is never given (a release time, a Trust score) can appear there.
+
+## Chat review, 2026-11-12
+
+- Detector questions are application state (`detector_questions_provider.py`).
+- The release line adds a general rule: the model may say missed check-ins stand between the user and being unlocked, never whether a release is
+  held right now (owner's wording).
+- Memory notes show their day and fade (`coaching_memory_provider.py`); chat older than 36 hours drops out of working memory.
+- The voice: the category instruction and the English rules no longer ask for a "supportive coach"; they match the keyholder voice guide, which now
+  also bans counsellor talk. `_SYSTEM_BOUNDARIES` is unchanged.
+- The bot loads the model once Ollama is up (`warm_model` in `bot/discord_bot.py`), and a check-in answer that meets a failing model is told it was
+  recorded (`application/service.py`).

@@ -44,3 +44,10 @@ over the interval).
 - A health need is never measured or counted. Neither is ever a basis for scrutiny (philosophy 3.9).
 - Limits derived from Trust are shown to the judge only, never to the wearer.
 - It never creates a Trust domain, and a hygiene finding is never filed under another domain (3.7).
+
+## The conversation model knows the questions (owner, 2026-11-12)
+
+Live, "What about my incident?" ten minutes after a finding was counted got "No report from you yet". `get_recent_questions()` hands the open ones
+and those of the last 7 days (wording, stage, local deadline; never a score) to
+`conversation_engine/context_providers/detector_questions_provider.py`, rendered as authoritative state. Nothing said in the chat counts as the
+answer; the user still answers under the system's message.

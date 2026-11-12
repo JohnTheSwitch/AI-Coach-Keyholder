@@ -24,8 +24,9 @@ does not log at all.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from threading import Lock
-from typing import Protocol
+from typing import Callable, Protocol
 
 from memory_system.models import (
     WorkingMemoryCapacityError,
@@ -61,7 +62,7 @@ class WorkingMemoryReader(Protocol):
 
 
 class WorkingMemoryWriter(Protocol):
-    def commit_exchange(self, *, subject_key: str, user_content: str, assistant_content: str) -> None: ...
+    def commit_exchange(self, *, subject_key: str, user_content: str, assistant_content: str, at: datetime | None = None) -> None: ...
 
 
 class InMemoryWorkingMemory(WorkingMemoryReader, WorkingMemoryWriter):
@@ -77,23 +78,32 @@ class InMemoryWorkingMemory(WorkingMemoryReader, WorkingMemoryWriter):
     what this class documents, not a stronger ordering promise.
     """
 
-    def __init__(self, *, max_exchanges_per_subject: int, max_characters_per_subject: int) -> None:
+    def __init__(self, *, max_exchanges_per_subject: int, max_characters_per_subject: int,
+                 clock: Callable[[], datetime] | None = None, max_age: timedelta | None = None) -> None:
         self._max_exchanges = _require_positive_integer(max_exchanges_per_subject, name="max_exchanges_per_subject")
         self._max_characters = _require_positive_integer(max_characters_per_subject, name="max_characters_per_subject")
+        # Owner, 2026-11-12: something said days ago ("I got burned this Wednesday") must not live on as the current conversation.
+        # With a clock and a max_age, older exchanges are left out of what the model reads.
+        self._clock = clock
+        self._max_age = max_age
         self._lock = Lock()
         self._exchanges: dict[str, list[tuple[WorkingMemoryTurn, WorkingMemoryTurn]]] = {}
+        self._times: dict[int, datetime] = {}
 
     def read(self, *, subject_key: str) -> WorkingMemorySnapshot:
         subject_key = _require_non_empty_string(subject_key, name="subject_key")
         with self._lock:
             pairs = list(self._exchanges.get(subject_key, ()))
+            if self._clock is not None and self._max_age is not None:
+                cutoff = self._clock() - self._max_age
+                pairs = [p for p in pairs if self._times.get(id(p), cutoff) >= cutoff]
         turns: list[WorkingMemoryTurn] = []
         for user_turn, assistant_turn in pairs:
             turns.append(user_turn)
             turns.append(assistant_turn)
         return WorkingMemorySnapshot(turns=tuple(turns))  # a fresh tuple every call
 
-    def commit_exchange(self, *, subject_key: str, user_content: str, assistant_content: str) -> None:
+    def commit_exchange(self, *, subject_key: str, user_content: str, assistant_content: str, at: datetime | None = None) -> None:
         subject_key = _require_non_empty_string(subject_key, name="subject_key")
         user_content = _require_non_empty_string(user_content, name="user_content")
         assistant_content = _require_non_empty_string(assistant_content, name="assistant_content")
@@ -111,7 +121,13 @@ class InMemoryWorkingMemory(WorkingMemoryReader, WorkingMemoryWriter):
         with self._lock:
             existing = self._exchanges.setdefault(subject_key, [])
             existing.append(pair)  # atomic: the whole pair, or nothing (capacity was checked above, before any mutation)
+            when = at if at is not None else (self._clock() if self._clock is not None else None)
+            if when is not None:
+                self._times[id(pair)] = when
             self._trim(existing)
+            live = {id(p) for pairs in self._exchanges.values() for p in pairs}
+            for key in [k for k in self._times if k not in live]:
+                del self._times[key]
 
     def _trim(self, pairs: list[tuple[WorkingMemoryTurn, WorkingMemoryTurn]]) -> None:
         """Oldest WHOLE exchange first, count then character budget --

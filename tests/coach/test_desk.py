@@ -310,6 +310,11 @@ class TestCommitmentOutcomes:
         assert w.desk.commitment_to_review(NOW) is None
         assert w.desk.commitment_to_review(NOW + timedelta(days=1)).text == COMMIT["text"]
 
+    def test_only_yesterdays_is_still_asked_about(self, w) -> None:
+        self.accepted(w, "today")                                    # owner, 2026-11-12: a Tuesday card on Thursday is stale
+        assert w.desk.commitment_to_review(NOW + timedelta(days=1)) is not None
+        assert w.desk.commitment_to_review(NOW + timedelta(days=2)) is None
+
     def test_an_unanswered_commitment_lapses_at_no_cost(self, w) -> None:
         self.accepted(w, "today")
         later = NOW + OUTCOME_WINDOW + timedelta(days=2)

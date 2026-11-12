@@ -281,7 +281,7 @@ class TestEnglishBehaviorRules:
         assert text.endswith(ENGLISH_BEHAVIOR_RULES) and "CONFIDENTIALITY" in text
 
     def test_rules_define_direct_wording_and_the_coaching_voice(self) -> None:
-        for needle in ("natural, correct English", "I can't unlock you early.", "Coaching voice", "Never guess"):
+        for needle in ("natural, correct English", "I can't unlock you early.", "Voice: a confident keyholder", "Never guess"):
             assert needle in ENGLISH_BEHAVIOR_RULES, needle
 
     def test_no_czech_text_remains_in_the_guardrails(self) -> None:

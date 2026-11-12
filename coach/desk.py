@@ -60,7 +60,7 @@ MAX_COMMITMENTS_PER_DAY = 3
 MAX_ACTIVE_GOALS = 5
 PROPOSAL_TTL = timedelta(hours=24)
 DECLINE_MEMORY = timedelta(days=14)
-OUTCOME_WINDOW = timedelta(days=3)               # how long an unanswered commitment is still asked about; then it lapses, at no cost
+OUTCOME_WINDOW = timedelta(days=1)               # only yesterday's is still asked about (owner, 2026-11-12: a Tuesday card on Thursday is stale); then it lapses, at no cost
 PROGRESS_WINDOW = timedelta(days=14)
 TASK_WINDOW = timedelta(days=7)
 _SIMILAR = 0.6

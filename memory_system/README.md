@@ -124,3 +124,8 @@ full detail. Summary:
   ever existed between the two).
 - **No session semantics.** `subject_key` is the only dimension; no
   session ID, no session lifecycle.
+
+## Old chat drops out (owner, 2026-11-12)
+
+`InMemoryWorkingMemory` takes an optional `clock` and `max_age`; exchanges older than that are left out of `read()`. `commit_exchange` takes an
+optional `at` (the restored conversation passes each message's own time). The bot uses 36 hours (`WORKING_MEMORY_MAX_AGE` in `bot/discord_bot.py`).

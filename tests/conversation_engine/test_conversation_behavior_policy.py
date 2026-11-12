@@ -116,7 +116,7 @@ class TestSystemBoundariesUnchanged:
     def test_system_boundaries_appear_before_category_instructions(self) -> None:
         system_text = _system_text()
         boundaries_index = system_text.index("You are the AI voice")
-        category_index = system_text.index("Respond as a supportive")
+        category_index = system_text.index("Respond as the user's keyholder")
         assert boundaries_index < category_index
 
 

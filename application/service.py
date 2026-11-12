@@ -111,6 +111,9 @@ def requires_unlocked(*, always: bool = False):
     return wrap
 
 
+CHECK_IN_RECEIVED_WITHOUT_MODEL = "Got your check-in answer, it's recorded. I can't say more right now; give me a minute and talk to me again."
+
+
 class ApplicationService:
     def __init__(
         self, db_path: str | Path, *, core: CoreDatabase | None = None,
@@ -325,6 +328,10 @@ class ApplicationService:
                 # "missing required context" situation, not a bug crash.
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
             embed = self._embed_from_tool_outputs(response.tool_outputs, now=incoming.received_at)
+            if check_in_reply and response.text == render_fallback(FallbackReason.GENERATION_UNAVAILABLE).text:
+                # Live, 2026-11-12: a check-in answer met a model that was still loading and got only "I can't generate a response". It was
+                # recorded all the same, so the user is told so instead of being left to wonder.
+                return OutgoingMessage(text=CHECK_IN_RECEIVED_WITHOUT_MODEL)
             return self._with_coach_cards(OutgoingMessage(text=finish_reply(response.text, incoming.text), embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)

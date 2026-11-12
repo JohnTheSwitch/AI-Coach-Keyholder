@@ -123,7 +123,8 @@ def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
     sinks = []
     provider = None
     if structured and getattr(config, "enable_coaching_memory", False):
-        provider = CoachingMemoryContextProvider(get_entries=lambda user_id: [(e.category, e.content) for e in memory.recent(user_id)])
+        provider = CoachingMemoryContextProvider(get_entries=lambda user_id: [(e.category, e.content, e.created_at)
+                                                                             for e in memory.recent(user_id, limit=20)])
         sinks.append(memory.sink)
     if structured and getattr(config, "enable_ai_suggestions", False):
         # Phase F3: the idea box is WRITE-ONLY from here; nothing that builds model context reads it.

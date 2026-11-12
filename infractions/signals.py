@@ -469,3 +469,30 @@ class InfractionSignals:
 
 _ADOPTED_DETAIL = {"CHECKIN_REPEATED_NONCOMPLIANCE": "Several check-ins in a row were missed."}
 _ADOPTED_TEXT = {"CHECKIN_REPEATED_NONCOMPLIANCE": "{day}: you left my check-ins hanging, several in a row. What was going on?"}
+
+
+_STAGE = {"waiting": "waiting_for_answer", "judging": "being_judged", "decided": "appeal_open", "confirmed": "counted", "cleared": "dropped"}
+
+
+def get_recent_questions(core: CoreDatabase, user_id: str, now: datetime, *, local: Callable[[datetime], datetime],
+                         days: int = 7) -> list[dict]:
+    """Owner, 2026-11-12: what the conversation model may know about detector questions, so it never says "no report" about a counted one.
+    Open ones and those from the last `days` days, newest first: the finding's wording, the stage, and a local time. Never a score."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT detail, status, review_after, confirm_after, decided_at FROM infraction_signals WHERE user_id = ? "
+                            "AND (status IN ('waiting', 'judging', 'decided') OR created_at >= ?) ORDER BY created_at DESC, rowid DESC LIMIT 3",
+                            (user_id, _iso(now - timedelta(days=days))))
+
+    def at(value: str | None) -> str | None:
+        return local(parse_iso(value)).strftime("%a %d %b %H:%M") if value else None
+
+    out = []
+    for r in rows:
+        stage = _STAGE.get(r["status"])
+        if stage is None:
+            continue
+        out.append({"detail": r["detail"], "stage": stage,
+                    "until": at(r["review_after"]) if stage == "waiting_for_answer" else at(r["confirm_after"]) if stage == "appeal_open" else None,
+                    "closed": at(r["decided_at"]) if stage in ("counted", "dropped") else None})
+    return out
+

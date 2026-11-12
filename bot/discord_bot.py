@@ -67,6 +67,10 @@ from infrastructure.clock import Clock, SystemClock
 REPLAY_MAX_AGE = timedelta(days=3)          # older unanswered DMs are history, not something to answer now
 REPLAY_MAX_MESSAGES = 30
 REPLAY_WAIT_SECONDS = 180
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code): chat older than this is no longer part of the conversation the model reads (owner, 2026-11-12).
+WORKING_MEMORY_MAX_AGE = timedelta(hours=36)
+WARMUP_ATTEMPTS = 40                       # 40 x 30 s: Ollama has 20 minutes to come up after a start
+WARMUP_PAUSE_SECONDS = 30.0
 from infrastructure.database import Database as CoreDatabase
 from bot.checkin_sender import DiscordCheckInSender
 from conversation_engine.context_providers.release_phase_provider import ReleasePhaseContextProvider
@@ -156,6 +160,7 @@ class CoachKeyholderBot(discord.Client):
         self.notifications = None                # notifications.dispatcher.notification_loop coroutine
         self._notification_task: asyncio.Task | None = None
         self.detectors = None                    # infractions.wiring.detector_loop coroutine when a watch is active
+        self.model_warmup = None                 # warm_model coroutine: the model is loaded before the first message needs it
         self._detector_task: asyncio.Task | None = None
         self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
         self._extension_guard_task: asyncio.Task | None = None
@@ -202,6 +207,8 @@ class CoachKeyholderBot(discord.Client):
             self._detector_task = asyncio.create_task(self._after_catch_up(self.detectors), name="detectors")
         if self.extension_guard is not None:
             self._extension_guard_task = asyncio.create_task(self.extension_guard, name="extension-guard")
+        if self.model_warmup is not None:
+            self._model_warmup_task = asyncio.create_task(self.model_warmup, name="model-warmup")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -460,6 +467,27 @@ class CoachKeyholderBot(discord.Client):
             logger.exception("Failed to log a conversation message (role=%s) -- continuing anyway.", role.value)
 
 
+async def warm_model(model, *, attempts: int = WARMUP_ATTEMPTS, pause_seconds: float = WARMUP_PAUSE_SECONDS) -> bool:
+    """Live, 2026-11-12: Ollama starts with the PC like the bot, and the first message after a start waited 30 s for the model to load, timed out and
+    got "I can't generate a response". This waits for Ollama, then asks one tiny question so the model is in memory before anyone needs it."""
+    from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
+    for _ in range(attempts):
+        try:
+            ready = await asyncio.to_thread(model.check_ready)
+            if ready.reachable and ready.installed:
+                request = ModelGenerationRequest(messages=(ModelMessage(role=ModelMessageRole.USER, content="Reply with OK."),), max_output_characters=40)
+                await asyncio.to_thread(model.generate, request=request)
+                logger.info("The model is loaded and ready.")
+                return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info("The model is not ready yet (%s); trying again.", type(exc).__name__)
+        await asyncio.sleep(pause_seconds)
+    logger.warning("The model could not be loaded ahead of time; the first reply may be slow.")
+    return False
+
+
 def build_bot(config: Config, db: Database, clock: Clock, application_service: ApplicationService) -> CoachKeyholderBot:
     intents = discord.Intents.default()
     intents.message_content = True  # required to read message content (privileged intent)
@@ -517,7 +545,8 @@ def main() -> None:
     ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model,
                                            read_timeout_seconds=config.ollama_read_timeout_seconds, keep_alive=config.ollama_keep_alive,
                                            num_ctx=config.ollama_num_ctx)
-    working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
+    working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000, clock=clock.now,
+                                           max_age=WORKING_MEMORY_MAX_AGE)
     # A restart no longer wipes the conversation: the last day's stored exchanges are put back (owner, 2026-11-10).
     from datetime import timedelta as _timedelta
     from system.memory_seed import seed_working_memory
@@ -650,6 +679,11 @@ def main() -> None:
     coach_dm = build_coach(config, core, clock=clock, targets_frozen=goal_targets_frozen(wiring.iron_contract), paused=wiring.vacation.is_paused,
                            today=lambda now, cfg=window_config_from(config): cfg.local(now).date(), local_now=lambda now, cfg=window_config_from(config): cfg.local(now),
                            active_task=active_task_reader(task_runtime, task_catalog), memory=coaching) if config.enable_coach else None
+    # Owner, 2026-11-12: the model knows the detector questions it was asked about ("What about my incident?" got "No report from you yet").
+    from conversation_engine.context_providers.detector_questions_provider import DetectorQuestionsContextProvider
+    from infractions.signals import get_recent_questions
+    context_providers = context_providers + (DetectorQuestionsContextProvider(
+        read=lambda user_id, now, cfg=window_config_from(config): get_recent_questions(core, user_id, now, local=cfg.local)),)
     if coach_dm is not None:
         context_providers = context_providers + (CoachContextProvider(read=coach_dm.context),)
         if wiring.check_ins is not None:
@@ -716,6 +750,7 @@ def main() -> None:
         coach=coach_dm, exemption_reply=exemption_reply, clock=clock,
     )
     bot = build_bot(config, db, clock, application_service)
+    bot.model_warmup = warm_model(ollama_model)
     bot.dm_actions["lock_report"] = application_service
     if exemption_dm is not None:
         bot.dm_actions["exemption"] = exemption_dm
