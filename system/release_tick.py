@@ -140,6 +140,8 @@ class ReleaseEnginePeriodicTask:
         if veto is not None:
             if self._engine.cancel_plan(user_id=self._user, reason=veto, now=now):
                 report.add(f"plan_cancelled:{veto}")
+            elif self._engine.get_balance(self._user) >= 1:
+                report.add(f"release_held:{veto}")          # a token waits, and the log says why (live, 2026-11-12: two silent days)
             # The backstop deliberately ignores vetoes.
             self._maybe_backstop(now, report)
             return report

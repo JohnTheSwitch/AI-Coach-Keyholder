@@ -63,7 +63,7 @@ release belongs to `CHASTER_EXECUTION_WEARER_USER_ID`, else `CHECK_IN_USER_ID`, 
 The owner wants every release decision readable from the files, the release time included. `ensure_plan` writes the planned unfreeze time,
 `commit_authorization` and `commit_backstop` write every outcome except "not due" with the gates behind it, and the tick writes each change of its
 outcome once (not every minute) with the facts: token balance, plan, halt, execution, penalty window, supervision and the last lock reading. A plan
-that is due while the halt is on or execution is off now says so (`plan_due_but_halted`, `plan_due_but_execution_off`). The time goes only to the
+that is due while the halt is on or execution is off now says so (`plan_due_but_halted`, `plan_due_but_execution_off`), and so does a token held back by a veto (`release_held:supervision_active`, `release_held:penalty_window_active`; live 2026-11-12: two days without a line). The time goes only to the
 log file, never into an event payload, a message or a model, which still see no time (`infrastructure/decision_log.py`).
 
 ## Phase 3: token earning and the re-freeze

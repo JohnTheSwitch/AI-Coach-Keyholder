@@ -140,3 +140,23 @@ class TestModelLog:
         finally:
             logger.propagate = False
         _ = requests
+
+
+class TestWhyNothingHappens:
+    def test_a_token_held_by_a_veto_says_so_once(self, tmp_path, caplog) -> None:
+        from tests.system.test_release_tick import World
+        w = World(tmp_path, supervised=True)
+        w.tokens()
+        with caplog.at_level(logging.INFO, logger=RELEASE_LOGGER):
+            for minutes in (0, 1, 2):
+                w.cycle(w.now + timedelta(minutes=minutes))
+        held = [r.getMessage() for r in caplog.records if "release_held:supervision_active" in r.getMessage()]
+        assert len(held) == 1 and '"supervision_active": true' in held[0]
+
+    def test_a_sent_check_in_is_logged_with_its_deadline(self, tmp_path, caplog) -> None:
+        from tests.supervision.test_checkins import MON, Env, local
+        e = Env(tmp_path)
+        e.svc.tick(local(MON, 9))
+        with caplog.at_level(logging.INFO, logger=DECISIONS_LOGGER):
+            e.svc.tick(e.first_due())
+        assert any("Check-in sent: delivered" in r.getMessage() and "answer_by" in r.getMessage() for r in caplog.records)

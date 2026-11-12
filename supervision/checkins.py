@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
@@ -330,6 +331,8 @@ class CheckInService:
             except Exception:
                 logger.exception("Check-in delivery raised; outcome unknown.")
                 outcome = SendOutcome.UNKNOWN
+            decision("check_ins", f"Check-in sent: {outcome.value}.", check_in_id=row["id"], level=int(level),
+                     answer_by=_iso(now + self._response_timeout()) if outcome is SendOutcome.DELIVERED else None)
             if outcome is SendOutcome.DELIVERED:
                 self._cas(row["id"], ("sending",), "sent", now, sent_at=_iso(now), deadline_at=_iso(now + self._response_timeout()))
             elif outcome is SendOutcome.UNDELIVERABLE:
