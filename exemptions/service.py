@@ -41,6 +41,8 @@ from uuid import uuid4
 from application.models import ActionSpec, OutgoingMessage
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
+from infrastructure.decision_log import decision
+from infrastructure.decision_log import decision as _log
 from infrastructure.text import plain_text
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
@@ -156,6 +158,9 @@ class ExemptionService:
             return "draft", new_id
 
         status, ident = apply_transition(self._core, write=write)
+        if status == "draft":
+            decision("exemptions", "Hygiene opening asked for: " + ("offered within this week's allowance." if within else "this week's allowance is used up."),
+                     exemption_id=ident, minutes=minutes, planned_breaks_allowed=breaks)
         if status == "requested":
             return OutgoingMessage(text=f"Your earlier request is still with your keyholder. {SAFETY_LINE}")
         if status == "approved":
@@ -178,6 +183,7 @@ class ExemptionService:
                 tx.execute("DELETE FROM wear_exemptions WHERE id = ? AND status = 'draft'", (exemption_id,))
 
             apply_transition(self._core, write=drop)
+            decision("exemptions", "Hygiene opening declined by the wearer; nothing was opened.", exemption_id=exemption_id)
             return OutgoingMessage(text="Okay, nothing was opened.")
         if action == "hask" or (action == "hopen" and self._planned_this_week(user_id, now) >= self._allowance()[0]):
             return self._ask_keyholder(row, now)
@@ -189,6 +195,8 @@ class ExemptionService:
                        ("hygiene_health" if health else "hygiene", minutes, _iso(now), _iso(now), "wearer_health" if health else "allowance", _iso(now + timedelta(minutes=minutes)), exemption_id))
 
         apply_transition(self._core, write=approve)
+        decision("exemptions", "Health opening approved (a health need never counts against anything)." if health else "Hygiene opening approved by the allowance.",
+                 exemption_id=exemption_id, minutes=minutes, until=_iso(now + timedelta(minutes=minutes)))
         self.tick(now)
         with self._core.transaction() as tx:
             current = tx.fetch_one("SELECT opened_at, opening_outcome FROM wear_exemptions WHERE id = ?", (exemption_id,))
@@ -273,6 +281,7 @@ class ExemptionService:
 
         if not apply_transition(self._core, write=write):
             return ExemptionDecision.NOT_PENDING
+        _log("exemptions", f"Request {decision.value} by the keyholder.", exemption_id=exemption_id)
         if approve:
             self.tick(now)
         return decision
@@ -320,6 +329,7 @@ class ExemptionService:
                                                 ActionSpec(action_id=f"exemption:decline:{row['id']}", label="Decline", style="secondary")))
 
         apply_transition(self._core, write=write)
+        decision("exemptions", "Hygiene opening past the allowance sent to the keyholder.", exemption_id=row["id"], minutes=row["minutes"])
         return OutgoingMessage(text=f"Sent to your keyholder. I'll tell you as soon as they answer. {SAFETY_LINE}")
 
     def _approval_text(self, row) -> str:
@@ -350,6 +360,8 @@ class ExemptionService:
         result = self._opening.open_for(row["hours"] if row["hours"] else row["minutes"] / 60)
         opened = result.outcome.value == "opened"
         retry = result.outcome.value == "halted"
+        decision("exemptions", f"Chaster opening: {result.outcome.value}.", exemption_id=row["id"], kind=row["kind"], detail=result.detail,
+                 lock_id=self._opening.lock_id, saved_settings=result.saved)
 
         def record(tx: Transaction, _s: object) -> None:
             tx.execute("UPDATE wear_exemptions SET opened_at = ?, opening_saved_json = ?, opening_outcome = ?, opening_claimed_at = CASE WHEN ? THEN NULL ELSE opening_claimed_at END WHERE id = ?",
@@ -401,10 +413,14 @@ class ExemptionService:
 
         apply_transition(self._core, write=record)
         self._end(row, now, reason)
+        restored = None
         if self._opening is not None and row["opening_saved_json"]:
-            if not self._opening.restore(json.loads(row["opening_saved_json"])):
+            restored = self._opening.restore(json.loads(row["opening_saved_json"]))
+            if not restored:
                 logger.warning("The lock's own opening settings could not be put back yet.")
                 self._queue_restore(row, now)
+        decision("exemptions", f"Lock closed again on Chaster: {reason}.", exemption_id=row["id"], kind=row["kind"], approved_until=row["expires_at"],
+                 relocked_at=_iso(relocked_at) if relocked_at else None, settings_restored=restored, sent_to_overrun_check=late or None)
         if late:
             return "Welcome back. You relocked after the approved time, so this goes to your keyholder. If it was a health or safety need, you'll be able to say so."
         if row["kind"] != "exemption":
@@ -438,6 +454,8 @@ class ExemptionService:
 
         def write(tx: Transaction, _s: object) -> None:
             cursor = tx.execute("UPDATE wear_exemptions SET status = 'ended', ended_at = ?, end_reason = ? WHERE id = ? AND status = 'approved'", (_iso(now), reason, row["id"]))
+            if cursor.rowcount == 1:
+                decision("exemptions", f"Exemption ended: {reason}.", exemption_id=row["id"], kind=row["kind"])
             if cursor.rowcount == 1 and reason == "expired":
                 enqueue_in_transaction(tx, user_id=row["user_id"], kind="exemption_ended", dedupe_key=f"exemption:ended:{row['id']}", now=now, immediate=True,
                                        text="Your exemption has ended. Welcome back.")

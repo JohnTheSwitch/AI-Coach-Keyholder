@@ -206,3 +206,16 @@ class TestWhenItCannotOpen:
         w = World(tmp_path)
         w.press(w.ask(), "Open it")
         assert "already have an exemption running" in w.ask(NOW + timedelta(minutes=1)).text
+
+
+class TestTheDecisionLog:
+    def test_every_step_of_a_hygiene_opening_is_logged(self, tmp_path, caplog) -> None:
+        import logging
+        from infrastructure.decision_log import DECISIONS_LOGGER
+        w = World(tmp_path)
+        with caplog.at_level(logging.INFO, logger=DECISIONS_LOGGER):
+            w.take_break(NOW)
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        for step in ("offered within this week's allowance", "approved by the allowance", "Chaster opening: opened", "Lock closed again on Chaster",
+                     "Exemption ended"):
+            assert step in text, step

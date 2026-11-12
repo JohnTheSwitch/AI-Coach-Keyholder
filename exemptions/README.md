@@ -8,3 +8,7 @@ halt. `system/dm_actions.py` is the buttons' door.
 - The keyholder's button decides. `decide()` reads the request only, never the Penalty Window (invariant I7), and a test proves it with an engine that fails on any touch.
 - Nothing here calls Chaster or moves an hour. A pause is a Penalty Window freeze, and the redemption hold stays on.
 - This is for planned life. A health or safety need never waits for it (3.9, 3.10).
+
+## Decision log (owner, 2026-11-12)
+
+The first live hygiene opening left no line in any log. Every step now goes to `logs/decisions.log`: asked and offered (within the allowance or not), declined, approved (allowance, health, keyholder), sent to the keyholder, Chaster's answer to the opening, the relock (on time, late, unverified) with whether the lock's own settings were restored, and the end.
