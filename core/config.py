@@ -167,7 +167,7 @@ class Config:
     # Check-in deadlines (minutes). Strict Supervision Mode (Trust < 0.40) uses the shorter strict values.
     checkin_response_timeout_minutes: int = 60
     checkin_follow_up_minutes: int = 30
-    checkin_strict_response_timeout_minutes: int = 30
+    checkin_strict_response_timeout_minutes: int = 30      # no longer used (owner, 2026-11-13: the normal time to answer at every level)
     checkin_strict_follow_up_minutes: int = 15
     enable_multi_wearer: bool = False         # v0.39 Phase E: tenant registry and platform database (the running system is unchanged when off)
     platform_db_path: Path | None = None      # default: platform.sqlite next to the main database

@@ -21,7 +21,9 @@ from pathlib import Path
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
-from trust_manager.checkin_scoring import CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, checkin_evidence_spec
+from trust_manager.checkin_scoring import (
+    CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_KEPT_WEIGHT, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, checkin_evidence_spec,
+)
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
     goal_evidence_confidence,
@@ -761,6 +763,16 @@ class TrustManager:
             tx, trust_domain=trust_domain, evidence_type=EvidenceType.COMMITMENT_NOT_KEPT, source_entity_type="daily_commitment",
             source_entity_id=commitment_id, weight=COMMITMENT_NOT_KEPT_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="commitment", now=now,
             explanation="A daily commitment was reported as not kept.",
+        )
+
+    def _record_commitment_kept_in_transaction(
+        self, tx: Transaction, *, commitment_id: str, trust_domain: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """Owner, 2026-11-13: the mirror of `_record_commitment_evidence_in_transaction`, from `coach.commitment_kept`."""
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=EvidenceType.COMMITMENT_KEPT, source_entity_type="daily_commitment",
+            source_entity_id=commitment_id, weight=COMMITMENT_KEPT_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="commitment", now=now,
+            explanation="A daily commitment was reported as kept.",
         )
 
     def _record_minor_evidence_in_transaction(

@@ -51,6 +51,12 @@ discipline as every prior module.
   `trust_manager` nor `penalty_engine` at all, checked directly
   (`TestGoalStructuralIsolation`), not merely asserted in prose.
 
+## Goal results from commitments (owner, 2026-11-13)
+
+`record_evidence()` had no production caller, so goals counted for nothing. `record_reported_result_in_transaction()` (consumer of
+`coach.goal_result_reported`) records one `goal_evidence` row per daily commitment tied to an active goal: kept = `met`, not kept = `missed`,
+source `user_report`. It never evaluates the goal, touches Trust or changes its lifecycle (GOAL-2).
+
 ## What is deferred
 
 - **`GoalAccountabilityAssessment`'s negotiation fields** (Section 6:

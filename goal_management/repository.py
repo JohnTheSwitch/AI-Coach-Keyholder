@@ -19,6 +19,7 @@ and how each was resolved.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -49,6 +50,27 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
+
+COMMITMENT_SOURCE = "user_report"
+
+
+def record_reported_result_in_transaction(tx: Transaction, *, goal_group_id: str, commitment_id: str, outcome: str, period_start: str,
+                                          period_end: str, now: datetime) -> bool:
+    """Owner, 2026-11-13: before, nothing ever recorded goal evidence, so goals counted for nothing. A daily commitment tied to a goal and reported
+    kept or not kept (`coach.goal_result_reported`) is that day's result: MET or MISSED. Once per commitment; an inactive goal gets none."""
+    goal = tx.fetch_one("SELECT current_version_id FROM goals WHERE goal_group_id = ? AND status = 'active' AND archived_at IS NULL", (goal_group_id,))
+    if goal is None or outcome not in (GoalOutcome.MET.value, GoalOutcome.MISSED.value):
+        return False
+    progress = f"daily_commitment:{commitment_id}"
+    if tx.fetch_one("SELECT 1 FROM goal_evidence WHERE goal_group_id = ? AND observed_progress = ?", (goal_group_id, progress)):
+        return False
+    evidence_id = str(uuid.uuid4())
+    tx.execute("INSERT INTO goal_evidence (id, goal_group_id, goal_version_id, period_start, period_end, outcome, observed_progress, source, created_at) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               (evidence_id, goal_group_id, goal["current_version_id"], period_start, period_end, outcome, progress, COMMITMENT_SOURCE, _iso(now)))
+    write_event(tx, DomainEvent(event_type="goal_evidence.recorded", source_module="goal_management",
+                                payload={"goal_evidence_id": evidence_id, "goal_group_id": goal_group_id, "outcome": outcome}, occurred_at=now))
+    return True
 
 _TERMINAL_STATUSES = (GoalLifecycleStatus.COMPLETED, GoalLifecycleStatus.ABANDONED, GoalLifecycleStatus.REPLACED)
 

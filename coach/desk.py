@@ -134,6 +134,9 @@ class CoachDesk:
         self._targets_frozen = targets_frozen
         self._paused = paused
         self._active_task = active_task
+        # Owner, 2026-11-13: (UTC start, UTC end) of a local date. When set, a commitment tied to a goal and reported kept or not kept records that
+        # day's goal result (`coach.goal_result_reported`); None: goals get no result from commitments.
+        self.day_bounds: Callable[[date], tuple[datetime, datetime]] | None = None
 
     # ------------------------------------------------------------------ model side
 
@@ -316,16 +319,26 @@ class CoachDesk:
         return text
 
     def record_outcome(self, user_id: str, commitment_id: str, outcome: Outcome, now: datetime) -> str:
-        """The user's own report on a commitment. Not kept also raises `coach.commitment_missed` for the Trust Manager, unless a vacation is in force."""
-        counts = outcome is Outcome.NOT_KEPT and not self._paused(now)
+        """The user's own report on a commitment. Not kept also raises `coach.commitment_missed` for the Trust Manager, unless a vacation is in force;
+        kept raises `coach.commitment_kept` the same way (owner, 2026-11-13). Partly kept stays neutral. A commitment tied to a goal also records that
+        day's goal result (`coach.goal_result_reported`), kept = met, not kept = missed."""
+        counts = outcome in (Outcome.NOT_KEPT, Outcome.KEPT) and not self._paused(now)
 
         def write(tx: Transaction, _s: object) -> bool:
+            row = tx.fetch_one("SELECT for_date, goal_group_id FROM daily_commitments WHERE id = ? AND user_id = ? AND status = 'open'",
+                               (commitment_id, user_id))
             done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ? AND status = 'open'",
                               (outcome.value, _iso(now), commitment_id, user_id)).rowcount
             if done:
                 self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=outcome.value)
                 if counts:
-                    self._event(tx, "coach.commitment_missed", now, commitment_id=commitment_id, trust_domain=self._domain)
+                    self._event(tx, "coach.commitment_missed" if outcome is Outcome.NOT_KEPT else "coach.commitment_kept", now,
+                                commitment_id=commitment_id, trust_domain=self._domain)
+                if row is not None and row["goal_group_id"] and outcome is not Outcome.PARTLY and self.day_bounds is not None:
+                    start, end = self.day_bounds(date.fromisoformat(row["for_date"]))
+                    at = max(start, min(now, end - timedelta(seconds=1)))       # inside that local day, so the daily evaluation counts it
+                    self._event(tx, "coach.goal_result_reported", now, goal_group_id=row["goal_group_id"], commitment_id=commitment_id,
+                                outcome="met" if outcome is Outcome.KEPT else "missed", period_start=_iso(start), period_end=_iso(at))
             return bool(done)
 
         if user_id != self.user_id or not apply_transition(self._core, write=write):

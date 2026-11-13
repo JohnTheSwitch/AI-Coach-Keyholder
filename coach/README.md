@@ -42,8 +42,11 @@ Each refusal stores a reason code in `coach_refusals`, never the text. `python -
 ## What it never does
 
 - It reads no Trust state and imports no execution, release, penalty, Trust, rules or Iron Contract code (guard test). Locks and vacations arrive as injected callables.
-- A commitment reported as not kept is a minor Trust reduction (-0.01, through `coach.commitment_missed`) and nothing else: it is not goal evidence, it takes no
-  token and it never reaches a lock. Kept, partly kept, unanswered, and anything reported during a vacation do nothing.
+- A commitment reported as not kept is a minor Trust reduction (-0.01, through `coach.commitment_missed`); owner, 2026-11-13: kept is the mirror, +0.01
+  (`coach.commitment_kept`). Neither takes a token or reaches a lock. Partly kept, unanswered, and anything reported during a vacation do nothing for Trust.
+- Owner, 2026-11-13 (before, nothing ever recorded goal evidence, so goals counted for nothing): a commitment tied to a goal and reported kept or not kept
+  is that day's goal result (`coach.goal_result_reported` -> `goal_management.record_reported_result_in_transaction`, MET or MISSED, period inside the
+  commitment's local day). The daily evaluation then counts the goal for the token pool and the clean day. Partly kept records nothing.
 - An untrusted channel never reaches it, and multi-wearer tenants are not wired, because a tenant's invitation does not disclose it.
 
 `forget all` erases proposals, refusals and commitments. Goals stay as agreed records, and Trust evidence is append-only.

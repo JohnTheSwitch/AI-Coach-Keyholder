@@ -217,7 +217,8 @@ def goal_targets_frozen(contract: IronContract) -> Callable[[str], bool]:
 
 def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Callable[[str], bool], paused: Callable[[str, datetime], bool],
                 today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None], memory=None,
-                local_now: Callable[[datetime], datetime] | None = None) -> CoachDm | None:
+                local_now: Callable[[datetime], datetime] | None = None,
+                day_bounds: Callable[[date], tuple[datetime, datetime]] | None = None) -> CoachDm | None:
     """None unless ENABLE_COACH is on and there is a wearer and a Trust domain to label goals with."""
     if not getattr(config, "enable_coach", False):
         return None
@@ -233,4 +234,5 @@ def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Cal
     if local_now is not None:
         desk.time_of_day = lambda now: describe_time_of_day(local_now(now))
         desk.local_now = local_now
+    desk.day_bounds = day_bounds
     return CoachDm(desk, core=core, clock=clock, memory=memory if getattr(config, "enable_coaching_memory", False) else None)

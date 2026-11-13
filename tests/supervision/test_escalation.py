@@ -253,8 +253,9 @@ class TestStrictDeadlines:
     def test_normal_mode_gives_60_minutes(self, tmp_path) -> None:
         assert self._sent_deadline(self._env(tmp_path, [False])) == timedelta(minutes=60)
 
-    def test_strict_supervision_mode_gives_30_minutes(self, tmp_path) -> None:
-        assert self._sent_deadline(self._env(tmp_path, [True])) == timedelta(minutes=30)
+    def test_strict_supervision_mode_keeps_60_minutes(self, tmp_path) -> None:
+        # Owner, 2026-11-13: strict mode no longer halves the time to answer.
+        assert self._sent_deadline(self._env(tmp_path, [True])) == timedelta(minutes=60)
 
     def test_the_follow_up_window_drops_from_30_to_15_minutes(self, tmp_path) -> None:
         for strict, expected in ((False, 30), (True, 15)):

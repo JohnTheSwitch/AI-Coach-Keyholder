@@ -152,3 +152,24 @@ class TestSlots:
 
     def test_randomness_changes_the_placement(self) -> None:
         assert slots_for_day(CFG, self.D, 2, fixed(0.1)) != slots_for_day(CFG, self.D, 2, fixed(0.9))
+
+
+class TestTheAnswerWindowEndsBeforeQuietHours:
+    """2026-11-13: a check-in at 21:36 was due at 22:06, in quiet hours."""
+
+    @pytest.mark.parametrize("count", [1, 2, 3])
+    @pytest.mark.parametrize("d", [date(2026, 10, 12), date(2026, 10, 17)])
+    def test_the_deadline_is_still_discretionary(self, count, d) -> None:
+        window = timedelta(minutes=60)
+        slots = slots_for_day(CFG, d, count, fixed(0.999), answer_window=window)
+        _, end = discretionary_interval(CFG, d)
+        assert len(slots) == count and all(s + window <= end for s in slots)
+
+    def test_a_window_longer_than_the_interval_gives_none(self) -> None:
+        assert slots_for_day(CFG, date(2026, 10, 12), 2, fixed(0.5), answer_window=timedelta(hours=20)) == []
+
+    def test_the_service_keeps_the_longer_window_free(self) -> None:
+        from pathlib import Path
+        source = Path("supervision/checkins.py").read_text(encoding="utf-8")
+        assert "answer_window=window" in source and "max(self._timeouts[0], self._strict_timeouts[0])" in source
+        assert "deterministic=True" in Path("bot/discord_bot.py").read_text(encoding="utf-8").split("def check_in_complete")[1][:900]

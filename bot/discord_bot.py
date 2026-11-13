@@ -60,7 +60,7 @@ from core.config import Config, ConfigError
 from memory_system.working_memory import InMemoryWorkingMemory
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
-from datetime import timedelta
+from datetime import time as dt_time, timedelta
 
 from infrastructure.clock import Clock, SystemClock
 
@@ -646,11 +646,12 @@ def main() -> None:
     notification_queue = NotificationQueue(config.db_path, core=core)
 
     def check_in_complete(system_prompt: str, user_message: str) -> str:
-        # The language model is used ONLY as a rubric classifier here (supervision/checkin_evaluator.py).
+        # The language model is used ONLY as a rubric classifier here (supervision/checkin_evaluator.py). Deterministic, like the judges: the same
+        # answer always gets the same verdict, since an INSUFFICIENT one costs Trust.
         return ollama_model.generate(request=ModelGenerationRequest(
             messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt),
                       ModelMessage(role=ModelMessageRole.USER, content=user_message)),
-            max_output_characters=200,
+            max_output_characters=200, deterministic=True,
         ))
 
     wiring = build_rules_and_execution(
@@ -683,7 +684,9 @@ def main() -> None:
     from system.composition import window_config_from
     coach_dm = build_coach(config, core, clock=clock, targets_frozen=goal_targets_frozen(wiring.iron_contract), paused=wiring.vacation.is_paused,
                            today=lambda now, cfg=window_config_from(config): cfg.local(now).date(), local_now=lambda now, cfg=window_config_from(config): cfg.local(now),
-                           active_task=active_task_reader(task_runtime, task_catalog), memory=coaching) if config.enable_coach else None
+                           active_task=active_task_reader(task_runtime, task_catalog), memory=coaching,
+                           day_bounds=lambda d, cfg=window_config_from(config): (cfg.to_utc(d, dt_time(0, 0)), cfg.to_utc(d + timedelta(days=1), dt_time(0, 0))),
+                           ) if config.enable_coach else None
     # Owner, 2026-11-12: the model knows the detector questions it was asked about ("What about my incident?" got "No report from you yet").
     from conversation_engine.context_providers.detector_questions_provider import DetectorQuestionsContextProvider
     from infractions.signals import get_recent_questions

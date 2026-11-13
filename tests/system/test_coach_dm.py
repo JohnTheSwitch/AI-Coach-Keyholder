@@ -465,9 +465,10 @@ class TestAMissedCommitmentEndToEnd:
         delta, before, after, counted = self.run(core, Outcome.NOT_KEPT)
         assert delta == pytest.approx(-0.01) and before == after and len(counted) >= 5
 
-    def test_kept_changes_nothing(self, core) -> None:  # noqa: F811
-        delta, *_ = self.run(core, Outcome.KEPT)
-        assert delta == 0
+    def test_kept_is_a_small_trust_gain_and_nothing_else(self, core) -> None:  # noqa: F811
+        # Owner, 2026-11-13: the mirror of not kept.
+        delta, before, after, _ = self.run(core, Outcome.KEPT)
+        assert delta == pytest.approx(0.01) and before == after
 
     def test_a_repeated_event_counts_once(self, core) -> None:  # noqa: F811
         trust = TrustManager(core.db_path, core=core)

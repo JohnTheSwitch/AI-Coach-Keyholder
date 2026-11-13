@@ -49,7 +49,10 @@ user now falls back to `OWNER_USER_ID`, like the coach. `mentions_safety_issue` 
   records `CHECKIN_MISSED` / `CHECKIN_INSUFFICIENT` evidence (owner matrix: 1st miss -0.02, 2nd consecutive -0.04, 3rd and later
   -0.06, insufficient -0.01; the position is carried as `streak` in the `check_in.missed` event),
   idempotent, with an immediate recalculation. A missed check-in never vetoes a release.
-- **Strict Supervision Mode (Trust < 0.40, owner rule):** the response deadline drops from 60 to 30 minutes and the
+- **Strict Supervision Mode (Trust < 0.40, owner rule):** owner, 2026-11-13: the response deadline stays 60 minutes (it dropped to 30, and misses
+  from being busy deepened the supervision that answering ends; `CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES` is no longer used). Check-ins are placed
+  so the whole time to answer ends before quiet hours (`slots_for_day(answer_window=...)`), and the rubric classifier runs deterministically
+  (temperature 0, fixed seed), like the judges. The
   follow-up window after an `INSUFFICIENT` answer from 30 to 15 minutes (`SupervisionService.is_active(domain)` is read when the
   prompt is sent / the verdict arrives; stored per check-in). Env: `CHECKIN_RESPONSE_TIMEOUT_MINUTES` (60),
   `CHECKIN_FOLLOW_UP_MINUTES` (30), `CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES` (30), `CHECKIN_STRICT_FOLLOW_UP_MINUTES` (15).

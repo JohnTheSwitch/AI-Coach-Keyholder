@@ -82,6 +82,7 @@ class EvidenceType(StrEnum):
     COMMITMENT_NOT_KEPT = "commitment_not_kept"       # Phase J3: the wearer reported a daily commitment as not kept
     CHECKIN_ANSWERED = "checkin_answered"             # owner, 2026-11-13: a check-in answered on time and well enough
     HYGIENE_ON_TIME = "hygiene_on_time"               # owner, 2026-11-13: a planned hygiene opening relocked on time
+    COMMITMENT_KEPT = "commitment_kept"               # owner, 2026-11-13: the wearer reported a daily commitment as kept
 
 
 @dataclass(frozen=True, kw_only=True)

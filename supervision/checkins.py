@@ -185,8 +185,10 @@ class CheckInService:
         apply_transition(self._core, write=write)
 
     def _response_timeout(self) -> timedelta:
-        """Strict Supervision Mode (Trust < 0.40) shortens the response deadline (60 -> 30 minutes)."""
-        return (self._strict_timeouts if self._strict() else self._timeouts)[0]
+        """Owner, 2026-11-13: the time to answer is the normal one at every level. Strict Supervision Mode keeps more check-ins a day, but no longer
+        halves the time to answer (60 -> 30 minutes): misses from being in the shower or driving deepened the very supervision answering ends.
+        `strict_response_timeout` (CHECKIN_STRICT_RESPONSE_TIMEOUT_MINUTES) is therefore no longer used."""
+        return self._timeouts[0]
 
     def _follow_up_window(self) -> timedelta:
         return (self._strict_timeouts if self._strict() else self._timeouts)[1]
@@ -298,7 +300,8 @@ class CheckInService:
             tx.execute("UPDATE check_ins SET status = 'skipped', updated_at = ? WHERE user_id = ? AND local_date = ? "
                        "AND status = 'scheduled' AND kind IS NULL AND slot_index >= ?", (_iso(now), self._user, local_date.isoformat(), n))
             made = 0
-            for index, due in enumerate(slots_for_day(self._cfg, local_date, n, self._rand)):
+            window = max(self._timeouts[0], self._strict_timeouts[0])      # the whole time to answer lies before quiet hours
+            for index, due in enumerate(slots_for_day(self._cfg, local_date, n, self._rand, answer_window=window)):
                 if due <= now + timedelta(minutes=1):
                     continue
                 if tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND local_date = ? AND slot_index = ?",

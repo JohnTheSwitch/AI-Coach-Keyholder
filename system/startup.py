@@ -158,6 +158,23 @@ def build_consumer_registry(
 
     registry.register("coach.commitment_missed", "trust_manager", on_commitment_missed)
 
+    def on_commitment_kept(tx, event) -> None:
+        # Owner, 2026-11-13: the mirror of on_commitment_missed.
+        trust_manager._record_commitment_kept_in_transaction(
+            tx, commitment_id=event.payload["commitment_id"], trust_domain=event.payload["trust_domain"], now=event.occurred_at,
+        )
+
+    registry.register("coach.commitment_kept", "trust_manager", on_commitment_kept)
+
+    def on_goal_result_reported(tx, event) -> None:
+        # Owner, 2026-11-13: a goal counts through the commitments tied to it.
+        from goal_management.repository import record_reported_result_in_transaction
+        p = event.payload
+        record_reported_result_in_transaction(tx, goal_group_id=p["goal_group_id"], commitment_id=p["commitment_id"], outcome=p["outcome"],
+                                              period_start=p["period_start"], period_end=p["period_end"], now=event.occurred_at)
+
+    registry.register("coach.goal_result_reported", "goal_management", on_goal_result_reported)
+
     if conditioning is not None:
         # Phase F4: a release that Chaster CONFIRMED may raise the hidden Progressive Conditioning factor (token-funded only, consent and owner switch
         # checked inside, once per authorization). Nothing else can raise it.
