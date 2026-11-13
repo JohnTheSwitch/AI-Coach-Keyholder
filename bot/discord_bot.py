@@ -164,6 +164,7 @@ class CoachKeyholderBot(discord.Client):
         self._detector_task: asyncio.Task | None = None
         self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
         self.keyholder_inbox = None              # messaging.keyholder_inbox.keyholder_inbox_loop coroutine (owner, 2026-11-13)
+        self.update_check = None                 # system.update_check.update_check_loop coroutine (owner, 2026-11-13)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -212,6 +213,8 @@ class CoachKeyholderBot(discord.Client):
             self._model_warmup_task = asyncio.create_task(self.model_warmup, name="model-warmup")
         if self.keyholder_inbox is not None:
             self._keyholder_inbox_task = asyncio.create_task(self.keyholder_inbox, name="keyholder-inbox")
+        if self.update_check is not None:
+            self._update_check_task = asyncio.create_task(self.update_check, name="update-check")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -967,6 +970,12 @@ def main() -> None:
         bot.extension_guard = extension_guard_loop(extension_guard, clock, interval_seconds=config.extension_guard_poll_seconds)
         logger.info("Extension guard enabled: every %d s, subject to the runtime halt.", config.extension_guard_poll_seconds)
     bot.keyholder_inbox = keyholder_inbox_coro
+    # Owner, 2026-11-13: once a day, a read-only comparison with GitHub; a newer version is announced to the owner, never installed.
+    if getattr(config, "enable_update_check", True) and config.owner_user_id:
+        from system.update_check import update_check_loop
+        bot.update_check = update_check_loop(Path(__file__).resolve().parents[1], lambda key, text: notification_queue.enqueue(
+            user_id=config.owner_user_id, kind="update_check", dedupe_key=key, text=text, now=clock.now()))
+        logger.info("Update check enabled: once a day, the owner is told about a newer version on GitHub (nothing is installed).")
     # One outbound queue for every proactive notice: retries, quiet hours and the channel preference live here.
     notice_user = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
     bot.penalty_notices = penalty_notice_handlers(notice_user) if notice_user else None

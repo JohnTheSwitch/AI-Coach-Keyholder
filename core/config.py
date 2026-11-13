@@ -187,6 +187,7 @@ class Config:
     lock_claim_trust_domain: str = "routine"
     detector_poll_seconds: int = 120          # how often the two watches read Chaster (at least 60)
     enable_extension_guard: bool = True       # keep the owner's required lock settings true on Chaster (subject to the runtime halt)
+    enable_update_check: bool = True          # owner, 2026-11-13: once a day, tell the owner when GitHub has a newer version (never installs)
     extension_guard_poll_seconds: int = 900   # how often they are checked (at least 300)
     enable_peer_review_watch: bool = True    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
@@ -294,6 +295,7 @@ class Config:
             lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "routine") or "routine",
             detector_poll_seconds=max(60, int(get("DETECTOR_POLL_SECONDS", "120") or "120")),
             enable_extension_guard=(get("ENABLE_EXTENSION_GUARD", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            enable_update_check=(get("ENABLE_UPDATE_CHECK", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             extension_guard_poll_seconds=max(300, int(get("EXTENSION_GUARD_POLL_SECONDS", "900") or "900")),
             enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",

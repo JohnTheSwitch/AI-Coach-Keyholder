@@ -512,3 +512,10 @@ stops a decision.
 At start the bot writes one "System started." line to bot.log, decisions.log, release.log and model.log: the git commit (12 characters), its date
 and subject, `dirty` (true when files differ from that commit, so the commit alone does not describe the running code) and the model name. Every
 line after it came from that code. `system_version` only runs read-only `git` queries and never raises; outside a repository it says "unknown".
+
+
+## Update check (owner, 2026-11-13)
+
+`system/update_check.py`: once a day (first 10 minutes after start) the bot compares the running commit with GitHub's `main`
+(`git rev-parse HEAD`, `git ls-remote`, and the public GitHub compare API for the titles) and, when GitHub is ahead, queues ONE notice per new
+commit for the owner. Read-only: nothing is fetched, pulled or installed; updating stays manual. `ENABLE_UPDATE_CHECK` (default true).
