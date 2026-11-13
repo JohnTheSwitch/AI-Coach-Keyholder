@@ -60,6 +60,15 @@ class ChasterConversationClient:
             raise ChasterLockApiError("Chaster's messages endpoint returned an unexpected response shape.")
         return [item for item in results if isinstance(item, dict)]
 
+    def list_conversations(self, *, access_token: str, status: str = "approved", limit: int = 50) -> list[dict]:
+        """Owner, 2026-11-13: the account's conversations, newest first by `lastMessageAt` (`GET /conversations`, params limit 1-100,
+        status pending|approved|ignored; GetConversationsRepDto {results, hasMore}). One page only: the inbox watch needs the recent ones."""
+        if status not in ("pending", "approved", "ignored"):
+            raise ValueError("status must be pending, approved or ignored.")
+        body = self._call("GET", CONVERSATIONS_URL, access_token, params={"limit": max(1, min(int(limit), MAX_POLL_LIMIT)), "status": status}, ok=(200,))
+        results = body.get("results") if isinstance(body, dict) else None
+        return [r for r in results if isinstance(r, dict)] if isinstance(results, list) else []
+
     def find_conversation_by_user(self, *, access_token: str, chaster_user_id: str) -> dict | None:
         """The existing conversation with that Chaster user, or None when there is none (404)."""
         self._check_token(access_token)

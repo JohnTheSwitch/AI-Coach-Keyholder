@@ -35,3 +35,12 @@ check-in sender onto the adapter (the check-in port needs the delivered / undeli
 - **Secrecy:** the reply is produced by the same conversation engine (same guardrails, same coarse release enum, no timestamps). The `messaging` package imports
   no release/rules/penalty/trust module (AST-guarded).
 - With the flag off, or when Chaster delivery fails, the production router falls back to Discord. Check-in prompts still go to Discord only.
+
+
+## Keyholder inbox watch (owner, 2026-11-13)
+
+Nobody reads the keyholder account. `keyholder_inbox.py` lists its Chaster conversations every 5 minutes (`GET /conversations`, statuses
+`pending` and `approved`, scope `messaging`, read-only; `ChasterConversationClient.list_conversations`) and forwards each new last message from
+anyone but the owner (`OWNER_CHASTER_ACCOUNT_ID`) and the account itself to the owner's DM through the notification queue, once. Forward only
+(the owner's choice): nothing is ever sent from the account. The first successful pass is the baseline. State: `keyholder_inbox_seen`
+(migration 059), conversation id and last message id only. Active when Chaster chat is ready and OWNER_USER_ID is set.

@@ -163,6 +163,7 @@ class CoachKeyholderBot(discord.Client):
         self.model_warmup = None                 # warm_model coroutine: the model is loaded before the first message needs it
         self._detector_task: asyncio.Task | None = None
         self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
+        self.keyholder_inbox = None              # messaging.keyholder_inbox.keyholder_inbox_loop coroutine (owner, 2026-11-13)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -209,6 +210,8 @@ class CoachKeyholderBot(discord.Client):
             self._extension_guard_task = asyncio.create_task(self.extension_guard, name="extension-guard")
         if self.model_warmup is not None:
             self._model_warmup_task = asyncio.create_task(self.model_warmup, name="model-warmup")
+        if self.keyholder_inbox is not None:
+            self._keyholder_inbox_task = asyncio.create_task(self.keyholder_inbox, name="keyholder-inbox")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -719,6 +722,22 @@ def main() -> None:
     channel_service = ChannelPreferenceService(
         routes=message_routes, connections=chaster_connections, token_manager=chat_tokens, client=chat_client,
         bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready)
+    # Owner, 2026-11-13: nobody reads the keyholder account, so new Chaster messages to it are forwarded to the owner's DM (forward only).
+    keyholder_inbox_coro = None
+    if chat_ready and config.owner_user_id:
+        from messaging.keyholder_inbox import INBOX_POLL_SECONDS, KeyholderInboxWatch, keyholder_inbox_loop
+        kh_user = config.chaster_execution_keyholder_user_id
+
+        def own_account(repo=chaster_connections, user=kh_user):
+            connection = repo.get(user)
+            return connection.chaster_account_id if connection is not None else None
+
+        inbox = KeyholderInboxWatch(core, tokens=chat_tokens, client=chat_client, keyholder_user_id=kh_user, own_account_id=own_account,
+                                    owner_account_id=getattr(config, "owner_chaster_account_id", None),
+                                    notify=lambda key, text: notification_queue.enqueue(user_id=config.owner_user_id, kind="keyholder_inbox",
+                                                                                        dedupe_key=key, text=text, now=clock.now()))
+        keyholder_inbox_coro = keyholder_inbox_loop(inbox, clock, interval_seconds=INBOX_POLL_SECONDS)
+        logger.info("Keyholder inbox watch enabled: new Chaster messages to the keyholder account are forwarded to the owner.")
 
     # Phase J1 slice 2: the owner's community review consent overview + buttons (the only bot-side door to the extension service).
     from system.review_consent_dm import build_review_consent_dm, render_overview
@@ -947,6 +966,7 @@ def main() -> None:
     if extension_guard is not None:
         bot.extension_guard = extension_guard_loop(extension_guard, clock, interval_seconds=config.extension_guard_poll_seconds)
         logger.info("Extension guard enabled: every %d s, subject to the runtime halt.", config.extension_guard_poll_seconds)
+    bot.keyholder_inbox = keyholder_inbox_coro
     # One outbound queue for every proactive notice: retries, quiet hours and the channel preference live here.
     notice_user = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
     bot.penalty_notices = penalty_notice_handlers(notice_user) if notice_user else None
