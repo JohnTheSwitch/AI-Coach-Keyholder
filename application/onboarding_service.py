@@ -274,6 +274,17 @@ class OnboardingService:
 
         return apply_transition(self._core, write=write)
 
+    def change_identity(self, user_id: str, identity_id: str, *, now: datetime) -> bool:
+        """Owner, 2026-11-13 (roadmap slice 3b): `persona <name> confirm` after onboarding. Only the persona changes, nothing else."""
+        if get_identity(identity_id) is None:
+            return False
+
+        def write(tx: Transaction, _state: object) -> bool:
+            return tx.execute("UPDATE user_preferences SET identity_id = ?, updated_at = ? WHERE user_id = ? AND onboarding_step = ?",
+                              (identity_id, _iso(now), user_id, OnboardingStep.COMPLETE.value)).rowcount == 1
+
+        return apply_transition(self._core, write=write)
+
     # -------------------------------------------------------------------
     # Completion / already-complete text
     # -------------------------------------------------------------------

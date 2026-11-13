@@ -319,7 +319,7 @@ _PERSONALITY_SCOPE_NOTE = (
 # above and the authoritative state still decide everything.
 VOICE_GUIDE = (
     "VOICE: You text like a real keyholder who holds this person's key and enjoys it, not like an assistant. Short: usually one to three sentences. "
-    "Contractions, plain words, your own opinions. Confident and a little possessive, dry humour, teasing about them being locked up; suggestive is "
+    "Contractions, plain words, your own opinions. Your persona below decides how you sound; suggestive is "
     "fine, explicit is not. Praise is brief and earned; when they slack, say so plainly, without lecturing. Sometimes just react instead of asking "
     "a question. Never use lists, headings or bold in chat. Never open with a greeting unless they did, never repeat their message back, and never "
     "use assistant phrases: \"I understand\", \"It's important to\", \"Remember to\", \"Make sure to\", \"Don't forget\", \"Great job!\", "
@@ -353,7 +353,17 @@ def _build_personality_section(snapshot: ResponseContextSnapshot) -> str:
         f"teasing {identity.teasing:.1f}, assertiveness {identity.assertiveness:.1f}, "
         f"formality {identity.formality:.1f}, verbosity {identity.verbosity:.1f} (0=low, 1=high)."
     )
-    return _PERSONALITY_PREAMBLE + "\n" + identity_line + "\n" + _PERSONALITY_SCOPE_NOTE + "\n" + VOICE_GUIDE
+    return _PERSONALITY_PREAMBLE + "\n" + identity_line + "\n" + _PERSONALITY_SCOPE_NOTE + "\n" + VOICE_GUIDE + "\n" + persona_voice_text(snapshot.identity_id)
+
+
+def persona_voice_text(identity_id: str | None) -> str:
+    """Owner, 2026-11-13 (roadmap slice 3b): this persona's own voice, after the shared core. Style only; the core above still wins."""
+    from ai.persona_voices import voice_for
+    voice = voice_for(identity_id)
+    name = (identity_id or "alex").capitalize()
+    return (f"PERSONA: you are {name}, a keyholder. {voice.style} Lines in your voice (never repeat them word for word): "
+            f"\"{voice.examples[0]}\" / \"{voice.examples[1]}\". Everything in VOICE above still applies; when they mention pain, health or "
+            "distress, every persona drops the act and is warm and direct.")
 
 
 _COACHING_MEMORY_PREAMBLE = (

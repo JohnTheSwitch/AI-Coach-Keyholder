@@ -59,10 +59,12 @@ class CommandRouter:
         self._descriptions: dict[str, str] = {}
         self._families: dict[str, Handler] = {}
 
-    def register(self, command: str, description: str, handler: Handler) -> None:
+    def register(self, command: str, description: str, handler: Handler, *, listed: bool = True) -> None:
+        """`listed=False`: a working command that `help` does not list (one of many variants a listed command explains)."""
         key = command.strip().lower()
         self._handlers[key] = handler
-        self._descriptions[key] = description
+        if listed:
+            self._descriptions[key] = description
 
     def register_family(self, family: str, *, invalid_handler: Handler) -> None:
         """A family token (e.g. "mode") whose own bare, standalone

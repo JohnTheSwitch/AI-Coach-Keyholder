@@ -26,7 +26,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from ai.identity_catalog import get_identity
+from ai.identity_catalog import IDENTITY_CATALOG, get_identity
 from advanced_mode.models import (
     ActiveModeTransitionExistsError,
     MinimumTimeInAdvancedNotMetError,
@@ -519,6 +519,33 @@ class ApplicationService:
         self.router.register("channel discord", "Send the bot's messages to Discord (the default)", self._handle_channel_discord)
         self.router.register("channel chaster", "Send the bot's messages to your Chaster chat instead (opt-in)", self._handle_channel_chaster)
         self.router.register_family("channel", invalid_handler=self._handle_channel_invalid)
+
+        # Owner, 2026-11-13 (roadmap slice 3b): the wearer's persona, changeable after onboarding. Voice only, never rules, Trust or tokens.
+        self.router.register("persona", "List the 15 personas; `persona <name>` and then `persona <name> confirm` switches", self._handle_persona_list)
+        for entry in IDENTITY_CATALOG:
+            self.router.register(f"persona {entry.identity_id}", "", lambda ctx, e=entry: self._handle_persona_ask(ctx, e), listed=False)
+            self.router.register(f"persona {entry.identity_id} confirm", "", lambda ctx, e=entry: self._handle_persona_set(ctx, e), listed=False)
+
+    def _handle_persona_list(self, ctx: RequestContext) -> OutgoingMessage:
+        preferences, _created = self.onboarding_service.get_or_create_preferences(ctx.user.id, now=ctx.now)
+        lines = ["Personas (all of them keep your key; they differ in how):"]
+        for entry in IDENTITY_CATALOG:
+            mark = "  <- yours" if entry.identity_id == preferences.identity_id else ""
+            lines.append(f"{entry.default_name}: {entry.archetype}{mark}")
+        lines.append("Send `persona <name>` to switch.")
+        return OutgoingMessage(text="\n".join(lines))
+
+    def _handle_persona_ask(self, ctx: RequestContext, entry) -> OutgoingMessage:
+        preferences, _created = self.onboarding_service.get_or_create_preferences(ctx.user.id, now=ctx.now)
+        if preferences.identity_id == entry.identity_id:
+            return OutgoingMessage(text=f"{entry.default_name} already holds your key.")
+        return OutgoingMessage(text=(f"Switch to {entry.default_name} ({entry.archetype})? Only the voice changes: your rules, Trust, tokens and "
+                                     f"everything else stay as they are. Send `persona {entry.identity_id} confirm` to switch."))
+
+    def _handle_persona_set(self, ctx: RequestContext, entry) -> OutgoingMessage:
+        if not self.onboarding_service.change_identity(ctx.user.id, entry.identity_id, now=ctx.now):
+            return OutgoingMessage(text="Finish setup first, then you can switch.")
+        return OutgoingMessage(text=f"Done. {entry.default_name} holds your key now.")
 
     def _is_owner(self, ctx: RequestContext) -> bool:
         return self._owner_user_id is not None and ctx.user.id == self._owner_user_id
