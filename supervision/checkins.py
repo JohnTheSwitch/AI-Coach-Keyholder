@@ -461,7 +461,7 @@ class CheckInService:
             if times is not None:
                 hits = sorted(t for t in times if sent - PHOTO_CLOCK_SKEW <= t <= deadline + PHOTO_CLOCK_SKEW)
                 if hits:
-                    if self._cas(row["id"], ("sent",), "answered", now, responded_at=_iso(hits[0])):
+                    if self._cas(row["id"], ("sent",), "answered", now, event="check_in.answered", responded_at=_iso(hits[0])):
                         decision("check_ins", "Photo check-in answered: a verification picture arrived in time.", check_in_id=row["id"])
                         self._photo_checked.pop(row["id"], None)
                         try:
@@ -501,8 +501,8 @@ class CheckInService:
             common = dict(verdict=verdict.value, rubric_version=RUBRIC_VERSION)
             if row["slot_index"] == RELEASE_SLOT and verdict is not Verdict.SUFFICIENT:      # submitting is what counts: it cannot fail
                 self._cas(row["id"], ("responded",), "answered_uncertain", now, **common)
-            elif verdict is Verdict.SUFFICIENT:
-                self._cas(row["id"], ("responded",), "answered", now, **common)
+            elif verdict is Verdict.SUFFICIENT:      # owner, 2026-11-13: a good answer earns Trust (check_in.answered); the release check-in never counts
+                self._cas(row["id"], ("responded",), "answered", now, event=None if row["slot_index"] == RELEASE_SLOT else "check_in.answered", **common)
             elif verdict is Verdict.INSUFFICIENT:
                 follow_up = row["follow_up_until"] or _iso(now + self._follow_up_window())
                 self._cas(row["id"], ("responded",), "insufficient_pending", now, follow_up_until=follow_up, **common)

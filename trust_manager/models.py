@@ -80,6 +80,8 @@ class EvidenceType(StrEnum):
     CHECKIN_INSUFFICIENT = "checkin_insufficient"     # v0.39
     CLEAN_STREAK_BONUS = "clean_streak_bonus"         # v0.39: daily recovery of a Clean Day streak
     COMMITMENT_NOT_KEPT = "commitment_not_kept"       # Phase J3: the wearer reported a daily commitment as not kept
+    CHECKIN_ANSWERED = "checkin_answered"             # owner, 2026-11-13: a check-in answered on time and well enough
+    HYGIENE_ON_TIME = "hygiene_on_time"               # owner, 2026-11-13: a planned hygiene opening relocked on time
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -134,7 +134,20 @@ def build_consumer_registry(
             kind="insufficient", now=event.occurred_at,
         )
 
+    def on_check_in_answered(tx, event) -> None:
+        trust_manager._record_check_in_evidence_in_transaction(
+            tx, check_in_id=event.payload["check_in_id"], trust_domain=event.payload["trust_domain"],
+            kind="answered", now=event.occurred_at,
+        )
+
     registry.register("check_in.missed", "trust_manager", on_check_in_missed)
+    registry.register("check_in.answered", "trust_manager", on_check_in_answered)
+
+    def on_hygiene_on_time(tx, event) -> None:
+        trust_manager._record_hygiene_on_time_in_transaction(tx, exemption_id=event.payload["exemption_id"], trust_domain=event.payload["trust_domain"],
+                                                             now=event.occurred_at)
+
+    registry.register("hygiene_opening.relocked_on_time", "trust_manager", on_hygiene_on_time)
     registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
 
     def on_commitment_missed(tx, event) -> None:
@@ -156,6 +169,10 @@ def build_consumer_registry(
     if supervision is not None:
         # v0.39: a Trust recalculation may start/stop proactive supervision (derived state).
         registry.register(SUPERVISION_TRIGGER, "supervision", supervision.on_trust_recalculated)
+        # Owner, 2026-11-13: a run of clean days also ends it (probation).
+        registry.register("daily_evaluation.completed", "supervision", supervision.on_daily_evaluation)
+        registry.register("hygiene_opening.relocked_on_time", "supervision", supervision.on_good_opening)
+        registry.register("incident.confirmation_changed", "supervision", supervision.on_incident_confirmation)
 
     if rules_engine is not None:
         # Phase 2 (dry run): only RECORDS a trigger here; the evaluation runs

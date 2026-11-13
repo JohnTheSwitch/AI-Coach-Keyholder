@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 __all__ = [
-    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_CONFIDENCE", "EXIT_CONSECUTIVE_EVALUATIONS",
+    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_CONFIDENCE", "EXIT_CONSECUTIVE_EVALUATIONS", "PROBATION_CLEAN_DAYS", "PROBATION_QUIET_DAYS",
     "TrustLevel", "trust_level", "check_ins_per_day", "hygiene_interval_days",
 ]
 
@@ -19,6 +19,11 @@ ENTER_BELOW = 0.40                   # supervision starts when score < this ...
 MIN_CONFIDENCE = 0.30                # ... and confidence >= this (a weak estimate has no authority)
 EXIT_AT_OR_ABOVE = 0.50              # supervision ends after score >= this ...
 EXIT_CONSECUTIVE_EVALUATIONS = 2     # ... for this many consecutive evaluations
+# Owner, 2026-11-13: or after this many clean days in a row, each with at least one answered check-in, whatever the score.
+PROBATION_CLEAN_DAYS = 7
+# Owner, 2026-11-13: a domain without check-ins (hygiene) ends it after this many days without a confirmed incident there, with at least one planned
+# opening relocked on time in that time.
+PROBATION_QUIET_DAYS = 14
 
 
 class TrustLevel(IntEnum):

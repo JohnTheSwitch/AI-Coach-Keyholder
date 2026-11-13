@@ -46,6 +46,7 @@ from infrastructure.decision_log import decision as _log
 from infrastructure.text import plain_text
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
+from infrastructure.outbox import DomainEvent, write_event
 from notifications.queue import enqueue_in_transaction
 from penalty_engine.models import FreezeReason
 
@@ -136,6 +137,9 @@ class ExemptionService:
         self._raise_overrun = raise_overrun
         self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
         self._judge = None                          # exemptions.judge.ExemptionJudge: when set, requests are decided by it and never by a keyholder's button
+        # Owner, 2026-11-13: the hygiene Trust domain. A planned opening relocked on time then emits `hygiene_opening.relocked_on_time`, which earns
+        # hygiene Trust (it had no way up at all). None: no event.
+        self.hygiene_trust_domain: str | None = None
         self._record_override = None                # (tx, row, now) -> bool: records "taken anyway" as a self-disclosed incident; None: not offered
 
     def set_override_signal(self, record_override: Callable[[Transaction, dict, datetime], bool]) -> None:
@@ -627,6 +631,9 @@ class ExemptionService:
         def record(tx: Transaction, _s: object) -> None:
             tx.execute("UPDATE wear_exemptions SET relocked_at = ? WHERE id = ?", (_iso(relocked_at) if relocked_at else None, row["id"]))
             filed = late and self._raise_overrun is not None and self._raise_overrun(tx, dict(row), relocked_at, now)
+            if reason == "relocked_on_time" and row["kind"] == "hygiene" and self.hygiene_trust_domain:
+                write_event(tx, DomainEvent(event_type="hygiene_opening.relocked_on_time", source_module="exemptions",
+                                            payload={"exemption_id": row["id"], "trust_domain": self.hygiene_trust_domain}, occurred_at=now))
             if self._owner and ((late and not filed) or relocked_at is None):
                 text = (f"An exemption's lock was relocked after the approved time ({_length(row)})." if late else
                         "An exemption's lock shows closed on Chaster, but its log has no relock entry, so I can't say when.")

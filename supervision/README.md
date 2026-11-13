@@ -86,3 +86,19 @@ picture with Chaster's code shows the lock is on.
   allowed) answers it, and the wearer gets "Got your verification picture". None by the deadline is `missed`, with the same `check_in.missed`
   event and consequence as a text check-in (Trust and warnings only). Pictures that cannot be read are never a miss: `skipped` after 2 more hours.
 - The picture itself, its code and its review stay on Chaster; a rejection goes through the community review watch as before.
+
+## Leaving Supervision Mode (owner, 2026-11-13; migration 056)
+
+Live, routine Trust sat at 0.00, and leaving needed 0.50 twice: only clean days earned anything (+0.008 at first), so about 24 perfect days in a
+row, and one miss started it over.
+
+- **A good check-in earns Trust:** a scheduled or photo check-in answered on time and well enough emits `check_in.answered`, recorded as
+  `checkin_answered` evidence of **+0.02** (as much as a first miss costs). The release check-in never earns; `answered_uncertain` neither.
+- **Probation:** `PROBATION_CLEAN_DAYS` (7) clean days in a row, each with at least one answered check-in, end Supervision Mode whatever the score
+  (`on_daily_evaluation`, from `daily_evaluation.completed`, which now carries `trust_domain`, `check_ins_due` and `check_ins_ok`). A day with
+  nothing due or a vacation day neither counts nor breaks the run; any other day starts it over. Only the daily evaluation's domain (routine).
+- **Entering needs a falling recalculation:** after a probation exit the score is still low, and a rising one must not put the wearer straight back.
+- **Hygiene** (owner, 2026-11-13): hygiene Trust had no way up and hygiene supervision no way out. A planned opening relocked on time emits
+  `hygiene_opening.relocked_on_time` (exemptions), recorded as `hygiene_on_time` evidence of **+0.02**. Supervision in a domain without daily
+  evaluations ends after `PROBATION_QUIET_DAYS` (14) days without a confirmed incident there, with at least one such opening in that run
+  (`probation_since`, `probation_proofs`; checked on each daily evaluation). A health opening or a late relock is no proof.

@@ -841,6 +841,7 @@ def main() -> None:
         from exemptions.judge import ExemptionJudge
         exemption_dm.service.set_judge(ExemptionJudge(judge_complete))
         exemption_service = exemption_dm.service
+        exemption_service.hygiene_trust_domain = config.hygiene_trust_domain or "hygiene"
 
         def exemption_reason(user_id, text, now, service=exemption_service):
             return service.give_reason(user_id, text, now) if service.awaiting_reason(user_id) else None

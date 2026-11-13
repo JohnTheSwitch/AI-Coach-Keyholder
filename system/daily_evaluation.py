@@ -166,7 +166,8 @@ class DailyEvaluationTask:
             write_event(tx, DomainEvent(
                 event_type="daily_evaluation.completed", source_module="system",
                 payload={"local_date": day.isoformat(), "tokens_earned": result.tokens_earned, "clean": clean,
-                         "streak": step.streak},
+                         "streak": step.streak, "trust_domain": self._domain, "check_ins_due": facts.check_ins_due,
+                         "check_ins_ok": facts.check_ins_ok},
                 occurred_at=now))
             return True
 
@@ -187,7 +188,7 @@ class DailyEvaluationTask:
             write_event(tx, DomainEvent(
                 event_type="daily_evaluation.completed", source_module="system",
                 payload={"local_date": day.isoformat(), "tokens_earned": 0, "clean": False, "streak": int(streak_row["streak"]) if streak_row else 0,
-                         "paused": True},
+                         "paused": True, "trust_domain": self._domain},
                 occurred_at=now))
             return True
 

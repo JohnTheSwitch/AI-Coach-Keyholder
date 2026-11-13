@@ -21,7 +21,7 @@ from pathlib import Path
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
-from trust_manager.checkin_scoring import CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_NOT_KEPT_WEIGHT, checkin_evidence_spec
+from trust_manager.checkin_scoring import CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, checkin_evidence_spec
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
     goal_evidence_confidence,
@@ -740,7 +740,16 @@ class TrustManager:
             tx, trust_domain=trust_domain, evidence_type=evidence_type, source_entity_type="check_in", source_entity_id=check_in_id,
             weight=weight, confidence=confidence, triggered_by="check_in", now=now,
             explanation="Missed a proactive check-in." if kind == "missed"
+            else "Answered a proactive check-in on time." if kind == "answered"
             else "A check-in answer stayed insufficient after the follow-up window.",
+        )
+
+    def _record_hygiene_on_time_in_transaction(self, tx: Transaction, *, exemption_id: str, trust_domain: str, now: datetime) -> TrustEvidence | None:
+        """Owner, 2026-11-13: one positive piece of evidence per planned hygiene opening relocked on time (`hygiene_opening.relocked_on_time`)."""
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=EvidenceType.HYGIENE_ON_TIME, source_entity_type="wear_exemption", source_entity_id=exemption_id,
+            weight=HYGIENE_ON_TIME_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="hygiene_opening", now=now,
+            explanation="A planned hygiene opening was relocked on time.",
         )
 
     def _record_commitment_evidence_in_transaction(
