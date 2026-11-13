@@ -64,11 +64,21 @@ NOW = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
 class TestARestartKeepsTheConversation:
     def test_stored_exchanges_come_back_in_order(self) -> None:
         memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
-        rows = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "reply one"},
-                {"role": "user", "content": "second"}, {"role": "assistant", "content": "reply two"}, {"role": "user", "content": "unanswered"}]
+        rows = [{"role": "user", "content": "first", "from_model": None}, {"role": "assistant", "content": "reply one", "from_model": 1},
+                {"role": "user", "content": "second", "from_model": None}, {"role": "assistant", "content": "reply two", "from_model": 1},
+                {"role": "user", "content": "unanswered", "from_model": None}]
         assert seed_working_memory(memory, Core(rows), subject_key=U, since=NOW - timedelta(hours=24)) == 2
         turns = [t.content for t in memory.read(subject_key=U).turns]
         assert turns == ["first", "reply one", "second", "reply two"]
+
+    def test_only_the_models_own_replies_come_back(self) -> None:
+        """2026-11-13: status cards and command replies came back as the model's own words ("Active Locks (2)")."""
+        memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
+        rows = [{"role": "user", "content": "what is my lock", "from_model": None}, {"role": "assistant", "content": "Active Locks (2)", "from_model": 0},
+                {"role": "user", "content": "old", "from_model": None}, {"role": "assistant", "content": "before the column", "from_model": None},
+                {"role": "user", "content": "hi", "from_model": None}, {"role": "assistant", "content": "hey you", "from_model": 1}]
+        assert seed_working_memory(memory, Core(rows), subject_key=U, since=NOW - timedelta(hours=24)) == 1
+        assert [t.content for t in memory.read(subject_key=U).turns] == ["hi", "hey you"]
 
     def test_a_failure_only_means_a_fresh_start(self) -> None:
         class Broken:
@@ -78,3 +88,27 @@ class TestARestartKeepsTheConversation:
         memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
         assert seed_working_memory(memory, Broken(), subject_key=U, since=NOW) == 0
         assert seed_working_memory(memory, Core([]), subject_key=None, since=NOW) == 0
+
+
+class TestTheChatFixes20261113:
+    def test_a_check_in_answer_is_a_report(self) -> None:
+        from system.coach_dm import CHECK_IN_GUIDANCE
+        assert "not the goal" in CHECK_IN_GUIDANCE and "report on their day" in CHECK_IN_GUIDANCE
+
+    def test_a_veto_means_requirements_are_not_met_for_the_model(self) -> None:
+        from types import SimpleNamespace
+        from system.composition import RulesExecutionWiring as ReleaseWiring
+        class Engine:
+            def coarse_phase(self, _u):
+                return "requirements_met_pending"
+        w = ReleaseWiring()
+        w.release_engine, w.release_user_id = Engine(), "u"
+        w.supervision = SimpleNamespace(is_active=lambda: True)
+        assert w.release_phase("u") == "requirements_not_met"
+        w.supervision = SimpleNamespace(is_active=lambda: False)
+        w.penalty_hold = SimpleNamespace(is_active=lambda: False)
+        assert w.release_phase("u") == "requirements_met_pending"
+
+    def test_the_bot_stores_who_wrote_a_reply(self) -> None:
+        from pathlib import Path
+        assert "from_model=bool(getattr(reply, \"from_model\", False))" in Path("bot/discord_bot.py").read_text(encoding="utf-8")

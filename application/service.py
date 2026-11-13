@@ -370,7 +370,9 @@ class ApplicationService:
                 # recorded all the same, so the user is told so instead of being left to wonder.
                 return self._with_self_report(OutgoingMessage(text=CHECK_IN_RECEIVED_WITHOUT_MODEL), user.id, incoming.text, incoming.received_at)
             reply = self._with_coach_cards(OutgoingMessage(text=finish_reply(response.text, incoming.text), embed=embed), user.id, incoming.text, response, check_in_reply, incoming.received_at)
-            return self._with_self_report(reply, user.id, incoming.text, incoming.received_at)
+            reply = self._with_self_report(reply, user.id, incoming.text, incoming.received_at)
+            # Only the model's own words are restored after a restart; a fallback text is not the model speaking.
+            return replace(reply, from_model=getattr(response.response_category, "value", None) != "error_fallback")
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")

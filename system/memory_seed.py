@@ -4,6 +4,8 @@ system/memory_seed.py
 Refills the in-memory working memory from the stored conversation after a restart (owner, 2026-11-10: "the bot keeps forgetting"). Working memory lives in
 the process, so every restart used to start the conversation from nothing, while `conversation_messages` held every message. Each stored user message and
 the assistant reply right after it become one exchange again, oldest first, within `since`; the working memory's own limits still apply.
+2026-11-13 (migration 058): only replies the model wrote (`from_model = 1`) come back, as in live operation. Command replies and status cards
+("Active Locks (2)", "Erased.") had come back as if the model had said them, and older rows (NULL) are left out for the same reason.
 
 This database has one wearer, and `conversation_messages` has no user column, so everything goes to that one subject. Read-only towards the database.
 """
@@ -28,14 +30,14 @@ def seed_working_memory(memory, core: CoreDatabase, *, subject_key: str | None, 
         return 0
     try:
         with core.transaction() as tx:
-            rows = tx.fetch_all("SELECT role, content, created_at FROM (SELECT role, content, created_at, rowid AS r FROM conversation_messages WHERE created_at >= ? "
-                                "ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, r", (_iso(since), limit))
+            rows = tx.fetch_all("SELECT role, content, created_at, from_model FROM (SELECT role, content, created_at, from_model, rowid AS r FROM conversation_messages "
+                                "WHERE created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, r", (_iso(since), limit))
         restored, pending, pending_at = 0, None, None
         for row in rows:
             content = (row["content"] or "").strip()
             if row["role"] == "user":
                 pending, pending_at = content or None, (row["created_at"] if "created_at" in row.keys() else None)
-            elif row["role"] == "assistant" and pending is not None and content:
+            elif row["role"] == "assistant" and pending is not None and content and row["from_model"] == 1:
                 memory.commit_exchange(subject_key=subject_key, user_content=pending, assistant_content=content,
                                        at=_parse_iso(pending_at) if pending_at else None)
                 restored, pending = restored + 1, None

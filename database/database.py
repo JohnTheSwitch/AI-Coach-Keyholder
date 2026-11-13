@@ -693,8 +693,8 @@ class Database:
                 """
                 INSERT INTO conversation_messages
                     (id, created_at, role, content, discord_channel_id,
-                     discord_message_id, related_decision_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                     discord_message_id, related_decision_id, from_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     m.id,
@@ -704,6 +704,7 @@ class Database:
                     m.discord_channel_id,
                     m.discord_message_id,
                     m.related_decision_id,
+                    None if m.from_model is None else int(bool(m.from_model)),
                 ),
             )
         return m.id

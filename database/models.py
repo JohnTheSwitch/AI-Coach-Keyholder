@@ -355,3 +355,4 @@ class ConversationMessage:
     discord_channel_id: str | None = None
     discord_message_id: str | None = None
     related_decision_id: str | None = None
+    from_model: bool | None = None          # 2026-11-13 (migration 058): for an assistant reply, whether the conversation model wrote it

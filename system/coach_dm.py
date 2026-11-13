@@ -46,7 +46,9 @@ COACH_GUIDANCE = (
     "when): never filler like sleeping, resting or relaxing, and never vague like \"try to be better\". Do not suggest again what they already said they did."
 )
 CHECK_IN_GUIDANCE = (
-    "This message answers today's check-in. Say in one short sentence what you heard. Then, if they named something they could do, or you can see a real "
+    "This message answers today's check-in, which asked what they got done today and how they are holding up. It is their report on their day, not a "
+    "goal and not a request: never call it wrong, not enough or \"not the goal\", never correct or doubt what they did, and never turn it into a "
+    "lecture about their goals. Say in one short, warm sentence what you heard. Then, if they named something they could do, or you can see a real "
     "next step toward one of their goals, use `proposal` for exactly one commitment: for today before the evening, for tomorrow from the evening on, using "
     "their own words and numbers. Do not ask them to repeat it."
 )

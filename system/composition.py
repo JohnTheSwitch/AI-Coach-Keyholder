@@ -108,7 +108,14 @@ class RulesExecutionWiring:
         user is not the observed wearer)."""
         if self.release_engine is None or user_id != self.release_user_id:
             return None
-        return self.release_engine.coarse_phase(user_id)
+        phase = self.release_engine.coarse_phase(user_id)
+        # Live, 2026-11-13: under supervision the model was told "the user's requirements are met" while the release was held. A veto (supervision,
+        # the penalty redemption hold) means they are not met yet.
+        try:
+            held = (self.supervision is not None and self.supervision.is_active()) or (self.penalty_hold is not None and self.penalty_hold.is_active())
+        except Exception:
+            held = True                                     # fail towards the claim that promises nothing
+        return "requirements_not_met" if held else phase
 
 
 def research_link_configured(config) -> bool:

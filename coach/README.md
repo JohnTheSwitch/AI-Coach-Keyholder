@@ -21,6 +21,13 @@ model reply (JSON) -> the reply text goes to the user
 `system/coach_dm.py` holds what touches the channel: the engine's port, the cards, the buttons' door and `build_coach`. `bot/action_buttons.py::CoachButton` is
 the persistent button. `conversation_engine/context_providers/coach_provider.py` passes a field whitelist into the prompt.
 
+## Live chat fixes (2026-11-13)
+
+A check-in answer ("at the focus conference again") got "That's not the goal." `CHECK_IN_GUIDANCE` now tells the model the message is the
+wearer's report on their day, never to be called wrong or "not the goal". After a restart only replies the model wrote come back into its
+memory (`conversation_messages.from_model`, migration 058; `system/memory_seed.py`): command replies and status cards had come back as its own
+words. While supervision or the penalty hold holds the release, the model is told the requirements are not met (`release_phase`).
+
 ## The gates
 
 Each refusal stores a reason code in `coach_refusals`, never the text. `python -m cli coach-status` counts them.

@@ -453,14 +453,17 @@ class CoachKeyholderBot(discord.Client):
             logger.exception("Failed to send a reply through the tenant gateway.")
             return
         if log_db is not None:
-            self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, text, message.channel.id, sent.id, db=log_db)
+            self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, text, message.channel.id, sent.id, db=log_db,
+                                          from_model=bool(getattr(reply, "from_model", False)))
 
-    def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id, *, db=None) -> None:
+    def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id, *, db=None,
+                                 from_model: bool | None = None) -> None:
         try:
             (db or self.db).save_conversation_message(
                 ConversationMessage(
                     created_at=created_at, role=role, content=content,
                     discord_channel_id=str(channel_id), discord_message_id=str(message_id),
+                    from_model=from_model if role is MessageRole.ASSISTANT else None,
                 )
             )
         except Exception:
