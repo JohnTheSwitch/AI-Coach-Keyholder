@@ -543,6 +543,12 @@ class TrustManager:
             return None
         return self._row_to_assessment(row)
 
+    def get_short_term_trust(self, domain_id: str, *, now: datetime, window=None):
+        """Owner, 2026-11-13: short-term Trust (trust_manager/short_term.py) for owner reports and the CLI. Never shown to the wearer."""
+        from trust_manager.short_term import DEFAULT_WINDOW, determine_short_term_trust_in_transaction
+        with self._core.transaction() as tx:
+            return determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=window or DEFAULT_WINDOW)
+
     def get_confirmed_incidents_since(self, since: datetime) -> list[ConfirmedIncidentSummary]:
         """
         The ONLY permitted way for another module to enumerate CONFIRMED

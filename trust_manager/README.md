@@ -36,6 +36,13 @@ below), 13, 14**.
   (every recalculation, even a purely confidence-driven one with
   `delta_score=0` — 8's "even when `delta=0`").
 
+## Short-term Trust (owner, 2026-11-13)
+
+`short_term.py`: the share of good evidence among all evidence of a domain in a rolling window (`good / (good + bad)`, effective weights,
+`clean_streak_bonus` left out; unknown without evidence). Read-only, from the same `trust_evidence` rows; nothing new is stored. The long-term
+score is unchanged. Supervision Mode follows short-term Trust (see `supervision/README.md`). Narrow reads:
+`determine_short_term_trust_in_transaction()` (inside an outbox handler) and `TrustManager.get_short_term_trust()`.
+
 ## What is deferred to a later slice
 
 - **`TrustEvidenceDispute`** (2.5) and the three restricted manual-review

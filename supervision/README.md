@@ -4,14 +4,8 @@ Canonical: `docs/architecture/v039_adaptive_release_and_supervision_proposal.md`
 (final, section 11). Phase 1 is the **state and the Trust levels only**; check-in
 prompts, answers, evaluation and penalties are later phases.
 
-- **State** (`repository.py`, migration 028 `supervision_states`): a domain enters
-  supervision when its Trust score is `< 0.40` with confidence `≥ 0.30` (weak
-  estimates have no authority) and leaves it after the score is `≥ 0.50` with
-  confidence `≥ 0.30` for **two consecutive** evaluations (hysteresis; a dip or a
-  low-confidence evaluation resets the streak). Driven by the `trust_domain.recalculated`
-  event through a consumer registered only when `ENABLE_SUPERVISION=true` (default
-  false); the handler uses just the event payload. Emits `supervision.entered|exited`
-  (domain id only).
+- **State** (`repository.py`, migration 028 `supervision_states`): since 2026-11-13 (owner) it follows **short-term Trust**, see
+  "Short-term Trust" below. Emits `supervision.entered|exited` (domain id only). Consumer registered when `ENABLE_SUPERVISION=true`.
 - **Trust levels** (`models.py`, pure): Level 4 `0.85–1.00` (0 check-ins/day,
   hygiene every calendar day), Level 3 `0.70–0.84` (1, every 2 days), Level 2
   `0.45–0.69` (2, every 3 days), Level 1 `0.00–0.44` (3, every 4 days). Hygiene
@@ -97,13 +91,28 @@ row, and one miss started it over.
 
 - **A good check-in earns Trust:** a scheduled or photo check-in answered on time and well enough emits `check_in.answered`, recorded as
   `checkin_answered` evidence of **+0.02** (as much as a first miss costs). The release check-in never earns; `answered_uncertain` neither.
-- **Probation:** `PROBATION_CLEAN_DAYS` (7) clean days in a row, each with at least one answered check-in, end Supervision Mode whatever the score
-  (`on_daily_evaluation`, from `daily_evaluation.completed`, which now carries `trust_domain`, `check_ins_due` and `check_ins_ok`). A day with
-  nothing due or a vacation day neither counts nor breaks the run; any other day starts it over. Only the daily evaluation's domain (routine).
-  Owner, 2026-11-13: only incidents of that domain spoil a day (a hygiene incident no longer does), and the repeated-missed-check-ins incident,
-  created the next morning, never spoils a day (its misses already spoiled theirs).
-- **Entering needs a falling recalculation:** after a probation exit the score is still low, and a rising one must not put the wearer straight back.
-- **Hygiene** (owner, 2026-11-13): hygiene Trust had no way up and hygiene supervision no way out. A planned opening relocked on time emits
-  `hygiene_opening.relocked_on_time` (exemptions), recorded as `hygiene_on_time` evidence of **+0.02**. Supervision in a domain without daily
-  evaluations ends after `PROBATION_QUIET_DAYS` (14) days without a confirmed incident there, with at least one such opening in that run
-  (`probation_since`, `probation_proofs`; checked on each daily evaluation). A health opening or a late relock is no proof.
+- **Hygiene:** hygiene Trust had no way up. A planned opening relocked on time emits `hygiene_opening.relocked_on_time` (exemptions), recorded as
+  `hygiene_on_time` evidence of **+0.02**. A health opening or a late relock earns nothing.
+- The probation (7 clean days) and quiet-days (14 days, hygiene) exits built first that day were replaced the same day by short-term Trust,
+  which gives the same timings from one rule. Their columns (`probation_days`, `probation_since`, `probation_proofs`, migration 056) and
+  `recovery_streak` stay and are no longer used.
+
+## Short-term Trust (owner, 2026-11-13)
+
+One Trust score had two jobs: what the system allows (slow, right for privileges) and "is it going badly right now?" (Supervision Mode). With
+one number, a bad week took weeks to climb out of. Now:
+
+- **Long-term Trust** is the score in `trust_domain_state`, unchanged. It sets the hygiene allowance, the Penalty Window length, the token pool's
+  Trust part and the **check-in level** (check-ins per day). The level stays long-term on purpose: check-ins produce the short-term evidence, and
+  tying their number to it would switch them off after one good week, leave short-term Trust without evidence and switch them back on.
+- **Short-term Trust** (`trust_manager/short_term.py`) is the share of good evidence among all evidence of the domain in a rolling window:
+  `good / (good + bad)`, with effective weights (raw x confidence, capped). `clean_streak_bonus` is left out (it repeats the check-ins). No
+  evidence: unknown. The window is **7 days** for the check-in domain (`CHECK_IN_DOMAIN_WINDOW`) and **14 days** for any other (hygiene).
+- **Supervision Mode** follows short-term Trust only (`supervision/models.py::decide`): it starts below **0.40** from at least **5** pieces, ends at
+  **0.60** or above (any number of pieces), and the band between changes nothing. Unknown changes nothing, so a domain with no evidence at all
+  stays as it is. Evaluated on each `trust_domain.recalculated` and on each `daily_evaluation.completed` (all domains), so evidence ageing out
+  of the window ends it without a new event. A domain no longer tracked (deactivated) ends it, or it would hold every release for good.
+- In practice: every check-in answered for about six days ends routine supervision after a bad week (`TestTheLiveHistory` replays the owner's
+  November record), answering two of three keeps it off, one of three starts it. Two on-time hygiene openings outweigh a minor hygiene incident.
+- What supervision does is unchanged: it holds releases and shortens the follow-up window after an insufficient check-in answer.
+- Owner reads: `TrustManager.get_short_term_trust()`, `SupervisionService.get_short_term()`. The wearer never sees either score.

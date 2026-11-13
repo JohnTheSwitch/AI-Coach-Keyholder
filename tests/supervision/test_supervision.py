@@ -56,82 +56,10 @@ class TestLevels:
         assert [hygiene_interval_days(TrustLevel(i)) for i in (4, 3, 2, 1)] == [1, 2, 3, 4]
 
 
-class TestHysteresis:
-    def ev(self, core, score, conf=0.8, minutes=0):
-        svc = SupervisionService(core.db_path, core=core)
-        with core.transaction() as tx:
-            return svc.evaluate_in_transaction(tx, domain_id="d", score=score, confidence=conf,
-                                               now=NOW + timedelta(minutes=minutes))
-
-    def active(self, core) -> bool:
-        return SupervisionService(core.db_path, core=core).is_active("d")
-
-    def test_enters_below_the_threshold(self, core) -> None:
-        assert self.ev(core, 0.39) == "entered" and self.active(core)
-
-    def test_threshold_itself_does_not_enter(self, core) -> None:
-        assert self.ev(core, 0.40) is None and not self.active(core)
-
-    def test_low_confidence_never_enters(self, core) -> None:
-        assert self.ev(core, 0.10, conf=0.29) is None and not self.active(core)
-        assert self.ev(core, 0.10, conf=0.30, minutes=1) == "entered"
-
-    def test_exit_needs_two_consecutive_evaluations(self, core) -> None:
-        self.ev(core, 0.30)
-        assert self.ev(core, 0.50, minutes=1) is None and self.active(core)
-        assert self.ev(core, 0.55, minutes=2) == "exited" and not self.active(core)
-
-    def test_a_dip_resets_the_streak(self, core) -> None:
-        self.ev(core, 0.30)
-        self.ev(core, 0.60, minutes=1)
-        self.ev(core, 0.49, minutes=2)                 # below the exit threshold
-        assert self.ev(core, 0.60, minutes=3) is None and self.active(core)
-        assert self.ev(core, 0.60, minutes=4) == "exited"
-
-    def test_low_confidence_does_not_count_towards_exit_and_resets(self, core) -> None:
-        self.ev(core, 0.30)
-        self.ev(core, 0.60, minutes=1)
-        self.ev(core, 0.90, conf=0.1, minutes=2)
-        assert self.ev(core, 0.60, minutes=3) is None and self.active(core)
-
-    def test_the_band_between_the_thresholds_neither_enters_nor_exits(self, core) -> None:
-        assert self.ev(core, 0.45) is None and not self.active(core)
-        self.ev(core, 0.30, minutes=1)
-        assert self.ev(core, 0.45, minutes=2) is None and self.active(core)
-
-    def test_can_re_enter_after_exit(self, core) -> None:
-        self.ev(core, 0.30)
-        self.ev(core, 0.6, minutes=1)
-        self.ev(core, 0.6, minutes=2)
-        assert self.ev(core, 0.2, minutes=3) == "entered" and self.active(core)
-
-    def test_any_domain_query(self, core) -> None:
-        svc = SupervisionService(core.db_path, core=core)
-        assert svc.is_active() is False
-        self.ev(core, 0.2)
-        assert svc.is_active() is True and svc.is_active("other") is False
-
-    @pytest.mark.parametrize("score,conf", [(-0.1, 0.5), (1.1, 0.5), (0.5, -0.1), (0.5, 1.1)])
-    def test_invalid_inputs(self, core, score, conf) -> None:
-        with pytest.raises(ValueError):
-            self.ev(core, score, conf)
-
-    def test_events_only_on_change_and_without_scores(self, core) -> None:
-        self.ev(core, 0.3)
-        self.ev(core, 0.31, minutes=1)
-        self.ev(core, 0.6, minutes=2)
-        self.ev(core, 0.6, minutes=3)
-        with core.transaction() as tx:
-            rows = tx.fetch_all("SELECT event_type, payload_json FROM domain_events WHERE source_module = 'supervision' "
-                                "ORDER BY rowid")
-        assert [r["event_type"] for r in rows] == ["supervision.entered", "supervision.exited"]
-        assert all('"domain_id": "d"' in r["payload_json"] and "score" not in r["payload_json"] for r in rows)
-
-
 class TestRealWiring:
     def _drop_trust(self, core):
         tm = TrustManager(core.db_path, core=core)
-        for i in range(3):          # 0.60 -> 0.52 -> 0.44 -> 0.36 (setbacks weigh -0.08)
+        for i in range(5):          # five setbacks: short-term Trust 0.00 from enough pieces (owner, 2026-11-13)
             tm.record_goal_assessment_evidence(assessment_id=f"a{i}", trust_domain="d", relevant_to_trust=True,
                                                direction="setback", rationale="r", now=NOW + timedelta(minutes=i))
         assert tm.get_domain_state("d").score < 0.40

@@ -1,37 +1,13 @@
-"""Owner, 2026-11-13: leaving Supervision Mode was too slow (from 0.00, about 24 perfect days in a row). Now a good check-in earns +0.02, and seven
-clean days in a row (each with an answered check-in) end it whatever the score. No network."""
+"""Owner, 2026-11-13: leaving Supervision Mode was too slow (from 0.00, about 24 perfect days in a row). Now a good check-in earns +0.02; leaving
+supervision follows short-term Trust (tests/supervision/test_short_term.py). No network."""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
 
-from supervision.models import PROBATION_CLEAN_DAYS
-from supervision.repository import SupervisionService
-from tests.supervision.test_supervision import NOW, core  # noqa: F401
 from trust_manager.checkin_scoring import CHECKIN_ANSWERED_WEIGHT, CHECKIN_MISSED_WEIGHTS, checkin_evidence_spec
 from trust_manager.models import EvidenceType
-
-
-def day(clean=True, due=3, ok=3, paused=False, domain="d", n=0):
-    payload = {"local_date": f"2026-01-{n + 1:02d}", "clean": clean, "check_ins_due": due, "check_ins_ok": ok, "trust_domain": domain, "streak": 0}
-    if paused:
-        payload["paused"] = True
-    return SimpleNamespace(payload=payload, occurred_at=NOW + timedelta(days=n))
-
-
-def supervised(core):  # noqa: F811
-    svc = SupervisionService(core.db_path, core=core)
-    with core.transaction() as tx:
-        assert svc.evaluate_in_transaction(tx, domain_id="d", score=0.0, confidence=0.99, now=NOW, previous_score=0.1) == "entered"
-    return svc
-
-
-def run(core, svc, *days):  # noqa: F811
-    for d in days:
-        with core.transaction() as tx:
-            svc.on_daily_evaluation(tx, d)
-    return svc.is_active("d")
 
 
 class TestAGoodCheckInEarnsTrust:
@@ -66,85 +42,8 @@ class TestAGoodCheckInEarnsTrust:
         assert e.events("check_in.answered") == []
 
 
-class TestProbation:
-    def test_seven_clean_days_end_it_whatever_the_score(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        assert run(core, svc, *[day(n=i) for i in range(PROBATION_CLEAN_DAYS - 1)]) is True
-        assert run(core, svc, day(n=PROBATION_CLEAN_DAYS)) is False
-
-    def test_a_bad_day_starts_the_run_over(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        days = [day(n=i) for i in range(5)] + [day(clean=False, ok=1, n=5)] + [day(n=6 + i) for i in range(5)]
-        assert run(core, svc, *days) is True
-
-    def test_days_with_nothing_asked_neither_count_nor_break_it(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        days = [day(n=i) for i in range(3)] + [day(due=0, ok=0, n=3 + i) for i in range(10)] + [day(n=13 + i) for i in range(3)]
-        assert run(core, svc, *days) is True
-        assert run(core, svc, day(n=20)) is False
-
-    def test_a_vacation_day_neither(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        assert run(core, svc, *[day(paused=True, clean=False, n=i) for i in range(10)]) is True
-
-    def test_another_domain_is_untouched(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        assert run(core, svc, *[day(domain="other", n=i) for i in range(10)]) is True
-
-    def test_after_it_a_rising_score_does_not_put_you_back(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        run(core, svc, *[day(n=i) for i in range(PROBATION_CLEAN_DAYS)])
-        with core.transaction() as tx:
-            assert svc.evaluate_in_transaction(tx, domain_id="d", score=0.12, confidence=0.99, now=NOW + timedelta(days=8), previous_score=0.10) is None
-            assert svc.evaluate_in_transaction(tx, domain_id="d", score=0.06, confidence=0.99, now=NOW + timedelta(days=9), previous_score=0.12) == "entered"
-
-    def test_the_exit_is_an_event_and_a_decision_line(self, core) -> None:  # noqa: F811
-        svc = supervised(core)
-        run(core, svc, *[day(n=i) for i in range(PROBATION_CLEAN_DAYS)])
-        with core.transaction() as tx:
-            assert tx.fetch_one("SELECT COUNT(*) AS n FROM domain_events WHERE event_type = 'supervision.exited'")["n"] == 1
-
-    def test_the_daily_evaluation_sends_what_probation_needs(self) -> None:
-        from pathlib import Path
-        source = Path("system/daily_evaluation.py").read_text(encoding="utf-8")
-        assert '"trust_domain": self._domain, "check_ins_due": facts.check_ins_due' in source
-        assert 'registry.register("daily_evaluation.completed", "supervision", supervision.on_daily_evaluation)' in Path("system/startup.py").read_text(encoding="utf-8")
-
-
 class TestHygiene:
-    """Owner, 2026-11-13: hygiene Trust had no way up, and hygiene supervision no way out."""
-
-    def _supervised(self, core):  # noqa: F811
-        svc = SupervisionService(core.db_path, core=core)
-        with core.transaction() as tx:
-            svc.evaluate_in_transaction(tx, domain_id="d", score=0.2, confidence=0.5, now=NOW, previous_score=0.3)
-        return svc
-
-    def _event(self, payload, at):
-        return SimpleNamespace(payload=payload, occurred_at=at)
-
-    def _pass(self, core, svc, at, handler="on_daily_evaluation", **payload):  # noqa: F811
-        with core.transaction() as tx:
-            getattr(svc, handler)(tx, self._event(payload or {"trust_domain": "other", "clean": False, "check_ins_due": 0, "check_ins_ok": 0}, at))
-        return svc.is_active("d")
-
-    def test_fourteen_quiet_days_with_a_good_opening_end_it(self, core) -> None:  # noqa: F811
-        svc = self._supervised(core)
-        self._pass(core, svc, NOW + timedelta(days=2), "on_good_opening", trust_domain="d")
-        assert self._pass(core, svc, NOW + timedelta(days=13)) is True
-        assert self._pass(core, svc, NOW + timedelta(days=14, minutes=1)) is False
-
-    def test_without_any_opening_it_stays(self, core) -> None:  # noqa: F811
-        svc = self._supervised(core)
-        assert self._pass(core, svc, NOW + timedelta(days=30)) is True
-
-    def test_a_confirmed_incident_starts_the_run_over(self, core) -> None:  # noqa: F811
-        svc = self._supervised(core)
-        self._pass(core, svc, NOW + timedelta(days=1), "on_good_opening", trust_domain="d")
-        self._pass(core, svc, NOW + timedelta(days=10), "on_incident_confirmation", trust_domain="d", new_confirmation="confirmed")
-        assert self._pass(core, svc, NOW + timedelta(days=15)) is True
-        self._pass(core, svc, NOW + timedelta(days=16), "on_good_opening", trust_domain="d")
-        assert self._pass(core, svc, NOW + timedelta(days=24, minutes=1)) is False
+    """Owner, 2026-11-13: hygiene Trust had no way up. (The way out of supervision is short-term Trust now: test_short_term.py.)"""
 
     def test_an_on_time_planned_opening_is_an_event_and_earns_trust(self, tmp_path) -> None:
         from tests.exemptions.test_exemption_opening import World

@@ -1,153 +1,101 @@
 """
 supervision/repository.py
 
-ActiveSupervisionState (v0.39), derived from Trust recalculations.
+ActiveSupervisionState (v0.39), derived from SHORT-TERM Trust (owner, 2026-11-13; trust_manager/short_term.py).
 
-- Enter: score < 0.40 with confidence >= 0.30.
-- Exit: score >= 0.50 (confidence >= 0.30) for two CONSECUTIVE evaluations.
-  A weak-confidence or sub-threshold evaluation resets the streak.
-- Or exit by probation (owner, 2026-11-13): PROBATION_CLEAN_DAYS clean days in a row, each with at least one answered check-in
-  (`daily_evaluation.completed`). A day with nothing due neither counts nor breaks the run; a paused (vacation) day neither.
-- Hygiene and any other domain without daily evaluations: it ends after PROBATION_QUIET_DAYS without a confirmed incident there, with at least
-  one planned opening relocked on time in that run (checked on each daily evaluation).
-- Entering needs a FALLING recalculation (new score below the previous one): after a probation exit the score is still low, and a rising
-  recalculation must not put the wearer straight back.
-- Driven by the `trust_domain.recalculated` event. The handler runs inside the
-  outbox consumer's transaction and reads nothing outside its own table; the event
-  payload already carries score and confidence. Redelivery is absorbed by the
-  consumer dedup (an event is applied at most once).
-- Emits `supervision.entered` / `supervision.exited` (ids/domain only).
-No model, Discord or command path reaches this module.
+- Short-term Trust is the share of good evidence among all evidence of the domain in a rolling window: 7 days for the check-in domain
+  (it gets evidence several times a day), 14 days for any other (hygiene gets a few pieces a week). The long-term score no longer starts or
+  ends supervision; it still sets privileges and the check-in level.
+- Enter: short-term < 0.40 with at least MIN_PIECES_TO_ENTER (5) pieces in the window, so one bad piece of thin evidence never starts it.
+- Exit: short-term >= 0.60 (any number of pieces). With nothing bad left in the window and one good piece, that is 1.0: the run of bad
+  evidence has aged out and something good came after it. No evidence at all: it stays (nothing shows it is better).
+- The band 0.40 - 0.60 neither enters nor exits (hysteresis), so the state does not flip back and forth.
+- Evaluated on every `trust_domain.recalculated` (that domain) and on every `daily_evaluation.completed` (every domain with a row here, plus
+  the evaluation's own), so evidence ageing out of the window ends supervision even when nothing new happens.
+
+This replaces the earlier rules (long-term score < 0.40 with confidence >= 0.30; exit at >= 0.50 twice, by a probation of 7 clean days, or by
+14 quiet days for hygiene). The `probation_*` and `recovery_streak` columns stay (migrations are additive) and are no longer used.
+
+The handler runs inside the outbox consumer's transaction; it writes only its own table and reads Trust evidence only through
+`trust_manager.short_term.determine_short_term_trust_in_transaction`. Redelivery is absorbed by the consumer dedup. Emits
+`supervision.entered` / `supervision.exited` (domain only, no score). No model, Discord or command path reaches this module.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Mapping
 
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction
+from infrastructure.decision_log import decision
 from infrastructure.outbox import ClaimedDomainEvent, DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
-from infrastructure.decision_log import decision
-from supervision.models import (
-    ENTER_BELOW,
-    EXIT_AT_OR_ABOVE,
-    EXIT_CONSECUTIVE_EVALUATIONS,
-    MIN_CONFIDENCE,
-    PROBATION_CLEAN_DAYS,
-    PROBATION_QUIET_DAYS,
-)
-from datetime import timedelta
-from infrastructure.time_format import parse_iso as _parse_iso
+from supervision.models import ENTER_BELOW, EXIT_AT_OR_ABOVE, MIN_PIECES_TO_ENTER, OTHER_DOMAIN_WINDOW, decide
+from trust_manager.short_term import ShortTermTrust, determine_short_term_trust_in_transaction
 
-__all__ = ["SupervisionService", "TRIGGER_EVENT_TYPE"]
+__all__ = ["SupervisionService", "TRIGGER_EVENT_TYPE", "DAILY_EVENT_TYPE"]
 
 TRIGGER_EVENT_TYPE = "trust_domain.recalculated"
+DAILY_EVENT_TYPE = "daily_evaluation.completed"
 
 
 class SupervisionService:
-    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None) -> None:
+    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, windows: Mapping[str, timedelta] | None = None) -> None:
+        """`windows`: the short-term window per domain (the composition gives the check-in domain CHECK_IN_DOMAIN_WINDOW); any other domain
+        uses OTHER_DOMAIN_WINDOW."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
+        self._windows = dict(windows or {})
 
-    # Outbox handler ------------------------------------------------------
+    def window_for(self, domain_id: str) -> timedelta:
+        return self._windows.get(domain_id, OTHER_DOMAIN_WINDOW)
+
+    # Outbox handlers -----------------------------------------------------
 
     def on_trust_recalculated(self, tx: Transaction, event: ClaimedDomainEvent) -> None:
-        p = event.payload
-        previous = p.get("previous_score")
-        self.evaluate_in_transaction(
-            tx, domain_id=p["domain_id"], score=float(p["new_score"]), confidence=float(p["new_confidence"]),
-            now=event.occurred_at, previous_score=float(previous) if isinstance(previous, (int, float)) else None,
-        )
-
-    def on_good_opening(self, tx: Transaction, event: ClaimedDomainEvent) -> None:
-        """A planned hygiene opening relocked on time: proof for the quiet-days exit."""
-        domain_id = event.payload.get("trust_domain")
-        if domain_id:
-            tx.execute("UPDATE supervision_states SET probation_proofs = COALESCE(probation_proofs, 0) + 1 WHERE domain_id = ? AND active = 1", (domain_id,))
-
-    def on_incident_confirmation(self, tx: Transaction, event: ClaimedDomainEvent) -> None:
-        """A confirmed incident in a supervised domain starts its quiet run over."""
-        p = event.payload
-        if p.get("new_confirmation") == "confirmed" and p.get("trust_domain"):
-            tx.execute("UPDATE supervision_states SET probation_since = ?, probation_proofs = 0 WHERE domain_id = ? AND active = 1",
-                       (_iso(event.occurred_at), p["trust_domain"]))
-
-    def _quiet_exits(self, tx: Transaction, *, skip: str | None, now) -> None:
-        rows = tx.fetch_all("SELECT * FROM supervision_states WHERE active = 1 AND domain_id != ?", (skip or "",))
-        for row in rows:
-            since = row["probation_since"] or row["entered_at"]
-            if since is None or now - _parse_iso(since) < timedelta(days=PROBATION_QUIET_DAYS) or int(row["probation_proofs"] or 0) < 1:
-                continue
-            self._upsert(tx, row["domain_id"], active=0, entered_at=row["entered_at"], entry_score=row["entry_score"], streak=0, exited_at=_iso(now), now=now)
-            tx.execute("UPDATE supervision_states SET probation_since = NULL, probation_proofs = 0 WHERE domain_id = ?", (row["domain_id"],))
-            write_event(tx, DomainEvent(event_type="supervision.exited", source_module="supervision", payload={"domain_id": row["domain_id"]}, occurred_at=now))
-            decision("supervision", f"Supervision ended by probation: {PROBATION_QUIET_DAYS} days without an incident, with openings relocked on time.",
-                     domain_id=row["domain_id"])
+        self.evaluate_in_transaction(tx, domain_id=event.payload["domain_id"], now=event.occurred_at)
 
     def on_daily_evaluation(self, tx: Transaction, event: ClaimedDomainEvent) -> None:
-        """Probation (owner, 2026-11-13). Uses only the event payload and this module's own table."""
-        p = event.payload
-        domain_id = p.get("trust_domain")
-        self._quiet_exits(tx, skip=domain_id, now=event.occurred_at)
-        if not domain_id or p.get("paused"):
-            return
-        row = tx.fetch_one("SELECT * FROM supervision_states WHERE domain_id = ?", (domain_id,))
-        if row is None or not row["active"]:
-            return
-        days = int(row["probation_days"] or 0) if "probation_days" in row.keys() else 0
-        answered, due = int(p.get("check_ins_ok") or 0), int(p.get("check_ins_due") or 0)
-        if p.get("clean") and answered >= 1:
-            days += 1
-        elif p.get("clean") and due == 0:
-            pass                                    # nothing was asked that day: neither counts nor breaks the run
-        else:
-            days = 0
-        now = event.occurred_at
-        if days >= PROBATION_CLEAN_DAYS:
-            self._upsert(tx, domain_id, active=0, entered_at=row["entered_at"], entry_score=row["entry_score"], streak=0, exited_at=_iso(now), now=now)
-            tx.execute("UPDATE supervision_states SET probation_days = 0 WHERE domain_id = ?", (domain_id,))
-            write_event(tx, DomainEvent(event_type="supervision.exited", source_module="supervision",
-                                        payload={"domain_id": domain_id}, occurred_at=now))
-            decision("supervision", f"Supervision ended by probation: {days} clean days in a row.", domain_id=domain_id)
-            return
-        tx.execute("UPDATE supervision_states SET probation_days = ?, last_evaluated_at = ? WHERE domain_id = ?", (days, _iso(now), domain_id))
+        """Evidence ages out of the window without any new event; the daily evaluation is the clock that notices."""
+        domains = {r["domain_id"] for r in tx.fetch_all("SELECT domain_id FROM supervision_states")}
+        if event.payload.get("trust_domain"):
+            domains.add(event.payload["trust_domain"])
+        for domain_id in sorted(domains):
+            if tx.fetch_one("SELECT 1 FROM trust_domains WHERE domain_id = ? AND is_active = 1", (domain_id,)):
+                self.evaluate_in_transaction(tx, domain_id=domain_id, now=event.occurred_at)
+            else:
+                self._end_untracked(tx, domain_id, event.occurred_at)
 
-    def evaluate_in_transaction(self, tx: Transaction, *, domain_id: str, score: float, confidence: float,
-                                now: datetime, previous_score: float | None = None) -> str | None:
+    def _end_untracked(self, tx: Transaction, domain_id: str, now: datetime) -> None:
+        """A domain that is no longer tracked (deactivated by consent) gets no new evidence: its supervision would otherwise never end and would hold
+        every release. It ends."""
+        row = tx.fetch_one("SELECT * FROM supervision_states WHERE domain_id = ? AND active = 1", (domain_id,))
+        if row is None:
+            return
+        self._upsert(tx, domain_id, active=0, entered_at=row["entered_at"], entry_score=row["entry_score"], streak=0, exited_at=_iso(now), now=now)
+        write_event(tx, DomainEvent(event_type="supervision.exited", source_module="supervision", payload={"domain_id": domain_id}, occurred_at=now))
+        decision("supervision", "Supervision ended: the domain is no longer tracked.", domain_id=domain_id)
+
+    def evaluate_in_transaction(self, tx: Transaction, *, domain_id: str, now: datetime) -> str | None:
         """Returns 'entered', 'exited' or None."""
-        if not (0.0 <= score <= 1.0) or not (0.0 <= confidence <= 1.0):
-            raise ValueError("score and confidence must be within [0, 1]")
+        short = determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id))
         row = tx.fetch_one("SELECT * FROM supervision_states WHERE domain_id = ?", (domain_id,))
-        confident = confidence >= MIN_CONFIDENCE
         active = bool(row["active"]) if row is not None else False
-        change = None
-
-        if not active:
-            falling = previous_score is None or score < previous_score
-            if score < ENTER_BELOW and confident and falling:
-                self._upsert(tx, domain_id, active=1, entered_at=_iso(now), entry_score=score, streak=0,
-                             exited_at=row["exited_at"] if row else None, now=now)
-                tx.execute("UPDATE supervision_states SET probation_days = 0, probation_since = ?, probation_proofs = 0 WHERE domain_id = ?", (_iso(now), domain_id))
-                change = "entered"
-            else:
-                self._upsert(tx, domain_id, active=0, entered_at=row["entered_at"] if row else None,
-                             entry_score=row["entry_score"] if row else None, streak=0,
-                             exited_at=row["exited_at"] if row else None, now=now)
-        else:
-            streak = (int(row["recovery_streak"]) + 1) if (score >= EXIT_AT_OR_ABOVE and confident) else 0
-            if streak >= EXIT_CONSECUTIVE_EVALUATIONS:
-                self._upsert(tx, domain_id, active=0, entered_at=row["entered_at"], entry_score=row["entry_score"],
-                             streak=0, exited_at=_iso(now), now=now)
-                change = "exited"
-            else:
-                self._upsert(tx, domain_id, active=1, entered_at=row["entered_at"], entry_score=row["entry_score"],
-                             streak=streak, exited_at=row["exited_at"], now=now)
-
+        change = decide(active, short.score, short.pieces)
+        entered_at = row["entered_at"] if row else None
+        entry_score = row["entry_score"] if row else None
+        exited_at = row["exited_at"] if row else None
+        if change == "entered":
+            active, entered_at, entry_score = True, _iso(now), short.score
+        elif change == "exited":
+            active, exited_at = False, _iso(now)
+        self._upsert(tx, domain_id, active=int(active), entered_at=entered_at, entry_score=entry_score, streak=0, exited_at=exited_at, now=now)
         if change is not None:
             write_event(tx, DomainEvent(event_type=f"supervision.{change}", source_module="supervision",
                                         payload={"domain_id": domain_id}, occurred_at=now))
+            decision("supervision", _explain(change, short), domain_id=domain_id)
         return change
 
     # Reads ---------------------------------------------------------------
@@ -159,6 +107,11 @@ class SupervisionService:
                 return tx.fetch_one("SELECT 1 FROM supervision_states WHERE active = 1") is not None
             row = tx.fetch_one("SELECT active FROM supervision_states WHERE domain_id = ?", (domain_id,))
         return bool(row["active"]) if row is not None else False
+
+    def get_short_term(self, domain_id: str, now: datetime) -> ShortTermTrust:
+        """Owner and CLI read (never shown to the wearer)."""
+        with self._core.transaction() as tx:
+            return determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id))
 
     # Internals -----------------------------------------------------------
 
@@ -172,3 +125,10 @@ class SupervisionService:
             "exited_at = excluded.exited_at, last_evaluated_at = excluded.last_evaluated_at",
             (domain_id, active, entered_at, entry_score, streak, exited_at, _iso(now)),
         )
+
+
+def _explain(change: str, short: ShortTermTrust) -> str:
+    detail = f"short-term {short.score:.2f} from {short.pieces} pieces over {short.window_days:g} days"
+    if change == "entered":
+        return f"Supervision started: the recent record is weak ({detail}; below {ENTER_BELOW:.2f}, at least {MIN_PIECES_TO_ENTER} pieces)."
+    return f"Supervision ended: the recent record recovered ({detail}; at least {EXIT_AT_OR_ABOVE:.2f})."

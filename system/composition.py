@@ -33,6 +33,7 @@ from supervision.checkin_evaluator import evaluate_check_in
 from supervision.checkins import CheckInSender, CheckInService, SendOutcome
 from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
+from supervision.models import CHECK_IN_DOMAIN_WINDOW
 from supervision.repository import SupervisionService
 from system.daily_evaluation import DailyEvaluationTask
 from system.release_notice import ReleaseNotifier
@@ -261,8 +262,11 @@ def build_rules_and_execution(
             want_release = want_check_ins = False
 
     if getattr(config, "enable_supervision", False):
-        out.supervision = SupervisionService(config.db_path, core=core)
-        out.notes.append("Proactive supervision state enabled (derived from Trust recalculations).")
+        # Owner, 2026-11-13: derived from short-term Trust; the check-in domain looks back one week, any other two.
+        check_in_domain = getattr(config, "check_in_trust_domain", None)
+        out.supervision = SupervisionService(config.db_path, core=core,
+                                             windows={check_in_domain: CHECK_IN_DOMAIN_WINDOW} if check_in_domain else None)
+        out.notes.append("Proactive supervision state enabled (derived from short-term Trust).")
 
     if want_check_ins:
         user = getattr(config, "check_in_user_id", None) or wearer_id or getattr(config, "owner_user_id", None)
@@ -281,7 +285,7 @@ def build_rules_and_execution(
                 config.db_path, core=core, window_config=window_cfg, user_id=user, trust_domain=domain,
                 get_trust_score=score, sender=check_in_sender,
                 evaluate=lambda prompt, reply: evaluate_check_in(prompt, reply, check_in_complete),
-                # Strict Supervision Mode (Trust < 0.40) shortens the deadlines.
+                # Strict Supervision Mode (short-term Trust, owner 2026-11-13) shortens the follow-up window.
                 is_strict=(lambda: supervision.is_active(domain)) if supervision is not None else (lambda: False),
                 response_timeout=minutes("checkin_response_timeout_minutes", 60),
                 follow_up_window=minutes("checkin_follow_up_minutes", 30),

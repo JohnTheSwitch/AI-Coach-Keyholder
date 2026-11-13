@@ -4,26 +4,39 @@ supervision/models.py
 Pure definitions for proactive supervision (v0.39): the supervision hysteresis
 thresholds and the four Trust levels with their check-in frequency and hygiene
 interval. No I/O. All numbers are owner-supplied bindings.
+
+Owner, 2026-11-13: Supervision Mode follows SHORT-TERM Trust (trust_manager/short_term.py), the share of good evidence in a recent window.
+The Trust levels below (check-ins per day, hygiene interval) still follow the long-term score: the check-ins are what produces short-term
+evidence, and tying their number to short-term Trust would switch them off after one good week, leave short-term Trust without evidence and
+switch them back on (a weekly swing).
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import IntEnum
 
 __all__ = [
-    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_CONFIDENCE", "EXIT_CONSECUTIVE_EVALUATIONS", "PROBATION_CLEAN_DAYS", "PROBATION_QUIET_DAYS",
+    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_PIECES_TO_ENTER", "CHECK_IN_DOMAIN_WINDOW", "OTHER_DOMAIN_WINDOW", "decide",
     "TrustLevel", "trust_level", "check_ins_per_day", "hygiene_interval_days",
 ]
 
-ENTER_BELOW = 0.40                   # supervision starts when score < this ...
-MIN_CONFIDENCE = 0.30                # ... and confidence >= this (a weak estimate has no authority)
-EXIT_AT_OR_ABOVE = 0.50              # supervision ends after score >= this ...
-EXIT_CONSECUTIVE_EVALUATIONS = 2     # ... for this many consecutive evaluations
-# Owner, 2026-11-13: or after this many clean days in a row, each with at least one answered check-in, whatever the score.
-PROBATION_CLEAN_DAYS = 7
-# Owner, 2026-11-13: a domain without check-ins (hygiene) ends it after this many days without a confirmed incident there, with at least one planned
-# opening relocked on time in that time.
-PROBATION_QUIET_DAYS = 14
+ENTER_BELOW = 0.40                   # supervision starts when short-term Trust < this ...
+MIN_PIECES_TO_ENTER = 5              # ... from at least this many pieces of evidence in the window (thin evidence has no authority)
+EXIT_AT_OR_ABOVE = 0.60              # supervision ends when short-term Trust >= this (the 0.40 - 0.60 band changes nothing)
+# The window: the check-in domain gets evidence several times a day, so one week shows the present; any other domain (hygiene) gets a few
+# pieces a week and looks back two. These keep the timings agreed before: about a week of answered check-ins, two quiet weeks for hygiene.
+CHECK_IN_DOMAIN_WINDOW = timedelta(days=7)
+OTHER_DOMAIN_WINDOW = timedelta(days=14)
+
+
+def decide(active: bool, short_term: float | None, pieces: int) -> str | None:
+    """'entered', 'exited' or None. Unknown short-term Trust (no evidence in the window) changes nothing."""
+    if short_term is None:
+        return None
+    if not active:
+        return "entered" if short_term < ENTER_BELOW and pieces >= MIN_PIECES_TO_ENTER else None
+    return "exited" if short_term >= EXIT_AT_OR_ABOVE else None
 
 
 class TrustLevel(IntEnum):

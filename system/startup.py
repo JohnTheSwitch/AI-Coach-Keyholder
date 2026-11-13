@@ -184,12 +184,10 @@ def build_consumer_registry(
         registry.register("release.provider_confirmed", "progressive_conditioning", on_release_confirmed)
 
     if supervision is not None:
-        # v0.39: a Trust recalculation may start/stop proactive supervision (derived state).
+        # v0.39: a Trust recalculation may start/stop proactive supervision (derived from short-term Trust, owner 2026-11-13).
         registry.register(SUPERVISION_TRIGGER, "supervision", supervision.on_trust_recalculated)
-        # Owner, 2026-11-13: a run of clean days also ends it (probation).
+        # The daily evaluation is the clock: evidence ages out of the short-term window without any new event.
         registry.register("daily_evaluation.completed", "supervision", supervision.on_daily_evaluation)
-        registry.register("hygiene_opening.relocked_on_time", "supervision", supervision.on_good_opening)
-        registry.register("incident.confirmation_changed", "supervision", supervision.on_incident_confirmation)
 
     if rules_engine is not None:
         # Phase 2 (dry run): only RECORDS a trigger here; the evaluation runs
