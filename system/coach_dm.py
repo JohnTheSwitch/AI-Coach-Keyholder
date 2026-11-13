@@ -20,7 +20,7 @@ from typing import Callable
 from application.models import ActionSpec, OutgoingMessage
 from coach.actions import ACTION_INSTRUCTIONS, ACTION_SCHEMAS, ActionKind
 from coach.safety import reports_done, strip_record_claims
-from coach.desk import Commitment, CoachDesk, Outcome, Proposal, SubmitResult
+from coach.desk import Commitment, CoachDesk, Outcome, Proposal, SubmitResult, is_night_commitment
 from coaching_memory.service import MAX_CONTENT, WriteOutcome
 from goal_management.repository import GoalManager
 from infrastructure.clock import Clock
@@ -75,7 +75,9 @@ def proposal_card(proposal: Proposal, parts: tuple[str, ...] = ()) -> tuple[str,
             text += f"\nGoal: {payload['goal_title']}"
         if payload.get("task_title"):
             text += f"\nTask: {payload['task_title']}"
-        if parts:
+        if parts == ("night",):
+            text += "\nIt's kept at night, so I'll ask you the next morning."
+        elif parts:
             # Owner, 2026-11-13: accepting picks the part of the day, so the bot asks "Done?" when it ends (one tap, no extra question).
             text += "\nWhen will you do it? I'll ask you when that time ends."
             return text, tuple(ActionSpec(action_id=f"coach:{_PART_ACTIONS[p]}:{proposal.id}", label=_PART_LABELS[p], style="success") for p in parts) + (
@@ -84,15 +86,18 @@ def proposal_card(proposal: Proposal, parts: tuple[str, ...] = ()) -> tuple[str,
                   ActionSpec(action_id=f"coach:decline:{proposal.id}", label="Decline", style="secondary"))
 
 
-_PART_ACTIONS = {"morning": "morning", "afternoon": "afternoon", "evening": "evening", "any": "accept"}
-_PART_LABELS = {"morning": "Morning", "afternoon": "Afternoon", "evening": "Evening", "any": "Any time"}
-_ACTION_PARTS = {action: part for part, action in _PART_ACTIONS.items()}
+_PART_ACTIONS = {"morning": "morning", "afternoon": "afternoon", "evening": "evening", "any": "accept", "night": "accept"}
+_PART_LABELS = {"morning": "Morning", "afternoon": "Afternoon", "evening": "Evening", "any": "Any time", "night": "Accept"}
+_ACTION_PARTS = {"morning": "morning", "afternoon": "afternoon", "evening": "evening", "accept": "any"}
 _PART_WORDS = {"morning": "this morning's", "afternoon": "this afternoon's", "evening": "this evening's", "any": "today's"}
 ASK_BUTTONS = (("kept", "Done", "success"), ("partly", "Partly", "secondary"), ("missed", "Not done", "secondary"), ("later", "Still doing it", "secondary"))
 
 
 def ask_card(commitment: Commitment, part: str) -> tuple[str, tuple[ActionSpec, ...]]:
     """The "Done?" the bot sends when a commitment's time ends (owner, 2026-11-13: proof only works right after the act)."""
+    if part == "night":                     # roadmap slice 2: asked the next morning; nothing to extend
+        text = f"**{commitment.text}**: that was last night's plan. Did you?"
+        return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style in ASK_BUTTONS[:3])
     text = f"**{commitment.text}**: that was {_PART_WORDS.get(part, _PART_WORDS['any'])} plan. Done?"
     return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style in ASK_BUTTONS)
 
@@ -184,7 +189,8 @@ class CoachDm:
             proposal = outcome.proposal
             parts = ()
             if proposal.kind is ActionKind.PROPOSE_COMMITMENT and self._desk.to_utc is not None:
-                parts = self._desk.open_parts(date.fromisoformat(proposal.payload["for_date"]), now) or ("any",)
+                parts = (("night",) if is_night_commitment(proposal.payload["text"])
+                         else self._desk.open_parts(date.fromisoformat(proposal.payload["for_date"]), now) or ("any",))
             cards.append(proposal_card(proposal, parts))
         if claimed:
             has_card = any(action.action_id.startswith(("coach:kept", "coach:partly", "coach:missed")) for _, actions in cards for action in actions)

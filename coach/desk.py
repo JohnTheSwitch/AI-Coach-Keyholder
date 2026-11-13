@@ -55,7 +55,7 @@ logger = logging.getLogger("ai_coach_keyholder.coach.desk")
 __all__ = [
     "CoachDesk", "Proposal", "SubmitResult", "Commitment", "Outcome", "MAX_PROPOSALS_PER_DAY", "MAX_COMMITMENTS_PER_DAY", "MAX_ACTIVE_GOALS",
     "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW", "without_day_words", "MIN_KEPT_AFTER", "reported_too_soon",
-    "PARTS", "REPORT_GRACE", "ASK_LEAD", "EXTENSION",
+    "PARTS", "REPORT_GRACE", "ASK_LEAD", "EXTENSION", "NIGHT_LEAD", "is_night_commitment",
 ]
 
 MAX_PROPOSALS_PER_DAY = 3
@@ -78,6 +78,17 @@ REPORT_GRACE = timedelta(hours=2)
 ASK_LEAD = timedelta(minutes=30)          # the waking day ends this long before quiet hours, so "Done?" is asked and answered before them
 EXTENSION = timedelta(hours=1)            # "Still doing it" moves the question once, by up to this much
 _NOON, _SIX_PM = time(12, 0), time(18, 0)
+# Roadmap slice 2 (owner, 2026-11-13): bedtime and sleep are kept at night. Asked the next morning when quiet hours end, reportable until 12:00,
+# never spot-checked. The same words as the spot checks' "cannot be shown" list for sleep (proof_checks.service), English and Czech.
+NIGHT_LEAD = timedelta(hours=2)
+_NIGHT = re.compile(r"\b(sleep\w*|slept|bed|bedtime|asleep|go to sleep|lights out|spat|spim|spanek|vyspat|usnout|postel\w*|do postele)\b")
+
+
+def is_night_commitment(text: str) -> bool:
+    import unicodedata
+    folded = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode("ascii")
+    folded = re.sub(r"\bmake (the|my|your) bed\b", "", folded)          # a chore, not a bedtime
+    return _NIGHT.search(folded) is not None
 
 
 def _named_duration(text: str) -> timedelta:
@@ -317,6 +328,13 @@ class CoachDesk:
     def _accept_commitment(self, row, payload: dict, now: datetime, part: str = "any") -> str:
         commitment_id = str(uuid.uuid4())
         window, ask_at = None, None
+        if self.to_utc is not None and is_night_commitment(payload["text"]):
+            # Roadmap slice 2 (owner, 2026-11-13): a bedtime is kept or not at night, so it is asked about the next morning, whatever was picked.
+            day = date.fromisoformat(payload["for_date"])
+            window, next_waking = self.night_window(day), self._waking(day + timedelta(days=1))
+            if window is not None and next_waking is not None and window[1] > now:
+                return self._insert_commitment(row, payload, now, commitment_id, "night", window, max(next_waking[0], now))
+            window = None
         if self.to_utc is not None:
             window = self.window_for(part, date.fromisoformat(payload["for_date"]))
             if window is not None and window[1] <= now and part != "any":
@@ -327,7 +345,9 @@ class CoachDesk:
                 window = (now, now)                     # accepted after its waking day: it can still be reported for REPORT_GRACE, never asked about
             else:
                 ask_at = window[1]
+        return self._insert_commitment(row, payload, now, commitment_id, part if window is not None else None, window, ask_at)
 
+    def _insert_commitment(self, row, payload: dict, now: datetime, commitment_id: str, part: str | None, window, ask_at) -> str:
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE coach_proposals SET status = 'accepted', resolved_at = ?, result_id = ? WHERE id = ? AND status = 'pending'",
                               (_iso(now), commitment_id, row["id"])).rowcount
@@ -336,13 +356,15 @@ class CoachDesk:
             tx.execute("INSERT INTO daily_commitments (id, user_id, for_date, text, goal_group_id, task_assignment_id, proposal_id, status, created_at, "
                        "window_part, window_start, window_end, ask_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)",
                        (commitment_id, self.user_id, payload["for_date"], payload["text"], payload.get("goal_group_id"),
-                        payload.get("task_assignment_id"), row["id"], _iso(now), part if window is not None else None,
+                        payload.get("task_assignment_id"), row["id"], _iso(now), part,
                         _iso(window[0]) if window else None, _iso(window[1]) if window else None, _iso(ask_at) if ask_at else None))
             self._event(tx, "coach.proposal_resolved", now, proposal_id=row["id"], resolution="accepted")
             return True
 
         if not apply_transition(self._core, write=write):
             return "That proposal is being handled."
+        if part == "night":
+            return f"Done, that's your commitment. It's kept at night, so I'll ask you tomorrow at {self._clock_text(ask_at)}."
         if ask_at is not None:
             return f"Done, that's your commitment. I'll ask you at {self._clock_text(ask_at)} whether it's done."
         return "Done, that's your commitment."
@@ -484,6 +506,14 @@ class CoachDesk:
         start, end = max(start, lo), min(end, hi)
         return (start, end) if end > start else None
 
+    def night_window(self, day: date) -> tuple[datetime, datetime] | None:
+        """A night commitment (roadmap slice 2): from NIGHT_LEAD before quiet hours on `day` until REPORT_GRACE before noon the next day, so a Kept
+        counts from bedtime until 12:00 the next morning."""
+        waking = self._waking(day)
+        if waking is None:
+            return None
+        return waking[1] - NIGHT_LEAD, self.to_utc(day + timedelta(days=1), _NOON) - REPORT_GRACE
+
     def open_parts(self, day: date, now: datetime) -> tuple[str, ...]:
         """The parts of `day` that have not ended yet (all of them when windows are off)."""
         if self.to_utc is None:
@@ -496,7 +526,12 @@ class CoachDesk:
             return "too_soon"
         if row["window_start"] and now < _parse_iso(row["window_start"]) + _named_duration(row["text"]):
             return "too_soon"
-        end = _parse_iso(row["window_end"]) if row["window_end"] else (self.window_for("any", for_date) or (None, None))[1]
+        if row["window_end"]:
+            end = _parse_iso(row["window_end"])
+        elif is_night_commitment(row["text"]):          # from before slice 2: a bedtime still counts until noon the next day
+            end = (self.night_window(for_date) or (None, None))[1]
+        else:
+            end = (self.window_for("any", for_date) or (None, None))[1]
         if end is not None and now > end + REPORT_GRACE:
             return "late"
         return "timely"

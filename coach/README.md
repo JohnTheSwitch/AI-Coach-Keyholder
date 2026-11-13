@@ -94,3 +94,11 @@ needs `ENABLE_CHECK_INS`, and multi-day memory needs `ENABLE_COACHING_MEMORY`.
   result. A late Kept is told why; the review card says so beforehand. A **Not kept always counts**: owning up is never too late.
 - Commitments from before migration 062 have no window: the whole waking day of their date applies.
 - Without `to_utc` (tests, a wiring without a time zone) there are no windows and only the too-soon rule applies.
+
+## Night commitments (owner, 2026-11-13; roadmap slice 2)
+
+A bedtime or sleep commitment ("Go to bed 30 minutes earlier", `is_night_commitment`, English and Czech; "make the bed" is not one) is kept at
+night, so the part of the day does not apply: the card offers a single **Accept** ("I'll ask you the next morning"), the window runs from
+`NIGHT_LEAD` (2 hours) before quiet hours until 10:00 the next day, "Did you?" (Done / Partly / Not done) is asked when quiet hours end, and a Kept
+counts until **12:00 the next day**. A Kept before the window is too soon. Older bedtime commitments without a window get the same noon limit.
+Never spot-checked (`proof_checks.service.can_be_shown`).

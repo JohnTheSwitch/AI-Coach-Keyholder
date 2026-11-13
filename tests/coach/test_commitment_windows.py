@@ -144,3 +144,48 @@ class TestCards:
             assert all(re.fullmatch(COACH_TEMPLATE, b.action_id) for b in buttons)
         assert ask_card(commitment, "evening")[0] == "**Study**: that was this evening's plan. Done?"
         assert "no longer counts" in review_card(commitment, late=True)[0]
+
+
+class TestNightCommitments:
+    """Roadmap slice 2 (owner, 2026-11-13): a bedtime is asked about the next morning and counts until noon."""
+
+    def test_recognised(self) -> None:
+        from coach.desk import is_night_commitment
+        assert is_night_commitment("Go to bed 30 minutes earlier") and is_night_commitment("Jít spát do 23:00")
+        assert not is_night_commitment("Make the bed") and not is_night_commitment("Study for 30 minutes")
+
+    def test_asked_the_next_morning_and_counts_until_noon(self, w) -> None:
+        reply, cid = accept(w, "evening", text="Go to bed 30 minutes earlier")
+        assert "tomorrow at 07:00" in reply
+        row = w.rows("SELECT window_part, window_start, window_end, ask_at FROM daily_commitments WHERE id = ?", cid)[0]
+        nxt = DAY + timedelta(days=1)
+        assert row["window_part"] == "night" and row["window_start"].startswith(f"{DAY}T20:00") and row["ask_at"].startswith(f"{nxt}T07:00")
+        queued = []
+        assert w.desk.due_asks(at(23), lambda tx, c, part: queued.append(part)) == 0
+        morning = datetime.combine(nxt, time(7, 0), tzinfo=timezone.utc)
+        assert w.desk.due_asks(morning, lambda tx, c, part: queued.append(part)) == 1 and queued == ["night"]
+        assert w.desk.record_outcome(U, cid, Outcome.KEPT, morning + timedelta(hours=4)) == "Noted, well done."
+        assert events(w, "coach.commitment_kept") == 1
+
+    def test_after_noon_it_is_late_and_before_bedtime_too_soon(self, w) -> None:
+        _r, late = accept(w, "evening", text="Go to bed 30 minutes earlier")
+        w.desk.record_outcome(U, late, Outcome.KEPT, datetime.combine(DAY + timedelta(days=1), time(12, 1), tzinfo=timezone.utc))
+        _r, soon = accept(w, "evening", text="Sleep by 23:00")
+        w.desk.record_outcome(U, soon, Outcome.KEPT, at(19))
+        assert [w.rows("SELECT report_timing FROM daily_commitments WHERE id = ?", c)[0]["report_timing"] for c in (late, soon)] == ["late", "too_soon"]
+
+    def test_an_old_bedtime_without_a_window_counts_until_noon(self, w) -> None:
+        w.desk.to_utc = None
+        _r, cid = accept(w, "any", text="Go to bed 30 minutes earlier")
+        w.desk.to_utc = lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc)
+        nxt = DAY + timedelta(days=1)
+        assert not w.desk.past_report_window(cid, datetime.combine(nxt, time(11, 59), tzinfo=timezone.utc))
+        assert w.desk.past_report_window(cid, datetime.combine(nxt, time(12, 1), tzinfo=timezone.utc))
+
+    def test_the_cards(self, w) -> None:
+        result = w.desk.submit(U, {"action": "propose_commitment", "text": "Go to bed 30 minutes earlier", "when": "tomorrow"}, MADE)
+        text, actions = proposal_card(result.proposal, ("night",))
+        assert "ask you the next morning" in text and [a.label for a in actions] == ["Accept", "Decline"]
+        commitment = type("C", (), {"id": result.proposal.id, "text": "Go to bed 30 minutes earlier", "for_date": DAY})()
+        text, actions = ask_card(commitment, "night")
+        assert text.endswith("that was last night's plan. Did you?") and [a.label for a in actions] == ["Done", "Partly", "Not done"]
