@@ -360,6 +360,48 @@ def build_peer_review_decisions_cli():
     return build_peer_review_decisions(config, CoreDatabase(config.db_path))
 
 
+def build_release_test_request():
+    """(engine, owner_user_id, release_user_id) for `release-test-override`. The release user is chosen like the composition does."""
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from release_engine.service import ReleaseEngine
+    from system.composition import window_config_from
+
+    config = Config.load()
+    core = CoreDatabase(config.db_path)
+    engine = ReleaseEngine(config.db_path, core=core, window_config=window_config_from(config), min_offset_minutes=30, max_offset_minutes=210,
+                           max_hold_hours=config.max_barrier_hold_hours)
+    user = (getattr(config, "chaster_execution_wearer_user_id", None) or getattr(config, "check_in_user_id", None)
+            or getattr(config, "owner_user_id", None))
+    return engine, config.owner_user_id, user
+
+
+def run_release_test_override(args, *, out, now, factory) -> int:
+    import hmac
+    engine, owner, user = (factory or build_release_test_request)()
+    if not owner:
+        print("Refused: OWNER_USER_ID is not configured.", file=out)
+        return 3
+    if not hmac.compare_digest(str(args.owner_id).encode("utf-8"), str(owner).encode("utf-8")):
+        print("Refused: --owner-id must match OWNER_USER_ID.", file=out)
+        return 3
+    print("This files ONE test release: it spends one token and releases your lock despite supervision or a penalty window. The running bot "
+          "carries it out only when Chaster confirms the barrier (locked, keyholder, frozen) in your free time, with execution on and the halt "
+          "clear; an unused request expires after 6 hours. It never changes lock time.", file=out)
+    if not args.yes:
+        print("Refused: add --yes to file it.", file=out)
+        return 3
+    if not user:
+        print("Refused: no release user is configured.", file=out)
+        return 3
+    request_id = engine.request_owner_test(user_id=user, now=now())
+    if request_id is None:
+        print("Nothing to do: a test release is already pending.", file=out)
+        return 3
+    print(f"Filed. [request={request_id}]", file=out)
+    return 0
+
+
 def build_trust_domain_admin():
     from core.config import Config
     from trust_manager.domain_admin import TrustDomainAdmin
@@ -375,6 +417,8 @@ _DOMAIN_TEXT = {
     "not_confirmed": "Refused: add --yes to create the domain (the text above is what you consent to).",
     "invalid_input": "Refused: a domain id is 2-32 characters of a-z, 0-9 and '_' starting with a letter; name and description 1-200 characters.",
     "already_exists": "Nothing to do: that Trust domain already exists.",
+    "reset": "Reset.",
+    "not_found": "Refused: no such Trust domain.",
 }
 
 
@@ -774,7 +818,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
          config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None,
          peer_factory: Callable[[], object] | None = None, domain_factory: Callable[[], object] | None = None,
-         escalation_factory: Callable[[], tuple] | None = None) -> int:
+         escalation_factory: Callable[[], tuple] | None = None, release_test_factory: Callable[[], tuple] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -846,8 +890,15 @@ def main(argv: list[str], *, out: TextIO | None = None,
     dc.add_argument("--name", required=True)
     dc.add_argument("--description", required=True)
     dc.add_argument("--yes", action="store_true")
+    dr = dsub.add_parser("reset", help="Owner, 2026-11-13: the long-term score back to the starting value (evidence and supervision stay).")
+    dr.add_argument("domain_id")
+    dr.add_argument("--yes", action="store_true")
     for dp in dsub.choices.values():
         dp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    rt = sub.add_parser("release-test-override", help="Owner, 2026-11-13: file ONE test release that spends a token despite supervision or a "
+                                                       "penalty window; the running bot carries it out only with a confirmed barrier in free time.")
+    rt.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    rt.add_argument("--yes", action="store_true", help="confirm that this really spends a token and releases the live lock")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -1031,6 +1082,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
             print("\n".join(f"{r['domain_id']}  {r['display_name']}  active {'yes' if r['is_active'] else 'no'}  score {r['score']}  "
                             f"confidence {r['confidence']}  created {r['created_at']}" for r in rows) or "No Trust domains.", file=out)
             return 0
+        if args.domain_command == "reset":
+            from trust_manager.domain_admin import reset_explanation
+            print(reset_explanation(args.domain_id), file=out)
+            outcome, scores = admin.reset(actor=args.owner_id, domain_id=args.domain_id, confirmed=args.yes, now=now())
+            detail = f" {scores[0]:.2f} -> {scores[1]:.2f}" if scores else ""
+            print(f"{_DOMAIN_TEXT[outcome.value]}{detail} [outcome={outcome.value}]", file=out)
+            return 0 if outcome.value == "reset" else 3
         print(domain_explanation(args.domain_id, args.name, args.description), file=out)
         outcome = admin.create(actor=args.owner_id, domain_id=args.domain_id, display_name=args.name, description=args.description,
                                confirmed=args.yes, now=now())
@@ -1049,6 +1107,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
                                    confirmed=args.yes, now=now())
         print(f"{_PEER_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
         return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
+    if args.command == "release-test-override":
+        return run_release_test_override(args, out=out, now=now, factory=release_test_factory)
     if args.command == "freeze-lock":
         service = freeze_factory()
         result = service.run(actor=args.owner_id, lock_id=args.lock_id, frozen=args.state, confirmed=args.yes)

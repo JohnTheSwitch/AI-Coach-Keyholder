@@ -35,9 +35,11 @@ from release_engine.ledger import LedgerEntryType, balance, insert_entry, revers
 from release_engine.scheduler import plan_target, validate_offsets
 from schedule_windows.windows import WindowConfig, WindowKind, classify
 
-__all__ = ["ReleaseEngine", "ReleaseGates", "CommitStatus", "CommitOutcome", "ProviderState", "TOKEN_COST"]
+__all__ = ["ReleaseEngine", "ReleaseGates", "CommitStatus", "CommitOutcome", "ProviderState", "TOKEN_COST", "OWNER_TEST_VALIDITY"]
 
 TOKEN_COST = 1     # a Single Barrier release costs exactly one token
+# Owner, 2026-11-13: an owner test release that cannot happen within this time (no confirmed barrier, outside free time) expires unused.
+OWNER_TEST_VALIDITY = timedelta(hours=6)
 
 
 class CommitStatus(StrEnum):
@@ -313,6 +315,81 @@ class ReleaseEngine:
             release_decision(f"Maximum-hold backstop: {outcome.status.value}.", reason=outcome.reason, authorization_id=outcome.authorization_id,
                              barrier_frozen_since=_iso(barrier_since), max_hold_hours=self._max_hold.total_seconds() / 3600)
         return outcome
+
+    # ------------------------------------------------------------------ the owner's one-time test release (owner, 2026-11-13)
+
+    def request_owner_test(self, *, user_id: str, now: datetime) -> str | None:
+        """Files one test release request (migration 057). None when one is already pending."""
+        def write(tx: Transaction, _s: object) -> str | None:
+            self._expire_owner_tests(tx, user_id, now)
+            if tx.fetch_one("SELECT 1 FROM release_owner_requests WHERE user_id = ? AND status = 'pending'", (user_id,)):
+                return None
+            request_id = str(uuid.uuid4())
+            tx.execute("INSERT INTO release_owner_requests (id, user_id, requested_at, expires_at, status) VALUES (?, ?, ?, ?, 'pending')",
+                       (request_id, user_id, _iso(now), _iso(now + OWNER_TEST_VALIDITY)))
+            self._emit(tx, "release.owner_test_requested", {"request_id": request_id}, now)
+            return request_id
+
+        request_id = apply_transition(self._core, write=write)
+        if request_id:
+            release_decision("Owner test release requested: one token, despite supervision or a penalty window; still needs a confirmed barrier "
+                             "and the free-time window.", request_id=request_id)
+        return request_id
+
+    def has_owner_test(self, user_id: str, now: datetime) -> bool:
+        """A request still valid now; one past its time is recorded as expired here."""
+        def write(tx: Transaction, _s: object) -> bool:
+            self._expire_owner_tests(tx, user_id, now)
+            return tx.fetch_one("SELECT 1 FROM release_owner_requests WHERE user_id = ? AND status = 'pending'", (user_id,)) is not None
+
+        return bool(apply_transition(self._core, write=write))
+
+    def commit_owner_test(self, *, user_id: str, gates: ReleaseGates, now: datetime) -> CommitOutcome:
+        """The owner's test release: SPENDS exactly one token and ignores the vetoes (supervision, penalty window), but never the barrier, the window,
+        an open release or the balance. Waits (GATE_NOT_MET / WINDOW_CLOSED) while the request is still valid."""
+        def write(tx: Transaction, _s: object) -> CommitOutcome:
+            self._expire_owner_tests(tx, user_id, now)
+            request = tx.fetch_one("SELECT id FROM release_owner_requests WHERE user_id = ? AND status = 'pending'", (user_id,))
+            if request is None:
+                return CommitOutcome(status=CommitStatus.NO_PLAN, reason="no_owner_request")
+            if self._open_authorization(tx, user_id):
+                return CommitOutcome(status=CommitStatus.ALREADY_OPEN)
+            if not gates.lock_barrier_confirmed:
+                return CommitOutcome(status=CommitStatus.GATE_NOT_MET, reason="lock_state_not_confirmed")
+            if classify(self._cfg, now) is not WindowKind.DISCRETIONARY:
+                return CommitOutcome(status=CommitStatus.WINDOW_CLOSED, reason="window_closed")
+            if balance(tx, user_id) < TOKEN_COST:
+                tx.execute("UPDATE release_owner_requests SET status = 'refused', outcome = 'insufficient_tokens', decided_at = ? WHERE id = ?",
+                           (_iso(now), request["id"]))
+                return CommitOutcome(status=CommitStatus.INSUFFICIENT_TOKENS, reason="insufficient_tokens")
+            plan = tx.fetch_one("SELECT id FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,))
+            if plan is not None:
+                plan_id = plan["id"]
+                tx.execute("UPDATE release_plans SET status = 'authorized', updated_at = ? WHERE id = ?", (_iso(now), plan_id))
+            else:
+                plan_id = str(uuid.uuid4())
+                tx.execute("INSERT INTO release_plans (id, user_id, status, requirement_met_at, target_at, seed, created_at, updated_at) "
+                           "VALUES (?, ?, 'authorized', ?, ?, ?, ?, ?)", (plan_id, user_id, _iso(now), _iso(now), self._seed_factory(), _iso(now), _iso(now)))
+            auth_id = str(uuid.uuid4())
+            spend_id = insert_entry(tx, user_id=user_id, delta=-TOKEN_COST, entry_type=LedgerEntryType.SPEND, reason_code="owner_test_release",
+                                    now=now, authorization_decision_id=auth_id)
+            self._insert_authorization(tx, auth_id, plan_id, user_id, "token", spend_id, "owner test release (vetoes overridden by the owner)", now)
+            tx.execute("UPDATE release_owner_requests SET status = 'done', outcome = 'authorized', authorization_id = ?, decided_at = ? WHERE id = ?",
+                       (auth_id, _iso(now), request["id"]))
+            self._emit(tx, "release.authorized", {"authorization_id": auth_id, "kind": "token", "owner_test": True}, now)
+            return CommitOutcome(status=CommitStatus.AUTHORIZED, authorization_id=auth_id)
+
+        outcome = apply_transition(self._core, write=write)
+        if outcome.reason != "no_owner_request":
+            release_decision(f"Owner test release: {outcome.status.value}.", reason=outcome.reason, authorization_id=outcome.authorization_id,
+                             barrier_confirmed=gates.lock_barrier_confirmed, penalty_window_active=gates.penalty_window_active,
+                             supervision_active=gates.supervision_active)
+        return outcome
+
+    @staticmethod
+    def _expire_owner_tests(tx: Transaction, user_id: str, now: datetime) -> None:
+        tx.execute("UPDATE release_owner_requests SET status = 'expired', outcome = 'expired', decided_at = ? "
+                   "WHERE user_id = ? AND status = 'pending' AND expires_at <= ?", (_iso(now), user_id, _iso(now)))
 
     # ------------------------------------------------------------------ provider progress
 

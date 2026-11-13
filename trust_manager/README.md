@@ -36,6 +36,13 @@ below), 13, 14**.
   (every recalculation, even a purely confidence-driven one with
   `delta_score=0` — 8's "even when `delta=0`").
 
+## The owner's reset of the long-term score (owner, 2026-11-13)
+
+`python -m cli trust-domain reset <domain> --owner-id <id> --yes` (`TrustDomainAdmin.reset`): the consent record first, then
+`reset_score_by_owner()` sets the long-term score back to the starting value (0.60), keeping confidence, evidence and incidents. A deliberate,
+consented exception to the 0.15 per-recalculation cap, recorded as a `manual` recalculation and announced as `trust_domain.recalculated`.
+Short-term Trust and Supervision Mode are untouched (they come from the evidence).
+
 ## Short-term Trust (owner, 2026-11-13)
 
 `short_term.py`: the share of good evidence among all evidence of a domain in a rolling window (`good / (good + bad)`, effective weights,

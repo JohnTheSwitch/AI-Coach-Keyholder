@@ -206,7 +206,7 @@ class TestBackstop:
 
     def test_the_backstop_still_ignores_vetoes(self) -> None:
         text = (ROOT / "release_engine" / "service.py").read_text(encoding="utf-8")
-        body = text[text.index("def commit_backstop"):text.index("# ------------------------------------------------------------------ provider progress")]
+        body = text[text.index("def commit_backstop"):text.index("# ------------------------------------------------------------------ the owner's one-time test release")]
         assert "hard_veto" not in body and "penalty_window_active" not in body
 
 

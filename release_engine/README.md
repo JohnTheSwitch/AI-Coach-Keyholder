@@ -45,6 +45,10 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
   Live, 2026-11-13: the stored lock reading predated the system's own refreeze ("not frozen"), nothing refreshed it while supervision held
   releases, and the backstop pre-checked that reading, so it could never fire. The backstop now refreshes the reading itself whenever it is
   older than 6 hours (`_BACKSTOP_RECHECK`), retrying a failed refresh at most hourly.
+- **The owner's test release** (owner, 2026-11-13; migration 057 `release_owner_requests`): `python -m cli release-test-override --owner-id <id>
+  --yes` files ONE request; the running bot's tick carries it out with `commit_owner_test()`: spends exactly one token (`owner_test_release`)
+  and releases despite supervision or a penalty window, but only with a confirmed barrier, in the free-time window, with execution on and the
+  halt clear. No token refuses it; an unused request expires after 6 hours (`OWNER_TEST_VALIDITY`). The usual refreeze follows the session.
 - **Never spends for a release that cannot happen:** nothing is committed unless the execution plane is active and the
   runtime halt is clear (planning-only otherwise). A decision that will never execute (older than ~16 minutes) is undone:
   the spend is reversed.

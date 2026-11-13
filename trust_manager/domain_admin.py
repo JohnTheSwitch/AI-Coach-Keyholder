@@ -24,7 +24,7 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from trust_manager.repository import DEFAULT_NEW_DOMAIN_CONFIDENCE, DEFAULT_NEW_DOMAIN_SCORE, TrustManager
 
-__all__ = ["DomainAdminOutcome", "TrustDomainAdmin", "domain_explanation"]
+__all__ = ["DomainAdminOutcome", "TrustDomainAdmin", "domain_explanation", "reset_explanation"]
 
 _DOMAIN_ID = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 
@@ -36,6 +36,14 @@ class DomainAdminOutcome(StrEnum):
     NOT_CONFIRMED = "not_confirmed"
     INVALID_INPUT = "invalid_input"
     ALREADY_EXISTS = "already_exists"
+    RESET = "reset"
+    NOT_FOUND = "not_found"
+
+
+def reset_explanation(domain_id: str) -> str:
+    return (f"Reset the long-term Trust score of '{domain_id}' to the starting value ({DEFAULT_NEW_DOMAIN_SCORE:.2f}). Evidence, incidents, "
+            "short-term Trust and Supervision Mode stay as they are. The check-in level, hygiene allowance, Penalty Window length and the token "
+            "pool's Trust part follow the new score.")
 
 
 def domain_explanation(domain_id: str, display_name: str, description: str) -> str:
@@ -62,6 +70,27 @@ class TrustDomainAdmin:
             return [dict(r) for r in tx.fetch_all(
                 "SELECT d.domain_id, d.display_name, d.is_active, d.created_at, s.score, s.confidence FROM trust_domains d "
                 "LEFT JOIN trust_domain_state s ON s.domain_id = d.domain_id ORDER BY d.created_at")]
+
+    def reset(self, *, actor: str, domain_id: str, confirmed: bool, now: datetime) -> tuple[DomainAdminOutcome, tuple[float, float] | None]:
+        """Owner, 2026-11-13: the long-term score back to the starting value, with the consent written FIRST. Evidence, incidents, short-term Trust
+        and Supervision Mode are untouched."""
+        refusal = self.authorize(actor)
+        if refusal is not None:
+            return refusal, None
+        if confirmed is not True:
+            return DomainAdminOutcome.NOT_CONFIRMED, None
+        if not isinstance(domain_id, str) or self._trust.get_domain_state(domain_id) is None:
+            return DomainAdminOutcome.NOT_FOUND, None
+        consent_id = str(uuid.uuid4())
+
+        def write(tx: Transaction, _s: object) -> None:
+            tx.execute(
+                "INSERT INTO consent_log (id, created_at, target_type, target_id, target_version, action, decision_result_id, "
+                "explanation_shown, user_comment) VALUES (?, ?, 'trust_algorithm', ?, NULL, 'approved', NULL, ?, ?)",
+                (consent_id, _iso(now), f"trust_domain:{domain_id}", reset_explanation(domain_id), "owner cli: trust-domain reset"))
+
+        apply_transition(self._core, write=write)
+        return DomainAdminOutcome.RESET, self._trust.reset_score_by_owner(domain_id, consent_id=consent_id, now=now)
 
     def create(self, *, actor: str, domain_id: str, display_name: str, description: str, confirmed: bool,
                now: datetime) -> DomainAdminOutcome:

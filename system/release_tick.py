@@ -146,6 +146,9 @@ class ReleaseEnginePeriodicTask:
         if self._maybe_refreeze(now, report):
             return report
 
+        if self._maybe_owner_test(now, report):
+            return report
+
         veto = ReleaseGates(
             lock_barrier_confirmed=True, penalty_window_active=bool(self._penalty_active()),
             supervision_active=bool(self._supervision_active()),
@@ -268,6 +271,19 @@ class ReleaseEnginePeriodicTask:
         if age.total_seconds() < 0 or age > LOCK_DATA_MAX_AGE:
             return False
         return obs.status is ChasterProviderStatus.LOCKED and obs.has_keyholder is True and obs.is_frozen is False
+
+    def _maybe_owner_test(self, now: datetime, report: TickReport) -> bool:
+        """The owner's one-time test release (`cli release-test-override`, owner 2026-11-13): spends a token despite the vetoes, with every other
+        gate intact. Returns True when it released."""
+        if not self._can_execute or self._halted() or not self._engine.has_owner_test(self._user, now):
+            return False
+        obs = self._fresh_observation(now)
+        outcome = self._engine.commit_owner_test(user_id=self._user, gates=self._gates(obs, now), now=now)
+        report.add(f"owner_test:{outcome.status.value}")
+        if outcome.status is CommitStatus.AUTHORIZED:
+            self._record_unfreeze(outcome.authorization_id, "Owner test release", now)
+            return True
+        return False
 
     def _maybe_backstop(self, now: datetime, report: TickReport) -> None:
         if not self._can_execute or self._halted() or self._engine.open_authorizations(self._user):

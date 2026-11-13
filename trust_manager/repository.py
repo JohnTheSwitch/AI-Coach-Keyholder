@@ -543,6 +543,29 @@ class TrustManager:
             return None
         return self._row_to_assessment(row)
 
+    def reset_score_by_owner(self, domain_id: str, *, consent_id: str, now: datetime) -> tuple[float, float] | None:
+        """Owner, 2026-11-13 (a new lock, a new start): the long-term score goes back to the starting value (DEFAULT_NEW_DOMAIN_SCORE); confidence,
+        evidence and incidents stay. A deliberate, consented exception to the 0.15 per-recalculation cap (TI19), recorded as a 'manual'
+        recalculation with the consent id and announced like any recalculation. Reached only from `trust-domain reset` (owner, --yes).
+        Returns (previous, new) or None for an unknown domain."""
+        def write(tx: Transaction, _s: object):
+            state = tx.fetch_one("SELECT score, confidence FROM trust_domain_state WHERE domain_id = ?", (domain_id,))
+            if state is None:
+                return None
+            previous, confidence = float(state["score"]), float(state["confidence"])
+            tx.execute("UPDATE trust_domain_state SET score = ?, trend = 'stable', last_recalculated_at = ?, last_relevant_event_at = ? WHERE domain_id = ?",
+                       (DEFAULT_NEW_DOMAIN_SCORE, _iso(now), _iso(now), domain_id))
+            tx.execute("INSERT INTO trust_recalculations (id, domain_id, created_at, previous_score, new_score, previous_confidence, new_confidence, "
+                       "triggered_by, explanation) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?)",
+                       (new_id(), domain_id, _iso(now), previous, DEFAULT_NEW_DOMAIN_SCORE, confidence, confidence,
+                        f"Owner reset of the long-term score to the starting value (consent {consent_id}); evidence and incidents kept."))
+            write_event(tx, DomainEvent(event_type="trust_domain.recalculated", source_module="trust_manager", payload={
+                "domain_id": domain_id, "previous_score": previous, "new_score": DEFAULT_NEW_DOMAIN_SCORE, "previous_confidence": confidence,
+                "new_confidence": confidence, "triggered_by": "manual"}, occurred_at=now))
+            return previous, DEFAULT_NEW_DOMAIN_SCORE
+
+        return apply_transition(self._core, write=write)
+
     def get_short_term_trust(self, domain_id: str, *, now: datetime, window=None):
         """Owner, 2026-11-13: short-term Trust (trust_manager/short_term.py) for owner reports and the CLI. Never shown to the wearer."""
         from trust_manager.short_term import DEFAULT_WINDOW, determine_short_term_trust_in_transaction
