@@ -68,3 +68,21 @@ Phase J2: check-in escalation no longer confirms anything. Three missed check-in
 
 Phase J2: `open_release_check_in()` opens the on-demand check-in of the Communication-First release (`RELEASE_SLOT`, once per local day). A reply
 counts whatever its verdict, and left unanswered it expires as `skipped`, never `missed`. See `release_engine/README.md`.
+
+## Photo check-ins (owner, 2026-11-13; migration 053, `photo_check_ins.py`)
+
+Some check-ins ask for a verification picture in Chaster instead of a text answer: a text answer only shows the wearer was at their phone, a
+picture with Chaster's code shows the lock is on.
+
+- **Consent:** only after the wearer sends `photo check-ins on`; `photo check-ins off` stops them at any time and closes an open one as
+  `skipped` (never a miss). Stored in `photo_check_in_consent`; events `supervision.photo_check_ins_consented` / `_revoked`.
+- **How often:** per week by Trust level (`PHOTO_CHECK_INS_PER_WEEK`): level 4: 1, level 3: 2, level 2: 3, level 1: 4. Each local day is drawn
+  once (`last_drawn_date`, so a restart never redraws), the week's remainder spread over its remaining days; a skipped one (PC off at its time)
+  does not count and can come back later in the week. Level 4 gets photo check-ins although it gets no text ones.
+- **When:** slot `PHOTO_SLOT` (50), inside the discretionary window, with the whole `PHOTO_RESPONSE_TIMEOUT` (2 hours) inside it too. A photo
+  check-in neither waits for nor holds back a text one; a text reply never answers it.
+- **The answer:** the bot reads only the submission times of the verification pictures on the connected account's locked locks
+  (`PeerReviewReader.picture_times`, every 5 minutes while one is open). A picture between the prompt and the deadline (2 minutes of clock skew
+  allowed) answers it, and the wearer gets "Got your verification picture". None by the deadline is `missed`, with the same `check_in.missed`
+  event and consequence as a text check-in (Trust and warnings only). Pictures that cannot be read are never a miss: `skipped` after 2 more hours.
+- The picture itself, its code and its review stay on Chaster; a rejection goes through the community review watch as before.

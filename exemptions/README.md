@@ -17,3 +17,23 @@ The first live hygiene opening left no line in any log. Every step now goes to `
 
 Live, "You're not worried about me misusing the hygiene opening?" got a new opening offered. `is_hygiene_request` now needs a request word ("can I",
 "I need", "please", Czech "chci", "potřebuju", "prosím", ...) or the phrase nearly on its own; talk about an opening goes to the conversation.
+
+## Decided by the system, on the wearer's reason (owner, 2026-11-13; migration 054, `judge.py`)
+
+Live, the wearer was also the account that got the keyholder's Approve button, and approved their own 24-hour exemption. Now, like the detectors'
+judge (infractions/judge.py):
+
+- After the category and the length (now also 3 and 12 hours: "till evening" had to be 24), the bot asks what it is for. The next message is the
+  reason (`ApplicationService.exemption_reason`, right after commands, before the status matchers and the model: live, "I need to be unlocked till
+  evening" got the lock status and "I need 10 hours" the model's own refusal).
+- **Code first:** the health category, or a reason mentioning health, pain, an injury or an emergency, is approved without any model (3.9, 3.10).
+- **Then the model** answers approve / decline / unclear. Unclear gets exactly one follow-up question; unclear again is a decline. A request within
+  24 hours of a declined one is judged as an appeal and must bring something new. The reason is data, never instructions.
+- A model failure is never a decline: the request stays `requested`, is retried on every pass, and after an hour is closed as `unjudged` ("ask again").
+- An extra hygiene opening past the week's planned breaks goes the same way ("Ask for an extra one" -> why -> the judge).
+- Like the button, the judge reads only the request (I7), plus the reason of a decline in the last day for an appeal.
+- `decide()` refuses a request's own wearer, also without a judge. A separate keyholder (OWNER_USER_ID not the wearer) only gets a note of the ruling.
+- `decided_by`: `judge`, `judge_health` or `unjudged`; `verdict_reason` is what the wearer was told.
+- **Two appeals** (owner, 2026-11-13, "2 appeals for any judge"): each new request within 24 hours of a declined one is an appeal, judged with
+  all the declined reasons of that day. After two declined appeals, a further request that day is declined in code without the model, except a
+  health or safety need, which is never held back.

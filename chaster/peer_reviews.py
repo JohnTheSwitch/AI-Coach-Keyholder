@@ -35,7 +35,7 @@ from chaster.token_manager import (
 logger = logging.getLogger("ai_coach_keyholder.chaster.peer_reviews")
 
 __all__ = ["ReviewSource", "ReviewStatus", "PeerReviewObservation", "PeerReviewReport", "PeerReviewReader",
-           "parse_task_history", "parse_verification_pictures"]
+           "parse_task_history", "parse_verification_pictures", "parse_picture_times"]
 
 _REVIEW_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # A lock without the tasks extension answers 404 to its history, and a lock the account only wears without picture verification answers 403
@@ -115,6 +115,23 @@ def parse_verification_pictures(raw: Iterable, lock_id: str) -> list[PeerReviewO
     return found
 
 
+def parse_picture_times(raw: Iterable) -> list[datetime]:
+    """Photo check-ins (owner, 2026-11-13): only WHEN each verification picture was submitted, reviewed or not. Nothing else is kept. An entry
+    without a well-formed `submittedAt` is skipped."""
+    found = []
+    for entry in raw or ():
+        value = entry.get("submittedAt") if isinstance(entry, dict) else None
+        if not isinstance(value, str):
+            continue
+        try:
+            at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if at.tzinfo is not None:
+            found.append(at)
+    return found
+
+
 _SOURCES = (
     (ReviewSource.TASKS, "get_task_history", parse_task_history),
     (ReviewSource.VERIFICATION_PICTURE, "get_verification_pictures", parse_verification_pictures),
@@ -139,6 +156,26 @@ class PeerReviewReader:
                 elif problem:
                     report.problems.append(f"{lock_id} {source.value}: {problem}")
         return report
+
+    def picture_times(self, *, user_id: str, lock_ids: Iterable[str], now: datetime) -> list[datetime] | None:
+        """Submission times of the verification pictures on these locks. None when no lock could be read at all (unknown, never "no picture");
+        a lock without picture verification (403 / 404) simply has none."""
+        times: list[datetime] = []
+        readable = False
+        for lock_id in dict.fromkeys(lock_ids):
+            try:
+                raw = self._tokens.call_with_token(user_id, now=now, operation=lambda token, lock_id=lock_id: self._client.get_verification_pictures(
+                    access_token=token, lock_id=lock_id))
+            except ChasterLockApiError as exc:
+                if f"api_error:{exc.status_code}" in _NOT_ON_THIS_LOCK:
+                    readable = True
+                continue
+            except Exception:
+                logger.info("Verification pictures of lock %s could not be read for a photo check-in.", lock_id, exc_info=True)
+                continue
+            readable = True
+            times.extend(parse_picture_times(raw))
+        return times if readable else None
 
     def _read_one(self, user_id, lock_id, now, method, parse, report) -> str | None:
         fetch = getattr(self._client, method)

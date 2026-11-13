@@ -116,6 +116,11 @@ CHECK_IN_RECEIVED_WITHOUT_MODEL = "Got your check-in answer, it's recorded. I ca
 # Live, 2026-11-12: a confession of edging during a hygiene opening got "Good for you, taking care of your hygiene needs", and an earlier one was
 # saved to memory the wrong way round ("without edging"). On a turn that reads as owning up, the model gets this note as the last thing before the
 # message, the turn is plain (no goal proposal, nothing saved to memory) and the card under the reply is what records it.
+PHOTO_UNAVAILABLE = "Photo check-ins are not available on this bot."
+PHOTO_ON = ("Photo check-ins are on. Now and then, at a random moment in your free time, I'll ask for a verification picture in Chaster, "
+            "with 2 hours to take it. The picture stays on Chaster and its community review; I only see that it arrived. No picture by the "
+            "deadline counts as a missed check-in. How often depends on trust: fewer as you earn it. `photo check-ins off` stops them any time.")
+
 CONFESSION_NOTE = (
     "THIS MESSAGE: the user is owning up to using a hygiene opening for something other than hygiene (such as edging or touching themselves). "
     "That broke the rule of the opening. Never praise it and never call it hygiene or self-care. React as their keyholder: say plainly what they "
@@ -172,6 +177,10 @@ class ApplicationService:
         self.explanations = None
         # Owner, 2026-11-12 (option A): (user_id, text, now) -> (card text, buttons) or None, when the wearer seems to own up to something.
         self.self_reports = None
+        # Photo check-ins (owner, 2026-11-13): supervision.photo_check_ins.PhotoCheckInSwitch, set by the bot when they can work at all.
+        self.photo_check_ins = None
+        # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
+        self.exemption_reason = None
         # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
         self.confession_check = None
         self._clock = clock                                  # only a button press needs it: a message brings its own time
@@ -278,6 +287,17 @@ class ApplicationService:
             result = self.router.route(incoming.text, context)
             if result.matched:
                 return result.outgoing
+
+            # Owner, 2026-11-13: after "what is it for?" the next message is the reason for an exemption, decided by the judge. Live, "I need to be
+            # unlocked till evening" got the lock status and "I need 10 hours" got the model's own refusal.
+            if self.exemption_reason is not None:
+                try:
+                    reason_reply = self.exemption_reason(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The exemption reason could not be taken; the message is handled normally.")
+                    reason_reply = None
+                if reason_reply is not None:
+                    return reason_reply
 
             # Deterministic guardrail, BEFORE any model: a natural-language
             # question about the user's Chaster lock is answered by the
@@ -488,6 +508,9 @@ class ApplicationService:
         self.router.register("conditioning off", "Stop Progressive Conditioning from increasing (it stays at its current level)",
                              self._handle_conditioning_off)
         self.router.register("conditioning on", "Let Progressive Conditioning continue", self._handle_conditioning_on)
+        self.router.register("photo check-ins", "Show whether photo check-ins are on", self._handle_photo_status)
+        self.router.register("photo check-ins on", "Agree to photo check-ins: now and then a verification picture in Chaster", self._handle_photo_on)
+        self.router.register("photo check-ins off", "Stop photo check-ins (an open one never counts as missed)", self._handle_photo_off)
         self.router.register_family("conditioning", invalid_handler=self._handle_conditioning_status)
 
         self.router.register("channel status", "Show where the bot sends its messages (Discord or Chaster chat)", self._handle_channel_status)
@@ -1231,6 +1254,32 @@ class ApplicationService:
             return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
         self._conditioning.set_enabled(ctx.user.id, False, now=ctx.now)
         return OutgoingMessage(text="Progressive Conditioning is off. It stays at its current level and will not increase.")
+
+    def _photo_switch(self, ctx: RequestContext):
+        switch = self.photo_check_ins
+        return switch if switch is not None and switch.user_id == ctx.user.id else None
+
+    def _handle_photo_status(self, ctx: RequestContext) -> OutgoingMessage:
+        switch = self._photo_switch(ctx)
+        if switch is None:
+            return OutgoingMessage(text=PHOTO_UNAVAILABLE)
+        if switch.consent.is_on(ctx.user.id):
+            return OutgoingMessage(text="Photo check-ins are on. `photo check-ins off` stops them.")
+        return OutgoingMessage(text="Photo check-ins are off. `photo check-ins on` starts them.")
+
+    def _handle_photo_on(self, ctx: RequestContext) -> OutgoingMessage:
+        switch = self._photo_switch(ctx)
+        if switch is None:
+            return OutgoingMessage(text=PHOTO_UNAVAILABLE)
+        switch.consent.set(ctx.user.id, True, now=ctx.now)
+        return OutgoingMessage(text=PHOTO_ON)
+
+    def _handle_photo_off(self, ctx: RequestContext) -> OutgoingMessage:
+        switch = self._photo_switch(ctx)
+        if switch is None:
+            return OutgoingMessage(text=PHOTO_UNAVAILABLE)
+        switch.consent.set(ctx.user.id, False, now=ctx.now)
+        return OutgoingMessage(text="Photo check-ins are off. An open one is closed and never counts as missed.")
 
     def _handle_conditioning_on(self, ctx: RequestContext) -> OutgoingMessage:
         if self._conditioning is None:

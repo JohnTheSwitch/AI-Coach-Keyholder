@@ -414,14 +414,18 @@ class TestTheSystemDecides:
         w.advance(NOW + GRACE * 3)
         assert w.incidents() == []
 
-    def test_a_rejected_appeal_counts_at_once_and_only_one_appeal(self, tmp_path) -> None:
+    def test_two_appeals_then_it_counts_at_once(self, tmp_path) -> None:
+        # Owner, 2026-11-13: two appeals for any judge.
         w = World(tmp_path)
         signal = self._signal(w)
-        w.model.replies = [verdict("not_explained"), verdict("not_explained")]
+        w.model.replies = [verdict("not_explained"), verdict("not_explained"), verdict("not_explained")]
         self._answer(w, signal, "I just felt like it.")
-        assert "doesn't change" in self._answer(w, signal, "Still felt like it.", at=NOW + timedelta(hours=2), action="appeal").text
+        first = self._answer(w, signal, "Still felt like it.", at=NOW + timedelta(hours=2), action="appeal")
+        assert "one more appeal" in first.text and [a.label for a in first.actions][0] == "Appeal" and w.incidents() == []
+        assert "doesn't change" in self._answer(w, signal, "Really.", at=NOW + timedelta(hours=2, minutes=30), action="appeal").text
         assert w.incidents()[0]["confirmation"] == "confirmed"
-        assert w.dm.press(discord_user_id="42", action="appeal", ident=signal["id"]).text.startswith("You can appeal once")
+        assert "Still felt like it." in w.model.prompts[2][1] and "Really." in w.model.prompts[2][1]
+        assert w.dm.press(discord_user_id="42", action="appeal", ident=signal["id"]).text.startswith("You can appeal only before it counts")
         assert "Do not simply believe it" in w.model.prompts[1][0] and "APPEAL" in w.model.prompts[1][1]
 
     def test_silence_about_a_hygiene_break_never_counts(self, tmp_path) -> None:

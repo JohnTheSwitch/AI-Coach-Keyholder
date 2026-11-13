@@ -49,6 +49,17 @@ from supervision.checkin_evaluator import RUBRIC_VERSION, Verdict
 from supervision.checkin_schedule import slots_for_day
 from supervision.escalation import CheckInEscalation
 from supervision.models import TrustLevel, check_ins_per_day, trust_level
+from supervision.photo_check_ins import (
+    PHOTO_CHECK_INS_PER_WEEK,
+    PHOTO_CLOCK_SKEW,
+    PHOTO_POLL,
+    PHOTO_RECEIVED,
+    PHOTO_RESPONSE_TIMEOUT,
+    PHOTO_SLOT,
+    PHOTO_UNKNOWN_LIMIT,
+    PhotoCheckInConsent,
+    photo_prompt,
+)
 
 logger = logging.getLogger("ai_coach_keyholder.supervision.checkins")
 
@@ -133,6 +144,11 @@ class CheckInService:
         # Phase J3: `prompt_suffix(now)`, set by the composition when the coach is on: today's commitment and the invitation to make the next one. Scheduled
         # check-ins only; the release check-in keeps the owner's wording. A failure leaves the plain question.
         self.prompt_suffix: Callable[[datetime], str] | None = None
+        # Photo check-ins (owner, 2026-11-13; supervision/photo_check_ins.py): `photo_times(now)` returns the submission times of the wearer's
+        # verification pictures, or None when they cannot be read. Without it, or without the wearer's consent, there are none.
+        self.photo_times: Callable[[datetime], list[datetime] | None] | None = None
+        self.photo_consent = PhotoCheckInConsent(self.db_path, core=self._core)
+        self._photo_checked: dict[str, datetime] = {}
 
     # ------------------------------------------------------------------ driver
 
@@ -142,9 +158,11 @@ class CheckInService:
         if self._is_paused(now):
             self._close_open_for_pause(now)
             return
+        self._check_photos(now)
         self._apply_deadlines(now)
         self._schedule_today(now)
         self._send_due(now)
+        self._schedule_photo(now)       # after the sends, so an overdue one from an earlier day is already skipped and does not count
         if self._escalation is not None:
             try:
                 self._escalation.run(now)
@@ -192,7 +210,7 @@ class CheckInService:
 
         def write(tx: Transaction, _s: object) -> bool:
             row = tx.fetch_one(
-                "SELECT * FROM check_ins WHERE user_id = ? AND ("
+                "SELECT * FROM check_ins WHERE user_id = ? AND kind IS NULL AND ("
                 " (status = 'sent' AND deadline_at >= ?) OR (status = 'insufficient_pending' AND follow_up_until >= ?)"
                 " OR status = 'responded') ORDER BY due_at DESC LIMIT 1",
                 (self._user, _iso(now), _iso(now)),
@@ -278,7 +296,7 @@ class CheckInService:
         def write(tx: Transaction, _s: object) -> int:
             # Level improved (or is now 4): unsent slots beyond the new count are skipped.
             tx.execute("UPDATE check_ins SET status = 'skipped', updated_at = ? WHERE user_id = ? AND local_date = ? "
-                       "AND status = 'scheduled' AND slot_index >= ?", (_iso(now), self._user, local_date.isoformat(), n))
+                       "AND status = 'scheduled' AND kind IS NULL AND slot_index >= ?", (_iso(now), self._user, local_date.isoformat(), n))
             made = 0
             for index, due in enumerate(slots_for_day(self._cfg, local_date, n, self._rand)):
                 if due <= now + timedelta(minutes=1):
@@ -300,7 +318,8 @@ class CheckInService:
         with self._core.transaction() as tx:
             due = tx.fetch_all("SELECT * FROM check_ins WHERE user_id = ? AND status = 'scheduled' AND due_at <= ? "
                                "ORDER BY due_at", (self._user, _iso(now)))
-            awaiting = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND status IN "
+            # A photo check-in is answered in Chaster, not by a text reply, so it neither waits for nor holds back a text check-in.
+            awaiting = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND kind IS NULL AND status IN "
                                     "('sent', 'responded', 'insufficient_pending', 'sending')", (self._user,))
             answered = tx.fetch_one("SELECT MAX(responded_at) AS at FROM check_ins WHERE user_id = ? AND responded_at IS NOT NULL", (self._user,))["at"]
             today = self._cfg.local(now).date().isoformat()
@@ -312,10 +331,15 @@ class CheckInService:
         late_ok = None if later_today else next((r["id"] for r in reversed(due) if r["local_date"] == today), None)
         for row in due:
             too_late = now - _parse_iso(row["due_at"]) > MAX_LATE and row["id"] != late_ok
-            if too_late or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or recently_answered:
+            photo = row["kind"] == "photo"
+            if too_late or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or (recently_answered and not photo) \
+                    or (photo and not self._photos_on()):
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
-            if awaiting is not None:            # one open check-in at a time; this one waits (or is skipped later)
+            if photo:
+                self._send_photo(row, now)
+                continue
+            if awaiting is not None:            # one open text check-in at a time; this one waits (or is skipped later)
                 continue
             level = self._level() or TrustLevel(int(row["level"]))
             prompt = PROMPTS.get(level)
@@ -339,6 +363,123 @@ class CheckInService:
                 self._cas(row["id"], ("sending",), "undeliverable", now)
             else:
                 self._cas(row["id"], ("sending",), "needs_review", now)
+
+    # ------------------------------------------------------------------ photo check-ins (supervision/photo_check_ins.py)
+
+    @property
+    def user_id(self) -> str:
+        return self._user
+
+    def _photos_on(self) -> bool:
+        return self.photo_times is not None and self.photo_consent.is_on(self._user)
+
+    def _schedule_photo(self, now: datetime) -> None:
+        """Once per local day: whether today gets a photo check-in. The week's remaining number is spread over its remaining days, so a week
+        ends with about PHOTO_CHECK_INS_PER_WEEK for the current level. A skipped one does not count, so it can come back on a later day."""
+        if not self._photos_on():
+            return
+        level = self._level()
+        if level is None:
+            return
+        local_day = self._cfg.local(now).date()
+        day = local_day.isoformat()
+        if self.photo_consent.drawn_on(self._user, day):
+            return
+        week_start = (local_day - timedelta(days=local_day.weekday())).isoformat()
+        days_left = 7 - local_day.weekday()
+
+        def write(tx: Transaction, _s: object) -> str | None:
+            if tx.fetch_one("SELECT last_drawn_date FROM photo_check_in_consent WHERE user_id = ?", (self._user,))["last_drawn_date"] == day:
+                return None
+            done = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND kind = 'photo' AND local_date >= ? AND local_date < ? "
+                                "AND status != 'skipped'", (self._user, week_start, day))["n"]
+            remaining = PHOTO_CHECK_INS_PER_WEEK[level] - int(done)
+            due = None
+            if remaining > 0 and self._rand() < remaining / days_left:
+                for _ in range(10):
+                    slots = slots_for_day(self._cfg, local_day, 2, self._rand)
+                    if not slots:
+                        break
+                    candidate = slots[min(len(slots) - 1, int(self._rand() * len(slots)))]
+                    if candidate > now + timedelta(minutes=1) and classify(self._cfg, candidate + PHOTO_RESPONSE_TIMEOUT) is WindowKind.DISCRETIONARY:
+                        due = candidate
+                        break
+            if due is not None and not tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND local_date = ? AND slot_index = ?",
+                                                    (self._user, day, PHOTO_SLOT)):
+                tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, kind, created_at, updated_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 'photo', ?, ?)",
+                           (str(uuid.uuid4()), self._user, day, PHOTO_SLOT, int(level), _iso(due), _iso(now), _iso(now)))
+            self.photo_consent.mark_drawn(tx, self._user, day, now)
+            return _iso(due) if due is not None else "none"
+
+        drawn = apply_transition(self._core, write=write)
+        if drawn is not None:       # the decision log says that a day was drawn, never when the picture will be asked for
+            decision("check_ins", "Photo check-in drawn for today." if drawn != "none" else "No photo check-in today.", level=int(level))
+
+    def _send_photo(self, row, now: datetime) -> None:
+        deadline = now + PHOTO_RESPONSE_TIMEOUT
+        prompt = photo_prompt(self._cfg.local(deadline).strftime("%H:%M"))
+        if not self._cas(row["id"], ("scheduled",), "sending", now, prompt_text=prompt, event="check_in.prompt_due"):
+            return
+        try:
+            outcome = self._sender.send(user_id=self._user, text=prompt)
+        except Exception:
+            logger.exception("Photo check-in delivery raised; outcome unknown.")
+            outcome = SendOutcome.UNKNOWN
+        decision("check_ins", f"Photo check-in sent: {outcome.value}.", check_in_id=row["id"],
+                 answer_by=_iso(deadline) if outcome is SendOutcome.DELIVERED else None)
+        if outcome is SendOutcome.DELIVERED:
+            self._cas(row["id"], ("sending",), "sent", now, sent_at=_iso(now), deadline_at=_iso(deadline))
+        elif outcome is SendOutcome.UNDELIVERABLE:
+            self._cas(row["id"], ("sending",), "undeliverable", now)
+        else:
+            self._cas(row["id"], ("sending",), "needs_review", now)
+
+    def _read_photo_times(self, now: datetime) -> list[datetime] | None:
+        if self.photo_times is None:
+            return None
+        try:
+            return self.photo_times(now)
+        except Exception:
+            logger.exception("Reading the verification pictures failed; the photo check-in stays open.")
+            return None
+
+    def _check_photos(self, now: datetime) -> None:
+        """An open photo check-in is answered by a picture submitted between the prompt and the deadline. Past the deadline with none it is
+        missed; when the pictures cannot be read it is never a miss (skipped after PHOTO_UNKNOWN_LIMIT)."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT id, due_at, sent_at, deadline_at FROM check_ins WHERE user_id = ? AND kind = 'photo' AND status = 'sent'",
+                                (self._user,))
+        for row in rows:
+            sent, deadline = _parse_iso(row["sent_at"]), _parse_iso(row["deadline_at"])
+            past = now > deadline
+            last = self._photo_checked.get(row["id"])
+            if last is not None and now - last < PHOTO_POLL and not (past and last <= deadline):    # always one read right after the deadline
+                continue
+            times = self._read_photo_times(now)
+            self._photo_checked[row["id"]] = now
+            if times is not None:
+                hits = sorted(t for t in times if sent - PHOTO_CLOCK_SKEW <= t <= deadline + PHOTO_CLOCK_SKEW)
+                if hits:
+                    if self._cas(row["id"], ("sent",), "answered", now, responded_at=_iso(hits[0])):
+                        decision("check_ins", "Photo check-in answered: a verification picture arrived in time.", check_in_id=row["id"])
+                        self._photo_checked.pop(row["id"], None)
+                        try:
+                            self._sender.send(user_id=self._user, text=PHOTO_RECEIVED)
+                        except Exception:
+                            logger.exception("The photo check-in thanks could not be sent.")
+                    continue
+            if not past:
+                continue
+            if times is None:
+                if now - deadline > PHOTO_UNKNOWN_LIMIT and self._cas(row["id"], ("sent",), "skipped", now):
+                    decision("check_ins", "Photo check-in skipped: the pictures could not be read, so it is never a miss.", check_in_id=row["id"])
+                    self._photo_checked.pop(row["id"], None)
+                continue
+            streak = self._miss_streak(row["id"], row["due_at"])
+            if self._cas(row["id"], ("sent",), "missed", now, event="check_in.missed", payload={"streak": streak}):
+                decision("check_ins", "Photo check-in missed: no verification picture by the deadline.", check_in_id=row["id"], streak=streak)
+                self._photo_checked.pop(row["id"], None)
 
     def _suffix(self, now: datetime) -> str:
         if self.prompt_suffix is None:
@@ -370,7 +511,8 @@ class CheckInService:
 
     def _apply_deadlines(self, now: datetime) -> None:
         with self._core.transaction() as tx:
-            missed = tx.fetch_all("SELECT id, due_at, slot_index FROM check_ins WHERE user_id = ? AND status = 'sent' AND deadline_at < ?",
+            missed = tx.fetch_all("SELECT id, due_at, slot_index FROM check_ins WHERE user_id = ? AND status = 'sent' AND kind IS NULL "
+                                  "AND deadline_at < ?",
                                   (self._user, _iso(now)))
             insufficient = tx.fetch_all("SELECT id FROM check_ins WHERE user_id = ? AND status = 'insufficient_pending' "
                                         "AND follow_up_until < ?", (self._user, _iso(now)))
@@ -409,7 +551,7 @@ class CheckInService:
 
     def _cas(self, check_in_id: str, from_statuses: tuple[str, ...], to_status: str, now: datetime,
              event: str | None = None, payload: dict | None = None, **columns: str | None) -> bool:
-        allowed = {"prompt_text", "sent_at", "deadline_at", "verdict", "rubric_version", "follow_up_until"}
+        allowed = {"prompt_text", "sent_at", "deadline_at", "verdict", "rubric_version", "follow_up_until", "responded_at"}
         assert set(columns) <= allowed, set(columns) - allowed
         assignments = ", ".join(f"{c} = ?" for c in columns)
         marks = ",".join("?" for _ in from_statuses)

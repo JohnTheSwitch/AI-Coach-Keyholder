@@ -836,6 +836,17 @@ def main() -> None:
 
     detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
                                 connections=chaster_connections, vacation=wiring.vacation, complete=judge_complete)
+    if exemption_dm is not None:
+        # Owner, 2026-11-13: the wearer got the keyholder's button and approved their own exemption. The system decides now, on their reason.
+        from exemptions.judge import ExemptionJudge
+        exemption_dm.service.set_judge(ExemptionJudge(judge_complete))
+        exemption_service = exemption_dm.service
+
+        def exemption_reason(user_id, text, now, service=exemption_service):
+            return service.give_reason(user_id, text, now) if service.awaiting_reason(user_id) else None
+
+        application_service.exemption_reason = exemption_reason
+        logger.info("Exemption requests are decided by the system on the wearer's reason (health and safety in code first).")
     for note in detectors.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if detectors.signals is not None:
@@ -890,6 +901,25 @@ def main() -> None:
                                             send=queued_send(notification_queue, user_id=config.owner_user_id, clock=clock),
                                             owner_target=peer.owner_target, view_for=decision_actions, embed_for=lambda spec: spec,
                                             incident_notices=peer.incident_notices)
+    # Photo check-ins (owner, 2026-11-13): the submission times of the verification pictures on the connected account's locked locks.
+    photo_account = config.chaster_execution_keyholder_user_id
+    photo_tokens = background_tokens or chaster_token_manager
+    if wiring.check_ins is not None and photo_account and photo_tokens is not None and chaster_connections is not None:
+        from chaster.lock_directory import LockDirectory
+        from chaster.peer_reviews import PeerReviewReader
+        from supervision.photo_check_ins import PhotoCheckInSwitch
+        photo_directory = LockDirectory(token_manager=photo_tokens, lock_client=chaster_lock_client, connections=chaster_connections)
+        photo_reader = PeerReviewReader(token_manager=photo_tokens, lock_client=chaster_lock_client)
+
+        def photo_times(now, directory=photo_directory, reader=photo_reader, account=photo_account):
+            listing = directory.list_account_locks(user_id=account, now=now)
+            ids = [l.lock_id for l in listing.wearer_locks + listing.keyholder_locks if l.status == "locked"]
+            return reader.picture_times(user_id=account, lock_ids=ids, now=now) if ids else None
+
+        wiring.check_ins.photo_times = photo_times
+        application_service.photo_check_ins = PhotoCheckInSwitch(consent=wiring.check_ins.photo_consent, user_id=wiring.check_ins.user_id)
+        logger.info("Photo check-ins available (%s).", "on" if wiring.check_ins.photo_consent.is_on(wiring.check_ins.user_id)
+                    else "off until the wearer sends `photo check-ins on`")
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:

@@ -11,7 +11,8 @@ is the system's own role (philosophy 2.9), so the system asks the wearer, judges
                                                                     not explained -> `decided`
              -> no answer by the deadline: a hygiene finding -> cleared (an unanswered break may be a health need and never counts)
                                            anything else -> `decided` (silence, filed warning-only: Trust and a Warning, never a Penalty Window)
-    `decided` -> one appeal within 2 hours, judged; accepted -> cleared. Otherwise `confirmed`: the Incident is registered and confirmed by the system.
+    `decided` -> up to two appeals (owner, 2026-11-13) within 2 hours, each judged; accepted -> cleared. The first rejected one leaves at least an hour
+             for the second. Otherwise `confirmed`: the Incident is registered and confirmed by the system.
 
 A model failure is never a verdict against the wearer: the answer waits as `judging` and is retried; after 3 days it is dropped (cleared). An Emergency
 Override, an approved exemption or a vacation that overlaps the finding clears it at every step. "It was a health or safety need" is a button that clears
@@ -46,6 +47,9 @@ __all__ = ["SignalKind", "InfractionSignals", "GRACE", "APPEAL_WINDOW", "CAPTURE
 
 GRACE = timedelta(hours=12)                 # how long the wearer has to answer before silence counts
 APPEAL_WINDOW = timedelta(hours=2)          # between "unexplained" and the Incident counting
+MAX_APPEALS = 2                              # owner, 2026-11-13: two appeals for any judge
+SECOND_APPEAL_TIME = timedelta(hours=1)      # after a rejected first appeal, at least this long for the second
+_APPEAL_SEP = "\n---\n"                      # the appeals are kept in one column, in order
 CAPTURE_WINDOW = timedelta(hours=1)         # after pressing Explain or Appeal, the next message in this time is the answer
 JUDGE_GIVE_UP = timedelta(days=3)           # an answer the model never managed to judge is dropped, never held against anyone
 UNANSWERED_RULE_GROUP = "DETECTION_UNANSWERED"   # warning-only in penalty_engine: silence is never a Penalty Window
@@ -91,13 +95,15 @@ _EXPLAINED = "Thank you, that explains it. It doesn't count."
 _FOLLOW_UP = "I need a little more to go on. What exactly happened, and when? Tell me in your next message."
 _UNCERTAIN = "Thank you. I can't be sure either way, so it doesn't count."
 _NOT_EXPLAINED = ("That doesn't explain it, so it will count as an incident in two hours. If I got something wrong, or there's something you haven't told me, "
-                  "you can appeal once: press **Appeal**.")
-_SILENCE = ("You didn't explain this in time, so it will count as an incident in two hours. If there's something I should know, you can appeal once: "
+                  "you can appeal up to twice: press **Appeal**.")
+_SILENCE = ("You didn't explain this in time, so it will count as an incident in two hours. If there's something I should know, you can appeal up to twice: "
             "press **Appeal**.")
 _APPEAL_ACCEPTED = "You're right. It doesn't count."
 _ADMITTED = ("Owning it counts for something, and it'll weigh less because you did. But a sorry isn't a reason, so it counts as an incident in two hours. "
              "If there was an actual reason, press **Appeal** and tell me.")
 _APPEAL_REJECTED = "I've looked at your appeal, and it doesn't change the decision. It counts as an incident."
+_APPEAL_REJECTED_ONE_LEFT = ("I've looked at your appeal, and it doesn't change the decision. You have one more appeal before it counts: press **Appeal** "
+                             "and tell me what I'm missing.")
 _COUNTED = "It now counts as an incident."
 _PENDING = "Thank you. I'll look at it shortly and let you know."
 _UNJUDGED = "I couldn't look at your explanation in time, so it doesn't count."
@@ -106,7 +112,7 @@ SELF_REPORT_DETAIL = "The wearer said they used a hygiene opening for something 
 SELF_REPORT_QUESTION = ("**Owning up?** Did you just tell me you used a hygiene opening for something other than hygiene? If you did, say so: it counts, "
                         "but it weighs less because you told me yourself.")
 _OWNED = ("Thank you for owning it. It counts as hygiene misuse in two hours, and it weighs less because you told me yourself. If I misread you, "
-          "you can appeal once.")
+          "you can appeal up to twice.")
 _DISOWNED = "Okay, I misread you. Nothing is recorded."
 
 
@@ -140,6 +146,11 @@ def _signal(row) -> Signal:
 def _explain_buttons(signal_id: str) -> tuple[ActionSpec, ...]:
     return (ActionSpec(action_id=f"infraction:explain:{signal_id}", label="Explain"),
             ActionSpec(action_id=f"infraction:health:{signal_id}", label="It was a health or safety need", style="success"))
+
+
+def _appeals(row) -> int:
+    """How many appeals were made: they are kept in order in the one `appeal` column."""
+    return 0 if row["appeal"] is None else row["appeal"].count(_APPEAL_SEP) + 1
 
 
 def _appeal_buttons(signal_id: str) -> tuple[ActionSpec, ...]:
@@ -219,8 +230,12 @@ class InfractionSignals:
         if action in ("own", "disown"):
             return self._answer_offer(row, own=action == "own", now=now)
         if action == "appeal":
-            if row["status"] != "decided" or row["appeal"] is not None:
-                return OutgoingMessage(text="You can appeal once, before it counts." if row["status"] != "decided" else "I already have your appeal.")
+            if row["status"] != "decided":
+                return OutgoingMessage(text="You can appeal only before it counts.")
+            if row["judge_pending_since"] is not None:
+                return OutgoingMessage(text="I'm still looking at your appeal.")
+            if _appeals(row) >= MAX_APPEALS:
+                return OutgoingMessage(text="You've used both appeals.")
             self._await(signal_id, "appeal", now)
             return OutgoingMessage(text="Write your appeal in your next message: what did I get wrong, or what haven't you told me yet?")
         return OutgoingMessage(text="That isn't one of the options.")
@@ -261,7 +276,7 @@ class InfractionSignals:
                                 f"judge_pending_since = ? WHERE id = ? AND awaiting = ?",
                                 (text.strip()[:4000], _iso(now), status, _iso(now), row["id"], stage)) if stage != "appeal" else tx.execute(
                 "UPDATE infraction_signals SET appeal = ?, appealed_at = ?, awaiting = NULL, awaiting_since = NULL, judge_pending_since = ? WHERE id = ? AND awaiting = ?",
-                (text.strip()[:4000], _iso(now), _iso(now), row["id"], stage))
+                (text.strip()[:4000] if row["appeal"] is None else (row["appeal"] + _APPEAL_SEP + text.strip()[:4000])[-12000:], _iso(now), _iso(now), row["id"], stage))
             return cursor.rowcount == 1
 
         if not apply_transition(self._core, write=write):
@@ -356,7 +371,8 @@ class InfractionSignals:
         if row is None or row["judge_pending_since"] is None:
             return None
         if row["status"] == "decided":
-            stage, text, earlier = "appeal", row["appeal"], "\n".join(t for t in (row["explanation"], row["follow_up"]) if t) or None
+            appeals = (row["appeal"] or "").split(_APPEAL_SEP)
+            stage, text, earlier = "appeal", appeals[-1], "\n".join(t for t in (row["explanation"], row["follow_up"], *appeals[:-1]) if t) or None
         elif row["follow_up"] is not None:
             stage, text, earlier = "follow_up", row["follow_up"], row["explanation"]
         else:
@@ -388,6 +404,13 @@ class InfractionSignals:
             return OutgoingMessage(text=_HEALTH if judgement.by_code else _APPEAL_ACCEPTED if stage == "appeal" else _EXPLAINED)
         if stage == "appeal":
             self._record_appeal_verdict(signal_id, judgement, now)
+            if _appeals(row) < MAX_APPEALS:
+                def extend(tx: Transaction, _s: object) -> None:
+                    tx.execute("UPDATE infraction_signals SET confirm_after = MAX(confirm_after, ?) WHERE id = ? AND status = 'decided'",
+                               (_iso(now + SECOND_APPEAL_TIME), signal_id))
+
+                apply_transition(self._core, write=extend)
+                return OutgoingMessage(text=_APPEAL_REJECTED_ONE_LEFT, actions=_appeal_buttons(signal_id))
             self._count(self._row(signal_id), now, None, quiet=True)
             return OutgoingMessage(text=_APPEAL_REJECTED)
         if judgement.verdict is Verdict.UNCLEAR and stage == "explanation":

@@ -54,7 +54,12 @@ logger = logging.getLogger("ai_coach_keyholder.exemptions")
 __all__ = ["ExemptionService", "ExemptionDecision", "is_exemption_request", "is_hygiene_request", "HEALTH_MINUTES", "CATEGORIES", "DURATIONS", "SAFETY_LINE"]
 
 CATEGORIES = {"family": "Family event", "social": "Social occasion", "work_school": "Work or school", "health": "Health", "travel": "Travel", "other": "Something else"}
-DURATIONS = (6, 24, 72, 168)                # hours; a longer absence is what a vacation is for
+DURATIONS = (3, 6, 12, 24, 72, 168)         # hours; a longer absence is what a vacation is for. 3 and 12: live, 2026-11-13, "till evening" had to be 24
+UNJUDGED_LIMIT = timedelta(hours=1)          # a request the judge could not decide this long is closed, never as a decline: "ask again"
+APPEAL_WINDOW = timedelta(hours=24)          # a new request this soon after a declined one is judged as an appeal
+MAX_APPEALS = 2                              # owner, 2026-11-13: two appeals for any judge; a third request in that day is declined without a model
+REASON_QUESTION = ("In a sentence or two: what is it, and why does the lock need to come off for it? I decide on that, the way a keyholder "
+                   "would.")
 SAFETY_LINE = "If this is an urgent health or safety matter, you don't need this: do what keeps you safe, and it will never be held against you."
 
 _REQUEST = re.compile(r"\b(exemption|exempt me|v[yý]jimk[auy]|v[yý]jimku)\b", re.IGNORECASE)
@@ -129,6 +134,11 @@ class ExemptionService:
         self._opening = opening
         self._raise_overrun = raise_overrun
         self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
+        self._judge = None                          # exemptions.judge.ExemptionJudge: when set, requests are decided by it and never by a keyholder's button
+
+    def set_judge(self, judge) -> None:
+        """Owner, 2026-11-13: the wearer is also the account that got the keyholder's button. The judge is built after this service."""
+        self._judge = judge
 
     def set_overrun_signal(self, raise_overrun: Callable[[Transaction, dict, datetime, datetime], bool]) -> None:
         """The detectors are built after this service."""
@@ -148,7 +158,7 @@ class ExemptionService:
 
         status, ident = apply_transition(self._core, write=write)
         if status == "requested":
-            return OutgoingMessage(text=f"Your exemption request is with your keyholder. {SAFETY_LINE}")
+            return OutgoingMessage(text=f"Your exemption request is {'still being decided' if self._judge is not None else 'with your keyholder'}. {SAFETY_LINE}")
         if status == "approved":
             return self._running_card(ident)
         return OutgoingMessage(text=f"Of course. What is it for? {SAFETY_LINE}",
@@ -183,6 +193,9 @@ class ExemptionService:
         if within:
             return OutgoingMessage(text=f"You can have a {minutes}-minute hygiene opening now. The combination appears in Chaster, not here. A health need never counts against anything.",
                                    actions=(ActionSpec(action_id=f"exemption:hopen:{ident}", label="Open it", style="primary"), health, cancel))
+        if self._judge is not None:
+            return OutgoingMessage(text="You've used this week's planned breaks, so another one needs a good reason. A health need is different: it never counts against anything.",
+                                   actions=(ActionSpec(action_id=f"exemption:hask:{ident}", label="Ask for an extra one", style="primary"), health, cancel))
         return OutgoingMessage(text="You've used this week's planned breaks, so another one needs your keyholder. A health need is different: it never counts against anything.",
                                actions=(ActionSpec(action_id=f"exemption:hask:{ident}", label="Ask my keyholder", style="primary"), health, cancel))
 
@@ -199,6 +212,13 @@ class ExemptionService:
             decision("exemptions", "Hygiene opening declined by the wearer; nothing was opened.", exemption_id=exemption_id)
             return OutgoingMessage(text="Okay, nothing was opened.")
         if action == "hask" or (action == "hopen" and self._planned_this_week(user_id, now) >= self._allowance()[0]):
+            if self._judge is not None:
+                def ask(tx: Transaction, _s: object) -> None:
+                    tx.execute("UPDATE wear_exemptions SET reason_asked_at = ? WHERE id = ? AND status = 'draft'", (_iso(now), exemption_id))
+
+                apply_transition(self._core, write=ask)
+                decision("exemptions", "Extra hygiene opening asked for: waiting for the wearer's reason.", exemption_id=exemption_id)
+                return OutgoingMessage(text="You've had this week's planned breaks. Why do you need another one now? I decide on that.")
             return self._ask_keyholder(row, now)
         health = action == "hhealth"
         minutes = HEALTH_MINUTES if health else row["minutes"]
@@ -239,6 +259,9 @@ class ExemptionService:
             row = tx.fetch_one("SELECT category FROM wear_exemptions WHERE id = ? AND user_id = ? AND status = 'draft' AND category IS NOT NULL", (exemption_id, user_id))
             if row is None:
                 return False
+            if self._judge is not None:
+                tx.execute("UPDATE wear_exemptions SET hours = ?, reason_asked_at = ? WHERE id = ?", (hours, _iso(now), exemption_id))
+                return True
             tx.execute("UPDATE wear_exemptions SET hours = ?, status = 'requested', requested_at = ? WHERE id = ?", (hours, _iso(now), exemption_id))
             if self._owner:
                 enqueue_in_transaction(
@@ -250,7 +273,134 @@ class ExemptionService:
 
         if not apply_transition(self._core, write=write):
             return OutgoingMessage(text="That request is no longer open. Just ask again if you still need one.")
+        if self._judge is not None:
+            decision("exemptions", "Exemption asked for: waiting for the wearer's reason.", exemption_id=exemption_id, hours=hours)
+            return OutgoingMessage(text=REASON_QUESTION)
         return OutgoingMessage(text=f"Sent to your keyholder. I'll tell you as soon as they answer. {SAFETY_LINE}")
+
+    # ------------------------------------------------------------------ the judge (owner, 2026-11-13)
+
+    def awaiting_reason(self, user_id: str) -> bool:
+        if self._judge is None:
+            return False
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND status = 'draft' AND reason_asked_at IS NOT NULL",
+                                (user_id,)) is not None
+
+    def give_reason(self, user_id: str, text: str, now: datetime) -> OutgoingMessage | None:
+        """The wearer's next message after the reason question (or the follow-up question) is the reason. Then the judge decides."""
+        if self._judge is None or not isinstance(text, str) or not text.strip():
+            return None
+        words = text.strip()[:1500]
+
+        def write(tx: Transaction, _s: object) -> str | None:
+            row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE user_id = ? AND status = 'draft' AND reason_asked_at IS NOT NULL", (user_id,))
+            if row is None:
+                return None
+            reason = words if row["follow_up"] is None else f"{row['reason'] or ''}\n---\n{words}"
+            tx.execute("UPDATE wear_exemptions SET reason = ?, status = 'requested', requested_at = ? WHERE id = ?", (reason, _iso(now), row["id"]))
+            return row["id"]
+
+        ident = apply_transition(self._core, write=write)
+        if ident is None:
+            return None
+        text_out, actions = self._rule(ident, now)
+        return OutgoingMessage(text=text_out, actions=actions)
+
+    def _declined_lately(self, row, now: datetime) -> list[str]:
+        """The reasons of this wearer's requests the judge declined in the last day, oldest first: each new request is an appeal against them."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT reason FROM wear_exemptions WHERE user_id = ? AND id != ? AND status = 'declined' AND decided_by = 'judge' "
+                                "AND decided_at > ? AND reason IS NOT NULL ORDER BY decided_at", (row["user_id"], row["id"], _iso(now - APPEAL_WINDOW)))
+        return [r["reason"] for r in rows]
+
+    def _rule(self, exemption_id: str, now: datetime) -> tuple[str, tuple[ActionSpec, ...]]:
+        """Judges a 'requested' request that has a reason, and applies the ruling. Returns what to tell the wearer."""
+        from exemptions.judge import Ruling
+
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ? AND status = 'requested'", (exemption_id,))
+        if row is None:
+            return "That request was already decided.", ()
+        hygiene = row["kind"] == "hygiene"
+        what = "an extra hygiene opening past this week's planned breaks" if hygiene else f"an exemption ({CATEGORIES.get(row['category'], 'something else')})"
+        follow_up = row["follow_up"]
+        first, _, answer = (row["reason"] or "").partition("\n---\n") if follow_up else (row["reason"] or "", "", "")
+        declined = self._declined_lately(row, now)
+        health = row["category"] == "health"
+        if len(declined) > MAX_APPEALS and not health:
+            from exemptions.judge import ExemptionRuling
+            from infractions.judge import is_health_or_safety
+            ruling = None if is_health_or_safety(row["reason"]) else ExemptionRuling(
+                Ruling.DECLINE, "You've already appealed twice today; ask again tomorrow.", by_code=True)
+        else:
+            ruling = None
+        if ruling is None:
+            ruling = self._judge.judge(what=what, length=_length(row), reason=answer if follow_up else first, earlier=first if follow_up else None,
+                                       appeal_of="\n---\n".join(declined) or None, health=health)
+        if ruling is None:
+            decision("exemptions", "Exemption request not judged yet (no usable answer from the model); retried on the next pass.", exemption_id=exemption_id)
+            return f"I can't decide that right now. I'll tell you as soon as I have. {SAFETY_LINE}", ()
+        if ruling.ruling is Ruling.UNCLEAR and follow_up is None:
+            def ask(tx: Transaction, _s: object) -> None:
+                tx.execute("UPDATE wear_exemptions SET status = 'draft', follow_up = ? WHERE id = ? AND status = 'requested'", (ruling.question, exemption_id))
+
+            apply_transition(self._core, write=ask)
+            decision("exemptions", "Exemption reason unclear: one follow-up question asked.", exemption_id=exemption_id, question=ruling.question)
+            return ruling.question, ()
+        approve = ruling.ruling is Ruling.APPROVE
+        said = ruling.reason or ("Approved." if approve else "That isn't a reason to take it off.")
+        if ruling.ruling is Ruling.UNCLEAR:
+            said = "Still not specific enough to take it off."
+        by = "judge_health" if ruling.by_code and approve else "judge"
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE wear_exemptions SET status = ?, decided_at = ?, decided_by = ?, expires_at = ?, verdict_reason = ? WHERE id = ? AND status = 'requested'",
+                              ("approved" if approve else "declined", _iso(now), by, _iso(now + _span(row)) if approve else None, said, exemption_id)).rowcount == 1
+            if done and self._owner and self._owner != row["user_id"]:       # a separate keyholder still hears about it
+                enqueue_in_transaction(tx, user_id=self._owner, kind="exemption_request", dedupe_key=f"exemption:ruled:{exemption_id}", now=now, immediate=True,
+                                       text=f"{'Approved' if approve else 'Declined'}: {what}, {_length(row)}. {said}")
+            return done
+
+        if not apply_transition(self._core, write=write):
+            return "That request was already decided.", ()
+        decision("exemptions", f"Request {'approved' if approve else 'declined'} by the judge.", exemption_id=exemption_id, by=by, reason=said)
+        if not approve:
+            left = MAX_APPEALS - len(declined)
+            more = (f" You can appeal {'once more' if left == 1 else 'up to twice'}: ask again and tell me what's new." if left > 0
+                    else " That was your last appeal for today.")
+            return f"Declined. {said}{more} {SAFETY_LINE}", ()
+        self.tick(now)
+        return f"{said} {self._approval_text(row)}", self._back_button(exemption_id)
+
+    def _rule_pending(self, now: datetime) -> None:
+        """Requests the judge could not decide when they came in: retried each pass; after UNJUDGED_LIMIT closed, never as a decline."""
+        if self._judge is None:
+            return
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT id, user_id, requested_at FROM wear_exemptions WHERE status = 'requested' AND reason IS NOT NULL")
+        for row in rows:
+            if now - parse_iso(row["requested_at"]) > UNJUDGED_LIMIT:
+                def close(tx: Transaction, _s: object, row=row) -> None:
+                    if tx.execute("UPDATE wear_exemptions SET status = 'declined', decided_at = ?, decided_by = 'unjudged' WHERE id = ? AND status = 'requested'",
+                                  (_iso(now), row["id"])).rowcount == 1:
+                        enqueue_in_transaction(tx, user_id=row["user_id"], kind="exemption_decision", dedupe_key=f"exemption:unjudged:{row['id']}", now=now,
+                                               immediate=True, text=f"I couldn't decide your request in time, so nothing changed. Ask again if you still need it. {SAFETY_LINE}")
+
+                apply_transition(self._core, write=close)
+                decision("exemptions", "Exemption request closed undecided: the judge gave no usable answer in time (not a decline).", exemption_id=row["id"])
+                continue
+            text, actions = self._rule(row["id"], now)
+            with self._core.transaction() as tx:
+                still = tx.fetch_one("SELECT status FROM wear_exemptions WHERE id = ?", (row["id"],))["status"]
+            if still == "requested":
+                continue                    # still not judged: nothing to tell yet
+
+            def tell(tx: Transaction, _s: object, row=row, text=text, actions=actions) -> None:
+                enqueue_in_transaction(tx, user_id=row["user_id"], kind="exemption_decision", dedupe_key=f"exemption:ruling:{row['id']}", now=now, immediate=True,
+                                       text=text, actions=actions)
+
+            apply_transition(self._core, write=tell)
 
     def end_early(self, user_id: str, exemption_id: str, now: datetime) -> OutgoingMessage:
         with self._core.transaction() as tx:
@@ -279,6 +429,8 @@ class ExemptionService:
             row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ? AND status = 'requested'", (exemption_id,))
             if row is None:
                 return False
+            if row["user_id"] == actor:         # live, 2026-11-13: the wearer got the keyholder's button and approved their own request
+                return None
             expires = now + _span(row)
             tx.execute("UPDATE wear_exemptions SET status = ?, decided_at = ?, decided_by = ?, expires_at = ? WHERE id = ?",
                        (decision.value, _iso(now), actor, _iso(expires) if approve else None, exemption_id))
@@ -292,7 +444,11 @@ class ExemptionService:
                                        text=f"Your {'hygiene opening' if row['kind'] == 'hygiene' else 'exemption'} wasn't approved this time. {SAFETY_LINE}")
             return True
 
-        if not apply_transition(self._core, write=write):
+        done = apply_transition(self._core, write=write)
+        if done is None:
+            _log("exemptions", "A request's own wearer pressed the keyholder's button: refused.", exemption_id=exemption_id)
+            return ExemptionDecision.NOT_OWNER
+        if not done:
             return ExemptionDecision.NOT_PENDING
         _log("exemptions", f"Request {decision.value} by the keyholder.", exemption_id=exemption_id)
         if approve:
@@ -303,6 +459,10 @@ class ExemptionService:
 
     def tick(self, now: datetime) -> None:
         """Brings the Penalty Window in line with the exemptions in force. Idempotent and never raises: a failure is retried on the next pass."""
+        try:
+            self._rule_pending(now)
+        except Exception:
+            logger.exception("Pending exemption requests could not be judged; retrying on the next pass.")
         with self._core.transaction() as tx:
             rows = tx.fetch_all("SELECT * FROM wear_exemptions WHERE status = 'approved'")
         for row in rows:

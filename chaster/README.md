@@ -602,3 +602,6 @@ Chaster's own 400 answer stays the final authority. The local emergency-unlock s
 Phase J1: `is_chaster_status_query` gained rule 4, short time-left questions without naming the lock ("How much time is left?", "How long
 until I'm out?", "Kolik mi zbývá?", "Jak dlouho ještě?"; a `?` and at most 80 characters), never when the message is about another thing
 that runs out (task, timer, meeting, work, vacation, film, game, battery, download, trip, school).
+
+Photo check-ins (2026-11-13): `parse_picture_times` / `PeerReviewReader.picture_times` read only the `submittedAt` of each verification picture
+(reviewed or not) on the given locks; None when no lock could be read at all, so the caller never mistakes "unreadable" for "no picture".
