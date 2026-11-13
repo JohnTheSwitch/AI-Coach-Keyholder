@@ -400,6 +400,7 @@ class CoachKeyholderBot(discord.Client):
             # infrastructure/database.py's own thread-local guard).
             outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
+            from_model = bool(getattr(outgoing, "from_model", False))     # restored after a restart only when the model wrote it
             if late:
                 reply_text = f"*(You sent this while I was offline: {discord.utils.format_dt(message.created_at, 't')}.)*\n{reply_text}"
             reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
@@ -408,6 +409,7 @@ class CoachKeyholderBot(discord.Client):
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
             reply_text = "Something went wrong handling that. It's been logged."
             reply_embed = reply_view = None
+            from_model = False
 
         # Whatever state this reply reflects (including any onboarding
         # step transition) was already written by handle_message()
@@ -435,7 +437,8 @@ class CoachKeyholderBot(discord.Client):
             logger.exception("Failed to send a reply to user_id=%s -- persisted state is unaffected.", message.author.id)
             return
 
-        self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id)
+        # Live, 2026-11-13: this path (the owner's, multi-wearer off) logged no `from_model`, so a restart restored nothing at all.
+        self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id, from_model=from_model)
 
     async def _on_message_via_gateway(self, message: discord.Message) -> None:
         """Multi-wearer path (Phase E3): the gateway picks the tenant; the exchange is stored only in THAT tenant's database

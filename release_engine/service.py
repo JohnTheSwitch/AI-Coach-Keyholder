@@ -391,6 +391,20 @@ class ReleaseEngine:
         tx.execute("UPDATE release_owner_requests SET status = 'expired', outcome = 'expired', decided_at = ? "
                    "WHERE user_id = ? AND status = 'pending' AND expires_at <= ?", (_iso(now), user_id, _iso(now)))
 
+    # ------------------------------------------------------------------ the first sighting of a lock (owner, 2026-11-13)
+
+    def record_first_sighting(self, *, lock_id: str, frozen: bool, freeze: bool, now: datetime) -> bool:
+        """True when this lock was never seen before (and is now recorded). Migration 060."""
+        def write(tx: Transaction, _s: object) -> bool:
+            return tx.execute("INSERT OR IGNORE INTO release_lock_first_seen (lock_id, first_seen_at, was_frozen, freeze_recorded) VALUES (?, ?, ?, ?)",
+                              (lock_id, _iso(now), int(frozen), int(freeze))).rowcount == 1
+
+        return bool(apply_transition(self._core, write=write))
+
+    def has_seen_lock(self, lock_id: str) -> bool:
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM release_lock_first_seen WHERE lock_id = ?", (lock_id,)) is not None
+
     # ------------------------------------------------------------------ provider progress
 
     def mark_provider_requested(self, *, authorization_id: str, now: datetime) -> bool:

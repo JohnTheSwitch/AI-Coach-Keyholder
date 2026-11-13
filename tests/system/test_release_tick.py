@@ -86,6 +86,7 @@ class World:
             is_halted=self.control.is_halted, can_execute=can_execute, max_hold=timedelta(hours=72),
         )
         self.fetched_at = None          # None = always fresh relative to self.now
+        self.task.first_sight_every = None   # these tests are about other rules; the first sighting has its own (test_first_sighting.py)
 
     def _obs(self):
         fetched = self.fetched_at or (self.now - timedelta(minutes=1))

@@ -112,3 +112,11 @@ class TestTheChatFixes20261113:
     def test_the_bot_stores_who_wrote_a_reply(self) -> None:
         from pathlib import Path
         assert "from_model=bool(getattr(reply, \"from_model\", False))" in Path("bot/discord_bot.py").read_text(encoding="utf-8")
+
+
+class TestBothLoggingPathsRecordWhoWrote:
+    def test_the_owners_path_too(self) -> None:
+        """Live, 2026-11-13: the non-gateway path logged no `from_model`, so a restart restored no conversation at all."""
+        from pathlib import Path
+        text = Path("bot/discord_bot.py").read_text(encoding="utf-8")
+        assert "sent.id, from_model=from_model)" in text and "from_model = bool(getattr(outgoing, \"from_model\", False))" in text

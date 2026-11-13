@@ -46,6 +46,9 @@ BARRIER_FREEZE_RULE_ID = "barrier.freeze"
 _REFREEZE_MAX_ATTEMPTS = 3
 _REFREEZE_BACKOFF = timedelta(minutes=30)     # between attempts after a blocked / failed / expired decision
 _REFREEZE_RECHECK = timedelta(hours=6)        # how long an observation of "frozen" is trusted while watching
+# Owner, 2026-11-13: a newly recognised lock that is not frozen is frozen once, at its first sighting. The lock is looked at this often for it.
+_FIRST_SIGHT_EVERY = timedelta(minutes=10)
+FIRST_FREEZE_REASON = "First sighting of a new lock: the barrier goes up"
 # Live, 2026-11-13: the system refroze the lock on 11 Nov 04:28, but the stored reading was the one from just before ("not frozen"). While a veto
 # (supervision) held releases nothing refreshed it, and the backstop, which pre-checked that stored reading, would never have fired: the
 # maximum-hold guarantee was gone. The backstop now looks at the lock itself at least every _BACKSTOP_RECHECK, and after a failed refresh
@@ -89,6 +92,8 @@ class ReleaseEnginePeriodicTask:
         self._can_execute = can_execute
         self._max_hold = max_hold
         self._backstop_refreshed_at: datetime | None = None
+        self._first_sight_at: datetime | None = None
+        self.first_sight_every: timedelta | None = _FIRST_SIGHT_EVERY        # None: no first-sighting freeze (tests of other rules)
         # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
         # `release.provider_confirmed` (system/startup.py) uses it. None = Progressive Conditioning is off.
         self.conditioning = None
@@ -141,6 +146,9 @@ class ReleaseEnginePeriodicTask:
         self.sync(now, report)
         if self._engine.open_authorizations(self._user):
             report.add("release_in_flight")
+            return report
+
+        if self._maybe_first_freeze(now, report):
             return report
 
         if self._maybe_refreeze(now, report):
@@ -271,6 +279,35 @@ class ReleaseEnginePeriodicTask:
         if age.total_seconds() < 0 or age > LOCK_DATA_MAX_AGE:
             return False
         return obs.status is ChasterProviderStatus.LOCKED and obs.has_keyholder is True and obs.is_frozen is False
+
+    def _maybe_first_freeze(self, now: datetime, report: TickReport) -> bool:
+        """Owner, 2026-11-13: the first time a lock is seen (a new lock joined), it is frozen if it is not. Only once per lock (migration 060):
+        a lock a release unfroze is never refrozen here, the release session's refreeze rule handles that. Waits while execution is off or
+        halted, so the first freeze is not lost. Returns True when a freeze was recorded."""
+        if self.first_sight_every is None or not self._can_execute or self._halted():
+            return False
+        if self._first_sight_at is not None and now - self._first_sight_at < self.first_sight_every:
+            return False
+        self._first_sight_at = now
+        try:
+            self._refresh(now)
+        except Exception:
+            logger.exception("Observation refresh failed while looking for a new lock.")
+        obs = self._get_obs()
+        if obs is None or now - obs.fetched_at > LOCK_DATA_MAX_AGE or obs.status is not ChasterProviderStatus.LOCKED or obs.has_keyholder is not True:
+            return False
+        if obs.is_frozen is None or not obs.chaster_lock_id or self._engine.has_seen_lock(obs.chaster_lock_id):
+            return False
+        freeze = obs.is_frozen is False
+        if not self._engine.record_first_sighting(lock_id=obs.chaster_lock_id, frozen=bool(obs.is_frozen), freeze=freeze, now=now):
+            return False
+        if not freeze:
+            report.add("first_sighting:already_frozen")
+            return False
+        self._rules.record_barrier_decision(trigger_id=f"barrier-first:{obs.chaster_lock_id}", action=ActionType.FREEZE,
+                                            rule_id=BARRIER_FREEZE_RULE_ID, reason=FIRST_FREEZE_REASON, now=now)
+        report.add("barrier_first_freeze")
+        return True
 
     def _maybe_owner_test(self, now: datetime, report: TickReport) -> bool:
         """The owner's one-time test release (`cli release-test-override`, owner 2026-11-13): spends a token despite the vetoes, with every other

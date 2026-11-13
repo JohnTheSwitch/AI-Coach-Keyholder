@@ -49,6 +49,10 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
   `EXEMPTION_LOCK_ID` may be `auto`, with `OWNER_CHASTER_ACCOUNT_ID` set to the owner's own Chaster account id. The owner joins the keyholder
   account's premade shared lock; the system takes the newest active non-test lock the keyholder holds that the owner wears (searched at most
   every 10 minutes, read-only). A lock worn by anyone else is never acted on and the owner is told; none means nothing acts. Fixed ids still work.
+- **The first sighting of a lock** (owner, 2026-11-13; migration 060 `release_lock_first_seen`): every 10 minutes the tick looks at the
+  recognised lock; the first time a locked keyholder lock is seen and it is not frozen, a FREEZE decision is recorded (`barrier.freeze`,
+  trigger `barrier-first:<lock id>`). Once per lock: a lock seen frozen is only recorded, and a lock a release unfroze is never frozen by this
+  rule (the release session's refreeze handles that). It waits while execution is off or halted, so the first freeze is not lost.
 - **The owner's test release** (owner, 2026-11-13; migration 057 `release_owner_requests`): `python -m cli release-test-override --owner-id <id>
   --yes` files ONE request; the running bot's tick carries it out with `commit_owner_test()`: spends exactly one token (`owner_test_release`)
   and releases despite supervision or a penalty window, but only with a confirmed barrier, in the free-time window, with execution on and the
