@@ -605,3 +605,10 @@ that runs out (task, timer, meeting, work, vacation, film, game, battery, downlo
 
 Photo check-ins (2026-11-13): `parse_picture_times` / `PeerReviewReader.picture_times` read only the `submittedAt` of each verification picture
 (reviewed or not) on the given locks; None when no lock could be read at all, so the caller never mistakes "unreadable" for "no picture".
+
+
+## Split OAuth scopes (live, 2026-11-13)
+
+A Chaster app created now rejects the plain scopes (`locks`, `keyholder`, `messaging`: `invalid_scope`) and accepts only the split ones
+(`locks:read locks:write`, ...). `oauth_client.requested_scopes()` splits the configured plain names when requesting, and `effective_scopes()` adds
+a plain name back to the stored grant once both halves were granted, so every existing check keeps working for old and new apps.

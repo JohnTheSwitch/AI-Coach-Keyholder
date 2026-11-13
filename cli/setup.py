@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 __all__ = ["Line", "setup_report", "render_report", "named_trust_domains", "DOMAIN_TEXTS", "REQUIRED_KEYHOLDER_SCOPES"]
 
-REQUIRED_KEYHOLDER_SCOPES = ("locks", "keyholder", "messaging", "offline_access")
+REQUIRED_KEYHOLDER_SCOPES = ("locks", "keyholder", "messaging", "offline_access")   # plain names; split ones count (chaster/oauth_client.py)
 DOMAIN_TEXTS = {
     "routine": ("Routine", "Daily check-ins, commitments and goals: how reliably the wearer does what they said."),
     "hygiene": ("Hygiene", "Hygiene openings: used for hygiene and relocked on time."),

@@ -228,13 +228,22 @@ class TestOauthScopes:
     def _scope(self, url):
         return parse_qs(urlparse(url).query)["scope"][0]
 
+    # Live, 2026-11-13: a new Chaster app accepts only the split scopes; the plain names are split when requested.
     def test_default_is_locks_only(self) -> None:
-        assert self._scope(self._client().build_authorization_url(state="s")) == "locks"
+        assert self._scope(self._client().build_authorization_url(state="s")) == "locks:read locks:write"
 
     def test_configured_scopes_are_requested(self) -> None:
-        c = self._client(scopes=("locks", "keyholder", "messaging"))
-        assert self._scope(c.build_authorization_url(state="s")) == "locks keyholder messaging"
-        assert self._scope(c.build_authorization_url(state="s", scopes=("locks",))) == "locks"
+        c = self._client(scopes=("locks", "keyholder", "messaging", "profile", "offline_access"))
+        assert self._scope(c.build_authorization_url(state="s")) == ("locks:read locks:write keyholder:read keyholder:write messaging:read "
+                                                                      "messaging:write profile offline_access")
+        assert self._scope(c.build_authorization_url(state="s", scopes=("locks",))) == "locks:read locks:write"
+        assert self._scope(c.build_authorization_url(state="s", scopes=("locks:read",))) == "locks:read"
+
+    def test_a_plain_name_comes_back_once_both_halves_are_granted(self) -> None:
+        from chaster.oauth_client import effective_scopes
+        granted = effective_scopes(["profile", "locks:read", "locks:write", "keyholder:read", "keyholder:write", "messaging:read", "offline_access"])
+        assert "locks" in granted and "keyholder" in granted and "messaging" not in granted and "messaging:read" in granted
+        assert effective_scopes(["locks", "keyholder"]) == ("locks", "keyholder")          # an older app's plain grant stays as it was
 
     def test_invalid_scopes_are_refused(self) -> None:
         for bad in ((), ("",)):

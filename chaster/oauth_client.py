@@ -35,6 +35,29 @@ __all__ = [
     "TOKEN_URL",
 ]
 
+# Live, 2026-11-13: a Chaster app created now accepts only the split scopes (`locks:read locks:write`, ...); an older app also took the plain
+# names. The bot keeps using the plain names everywhere: they are split when requested, and a plain name is added back to what was granted
+# once both of its halves were granted, so every existing check (`"locks" in granted`) keeps working for old and new apps.
+SPLIT_SCOPES = frozenset({"locks", "keyholder", "messaging", "shared_locks", "calendar", "notifications", "posts", "users"})
+
+
+def requested_scopes(scopes) -> tuple[str, ...]:
+    out: list[str] = []
+    for scope in scopes:
+        for part in ((f"{scope}:read", f"{scope}:write") if scope in SPLIT_SCOPES else (scope,)):
+            if part not in out:
+                out.append(part)
+    return tuple(out)
+
+
+def effective_scopes(granted) -> tuple[str, ...]:
+    out = list(dict.fromkeys(granted))
+    for name in sorted(SPLIT_SCOPES):
+        if name not in out and f"{name}:read" in out and f"{name}:write" in out:
+            out.append(name)
+    return tuple(out)
+
+
 AUTHORIZATION_URL = "https://sso.chaster.app/auth/realms/app/protocol/openid-connect/auth"
 TOKEN_URL = "https://sso.chaster.app/auth/realms/app/protocol/openid-connect/token"
 
@@ -119,7 +142,7 @@ class ChasterOAuthClient:
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
             "response_type": "code",
-            "scope": " ".join(scopes if scopes is not None else self._scopes),
+            "scope": " ".join(requested_scopes(scopes if scopes is not None else self._scopes)),
             "state": state,
         }
         return f"{AUTHORIZATION_URL}?{urlencode(params)}"
@@ -160,7 +183,7 @@ class ChasterOAuthClient:
             refresh_token = body["refresh_token"]
             expires_in = int(body["expires_in"])
             refresh_expires_in = int(body["refresh_expires_in"])
-            granted_scopes = tuple(body.get("scope", "").split())
+            granted_scopes = effective_scopes(body.get("scope", "").split())
         except (ValueError, KeyError, TypeError) as exc:
             raise ChasterTokenExchangeError(
                 "Chaster's token endpoint returned a response this application could not parse."
@@ -207,7 +230,7 @@ class ChasterOAuthClient:
             return ChasterTokenResponse(
                 access_token=body["access_token"], refresh_token=body["refresh_token"],
                 expires_in=int(body["expires_in"]), refresh_expires_in=int(body["refresh_expires_in"]),
-                granted_scopes=tuple(body.get("scope", "").split()),
+                granted_scopes=effective_scopes(body.get("scope", "").split()),
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise ChasterTokenExchangeError(
