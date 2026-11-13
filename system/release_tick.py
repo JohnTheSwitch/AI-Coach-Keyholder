@@ -46,6 +46,12 @@ BARRIER_FREEZE_RULE_ID = "barrier.freeze"
 _REFREEZE_MAX_ATTEMPTS = 3
 _REFREEZE_BACKOFF = timedelta(minutes=30)     # between attempts after a blocked / failed / expired decision
 _REFREEZE_RECHECK = timedelta(hours=6)        # how long an observation of "frozen" is trusted while watching
+# Live, 2026-11-13: the system refroze the lock on 11 Nov 04:28, but the stored reading was the one from just before ("not frozen"). While a veto
+# (supervision) held releases nothing refreshed it, and the backstop, which pre-checked that stored reading, would never have fired: the
+# maximum-hold guarantee was gone. The backstop now looks at the lock itself at least every _BACKSTOP_RECHECK, and after a failed refresh
+# tries again at most every _BACKSTOP_RETRY (no Chaster call every minute).
+_BACKSTOP_RECHECK = timedelta(hours=6)
+_BACKSTOP_RETRY = timedelta(hours=1)
 _DECISION_GRACE = timedelta(minutes=16)      # executor expires a decision after 15 minutes
 
 
@@ -82,6 +88,7 @@ class ReleaseEnginePeriodicTask:
         self._halted = is_halted
         self._can_execute = can_execute
         self._max_hold = max_hold
+        self._backstop_refreshed_at: datetime | None = None
         # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
         # `release.provider_confirmed` (system/startup.py) uses it. None = Progressive Conditioning is off.
         self.conditioning = None
@@ -266,6 +273,14 @@ class ReleaseEnginePeriodicTask:
         if not self._can_execute or self._halted() or self._engine.open_authorizations(self._user):
             return
         latest = self._get_obs()
+        if (latest is None or now - latest.fetched_at > _BACKSTOP_RECHECK) and (
+                self._backstop_refreshed_at is None or now - self._backstop_refreshed_at >= _BACKSTOP_RETRY):
+            self._backstop_refreshed_at = now
+            try:
+                self._refresh(now)
+            except Exception:
+                logger.exception("Observation refresh failed for the maximum-hold backstop.")
+            latest = self._get_obs()
         if latest is None or latest.is_frozen is not True or latest.frozen_at is None:
             return
         if now - latest.frozen_at < self._max_hold:

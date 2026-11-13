@@ -24,7 +24,7 @@ from release_engine.service import ReleaseEngine
 from rules_engine.models import ActionType as A
 from rules_engine.repository import RulesEngineService
 from schedule_windows.windows import WindowConfig, WindowKind, classify
-from system.release_tick import ReleaseEnginePeriodicTask
+from system.release_tick import ReleaseEnginePeriodicTask, TickReport
 
 ROOT = Path(__file__).parent.parent.parent
 PRAGUE = ZoneInfo("Europe/Prague")
@@ -367,6 +367,47 @@ class TestBackstop:
         world = World(tmp_path, can_execute=False, frozen_since=timedelta(days=5))
         world.cycle(local(MON, 18, 0))
         assert world.auth_states() == []
+
+
+class TestTheBackstopLooksAtTheLock:
+    """Live, 2026-11-13: the stored reading predated the system's own refreeze and said "not frozen"; under a veto nothing refreshed it, so the
+    maximum-hold backstop could never fire."""
+
+    def stale_world(self, tmp_path, **kw):
+        world = World(tmp_path, frozen_since=timedelta(hours=80), supervised=True, **kw)
+        world.at(local(MON, 18, 0))
+        world.frozen = False
+        world.fetched_at = world.now - timedelta(hours=59)     # the reading from before the refreeze
+
+        def refresh(now):
+            world.refreshes += 1
+            if world.refresh_effective:
+                world.frozen, world.fetched_at = True, None
+        world.task._refresh = refresh
+        return world
+
+    def test_an_old_reading_is_refreshed_and_the_backstop_fires(self, tmp_path) -> None:
+        world = self.stale_world(tmp_path)
+        report = world.task.run(world.now)
+        world.executor.run_once(now=world.now)
+        assert world.refreshes >= 1 and "backstop:authorized" in report.notes
+        assert world.transport.calls == [("unfreeze", "lock-1")]
+
+    def test_a_failing_refresh_is_retried_hourly_not_every_minute(self, tmp_path) -> None:
+        world = self.stale_world(tmp_path)
+        world.refresh_effective = False
+        start = world.now
+        for minute in range(0, 61, 5):
+            world.now = start + timedelta(minutes=minute)
+            world.task.run(world.now)
+        assert world.refreshes == 2 and world.transport.calls == []
+
+    def test_a_recent_reading_is_not_refreshed(self, tmp_path) -> None:
+        world = World(tmp_path, frozen=False)
+        world.at(local(MON, 18, 0))
+        world.fetched_at = world.now - timedelta(hours=5)
+        world.task._maybe_backstop(world.now, TickReport())
+        assert world.refreshes == 0
 
 
 def released_world(tmp_path, **kw):
