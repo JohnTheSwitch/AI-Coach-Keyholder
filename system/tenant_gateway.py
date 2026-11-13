@@ -16,6 +16,8 @@ Wearer commands (exact, case-insensitive, handled before any conversation, never
                 execution is halted and its loop stops.
   accept/decline (invited only) record or refuse consent. Acceptance writes a consent record into the tenant's own database.
 
+  timezone / holidays  (active additional wearer) show or set their own IANA time zone and public-holiday country (system.wearer_locale).
+
 Owner command (only from tenant zero's Discord id, i.e. the owner's verified identity): `invite <discord id> <name>`.
 
 Logging: a message is stored only in the database of the tenant it belongs to; strangers' and invitees' texts are never stored.
@@ -38,6 +40,7 @@ from database.models import ConsentAction, ConsentRecord, ConsentTargetType
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
 from system.tenant_loops import TenantLoopSupervisor
+from system.wearer_locale import WearerLocaleStore, normalize_country, valid_timezone
 from tenancy.admin import AdminOutcome, TenantAdmin
 from tenancy.models import WEARER_HALT_REASON, Tenant
 from tenancy.registry import TenantRegistry, resolve_db_path
@@ -51,7 +54,8 @@ CONSENT_TARGET = "multi_wearer_keyholder"
 
 TEXTS = {
     "stranger": "This bot only talks with people its keyholder has invited.",
-    "accepted": ("Welcome. You have joined. Send any message to start setting up. At any time: `halt` stops every lock action at once, "
+    "accepted": ("Welcome. You have joined. First set your time zone, for example `timezone Europe/Berlin`, and your public holidays, "
+                 "for example `holidays DE` or `holidays none`. Then send any message to start setting up. At any time: `halt` stops every lock action at once, "
                  "`leave` ends your membership."),
     "accept_failed": "That did not work, nothing was changed. Please try again.",
     "declined": "You declined the invitation. Nothing about you is kept as an active membership.",
@@ -72,6 +76,13 @@ TEXTS = {
     "lock_confirmed": "Confirmed. This lock is now yours to be managed here; `halt` still stops everything at once.",
     "lock_rejected": "The pairing was removed. Nothing will act on that lock.",
     "nothing_to_confirm": "There is nothing to confirm.",
+    "locale_owner": "The owner's time zone and public holidays come from APP_TIMEZONE and HOLIDAY_COUNTRY in the configuration.",
+    "timezone_show": "Your time zone: {}. Change it with `timezone <name>`, for example `timezone Europe/Berlin`.",
+    "timezone_invalid": "That is not a time zone I know. Use a region name such as `Europe/Berlin` or `America/New_York`, or `UTC`.",
+    "timezone_set": "Your time zone is now {}. Quiet hours, check-ins, your day and the release windows follow it from now on.",
+    "holidays_show": "Your public holidays: {}. Change them with `holidays <country code>` (for example `holidays DE`) or `holidays none`.",
+    "holidays_invalid": "I do not know that country code. Use a two-letter code such as `DE` or `US`, or `none`.",
+    "holidays_set": "Your public holidays are now: {}. They count as free days from now on.",
 }
 
 _INVITE_TEXTS = {
@@ -135,6 +146,9 @@ class TenantGateway:
             return GatewayReply(safety, log_db=log_db)
         if route.kind is RouteKind.SUSPENDED:
             return GatewayReply(TEXTS["suspended"], log_db=log_db)
+        locale = await self._locale_command(tenant, incoming.text or "")
+        if locale is not None:
+            return GatewayReply(locale, log_db=log_db)
         if not tenant.is_tenant_zero and command in ("lock", "confirm lock", "reject lock"):
             return GatewayReply(await asyncio.to_thread(self._lock_command, tenant, command), log_db=log_db)
 
@@ -263,6 +277,41 @@ class TenantGateway:
         return f"Paired lock: '{described.title or 'untitled'}' of Chaster user {described.wearer_username or 'unknown'}. The pairing {state}."
 
     # ------------------------------------------------------------------ owner
+
+    async def _locale_command(self, tenant: Tenant, text: str) -> str | None:
+        """Slice 2 (owner, 2026-11-13): `timezone [IANA name]` and `holidays [country code|none]`. A change rebuilds the wearer's runtime, so
+        quiet hours, check-in slots, the evaluated day and the release windows follow the new clock from the next cycle on."""
+        parts = text.strip().split()
+        if not parts or parts[0].lower() not in ("timezone", "holidays") or len(parts) > 2:
+            return None
+        kind = parts[0].lower()
+        if tenant.is_tenant_zero:
+            return TEXTS["locale_owner"]
+        runtime = await self._supervisor.get_or_build(tenant.id)
+        if runtime is None or runtime.tenant_id != tenant.id:
+            return TEXTS["unavailable"]
+        store = WearerLocaleStore(runtime.core)
+        if len(parts) == 1:
+            current = store.get()
+            if kind == "timezone":
+                return TEXTS["timezone_show"].format(current.timezone or "not set (the keyholder's is used)")
+            shown = {None: "not set (the keyholder's are used)", "": "none"}.get(current.holiday_country, current.holiday_country)
+            return TEXTS["holidays_show"].format(shown)
+        now = self._clock.now()
+        if kind == "timezone":
+            value = valid_timezone(parts[1])
+            if value is None:
+                return TEXTS["timezone_invalid"]
+            await asyncio.to_thread(store.set_timezone, value, now=now)
+            reply = TEXTS["timezone_set"].format(value)
+        else:
+            value = await asyncio.to_thread(normalize_country, parts[1])
+            if value is None:
+                return TEXTS["holidays_invalid"]
+            await asyncio.to_thread(store.set_holiday_country, value, now=now)
+            reply = TEXTS["holidays_set"].format(value or "none")
+        await self._supervisor.stop_tenant(tenant.id)          # the next reconcile rebuilds it with the new setting
+        return reply
 
     def _owner_command(self, text: str) -> str | None:
         parts = text.strip().split()

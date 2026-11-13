@@ -49,6 +49,7 @@ from system.composition import RulesExecutionWiring, build_rules_and_execution
 from system.managed_lock_source import ManagedLockObservationSource
 from system.periodic import run_periodic_cycle
 from system.startup import on_system_startup
+from system.wearer_locale import WearerLocale, WearerLocaleStore
 from task_catalog.repository import TaskCatalog
 from task_runtime.repository import TaskRuntime
 from tenancy.registry import TenantError, TenantRegistry, resolve_db_path
@@ -144,12 +145,17 @@ def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
     return memory, conditioning, provider, sink
 
 
-def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str) -> Config:
+def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str, locale: WearerLocale | None = None) -> Config:
     """The tenant's settings: the owner's flags and tuning, but THIS tenant's database and wearer. Settings that name a person of the
-    owner's system (check-in user, execution wearer) never leak into a tenant; the keyholder id is the platform's single value."""
+    owner's system (check-in user, execution wearer) never leak into a tenant; the keyholder id is the platform's single value.
+    Slice 2 (owner, 2026-11-13): the wearer's own time zone and holiday country (`timezone` / `holidays` in their DM) replace the owner's;
+    a setting never made falls back to the owner's."""
+    locale = locale or WearerLocale()
+    zone = {"app_timezone": locale.timezone} if locale.timezone else {}
+    days = {"holiday_country": locale.holiday_country} if locale.holiday_country is not None else {}
     return dataclasses.replace(
         base, db_path=db_path, chaster_execution_wearer_user_id=wearer_user_id, check_in_user_id=None,
-        enable_chaster_messaging=False, chaster_llm_tools_enabled=False, enable_multi_wearer=False)
+        enable_chaster_messaging=False, chaster_llm_tools_enabled=False, enable_multi_wearer=False, **zone, **days)
 
 
 class TenantFactory:
@@ -190,7 +196,9 @@ class TenantFactory:
         # 2b. Owner, 2026-11-13: the Trust domains this tenant's configuration names, created once with consent: the accepted invitation names
         # the wearer's trust records. Without them the daily evaluation, the check-in level and supervision never ran for an additional wearer.
         from system.tenant_gateway import invitation_text           # lazy: the gateway imports this module
-        created = ensure_domains_with_consent(core, named_trust_domains(tenant_config(s.config, db_path=path, wearer_user_id=wearer.id)),
+        locale = WearerLocaleStore(core).get()
+        cfg = tenant_config(s.config, db_path=path, wearer_user_id=wearer.id, locale=locale)
+        created = ensure_domains_with_consent(core, named_trust_domains(cfg),
                                               explanation=invitation_text(tenant.display_name), comment="tenant: accepted invitation", now=now)
         if created:
             logger.info("Tenant %s: created the Trust domains %s.", tenant.id, created)
@@ -216,7 +224,6 @@ class TenantFactory:
             keyholder_user_id=s.config.chaster_execution_keyholder_user_id, keyholder_tokens=s.keyholder_background_tokens or s.keyholder_token_manager,
             keyholder_connections=s.keyholder_connections, lock_client=s.lock_client, clock=s.clock,
             wearer_tokens=tokens, wearer_connections=connections)
-        cfg = tenant_config(s.config, db_path=path, wearer_user_id=wearer.id)
         sender = s.check_in_sender_factory(path, core) if s.check_in_sender_factory is not None else None
         wiring = build_rules_and_execution(
             cfg, core, connections=connections, oauth_client=s.oauth_client, lock_client=s.lock_client, token_manager=tokens,

@@ -46,5 +46,10 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
    level and supervision never ran. `TenantFactory.build` now creates the domains the tenant configuration names
    (`trust_manager.domain_admin.ensure_domains_with_consent`), each with its consent record first, quoting the invitation the wearer accepted
    (which names their trust records). Only an ACTIVE tenant is ever built; a rebuild creates nothing twice.
-2. Next: the wearer's own time zone and public holidays (today every wearer gets the owner's).
-3. Then: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the notification queue, the confession handling.
+2. **The wearer's own time zone and public holidays (done).** The wearer sends `timezone <IANA name>` (e.g. `timezone Europe/Berlin`) and
+   `holidays <country code|none>` in their DM; bare `timezone` / `holidays` shows the current value. `system/wearer_locale.py` validates them
+   (a region IANA name or `UTC`; a country the `holidays` package supports) and stores them in the tenant's own database (migration 061,
+   `wearer_locale`). `tenant_config` applies them over the owner's APP_TIMEZONE / HOLIDAY_COUNTRY, so quiet hours, the workday, check-in slots,
+   the evaluated day and the release windows follow the wearer's clock; a change drops the runtime and the next reconcile rebuilds it. A setting
+   never made falls back to the owner's. The welcome text after `accept` asks the wearer to set both first.
+3. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the notification queue, the confession handling.
