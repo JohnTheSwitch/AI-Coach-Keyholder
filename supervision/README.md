@@ -97,6 +97,8 @@ row, and one miss started it over.
 - **Probation:** `PROBATION_CLEAN_DAYS` (7) clean days in a row, each with at least one answered check-in, end Supervision Mode whatever the score
   (`on_daily_evaluation`, from `daily_evaluation.completed`, which now carries `trust_domain`, `check_ins_due` and `check_ins_ok`). A day with
   nothing due or a vacation day neither counts nor breaks the run; any other day starts it over. Only the daily evaluation's domain (routine).
+  Owner, 2026-11-13: only incidents of that domain spoil a day (a hygiene incident no longer does), and the repeated-missed-check-ins incident,
+  created the next morning, never spoils a day (its misses already spoiled theirs).
 - **Entering needs a falling recalculation:** after a probation exit the score is still low, and a rising one must not put the wearer straight back.
 - **Hygiene** (owner, 2026-11-13): hygiene Trust had no way up and hygiene supervision no way out. A planned opening relocked on time emits
   `hygiene_opening.relocked_on_time` (exemptions), recorded as `hygiene_on_time` evidence of **+0.02**. Supervision in a domain without daily

@@ -13,7 +13,7 @@ what is deferred.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
@@ -49,6 +49,9 @@ from infrastructure.time_format import parse_iso as _parse_iso
 # Never a Penalty Window, never an Extension: the check-in escalation (supervision/escalation.py), and a detection the wearer never answered
 # (infractions/signals.py UNANSWERED_RULE_GROUP, owner 2026-11-10: silence is Trust and a Warning only). Pinned by tests, because this package imports neither.
 # EXEMPTION_OVERRIDE (owner, 2026-11-13): taking a declined exemption anyway is honest, so it costs Trust and a Warning, never a window.
+# Owner, 2026-11-13: an earlier offense of the same kind counts only within this many days, so a quiet month earns the first-offense warning
+# back (before, one warning was used up for life).
+PRIOR_OFFENSE_LOOKBACK = timedelta(days=30)
 WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE", "DETECTION_UNANSWERED", "EXEMPTION_OVERRIDE"})
 
 
@@ -235,9 +238,10 @@ class PenaltyEngine:
             max_target = MAX_TARGET_ACTIVE_HOURS
             if self._policy is not None:
                 prior = tx.fetch_one(
-                    "SELECT (SELECT COUNT(*) FROM incident_consumption WHERE rule_group_id = ? AND trust_domain = ?) + "
-                    "(SELECT COUNT(*) FROM incident_warnings WHERE rule_group_id = ? AND trust_domain = ?) AS n",
-                    (rule_group_id, trust_domain, rule_group_id, trust_domain),
+                    "SELECT (SELECT COUNT(*) FROM incident_consumption WHERE rule_group_id = ? AND trust_domain = ? AND consumed_at >= ?) + "
+                    "(SELECT COUNT(*) FROM incident_warnings WHERE rule_group_id = ? AND trust_domain = ? AND consumed_at >= ?) AS n",
+                    (rule_group_id, trust_domain, _iso(now - PRIOR_OFFENSE_LOOKBACK),
+                     rule_group_id, trust_domain, _iso(now - PRIOR_OFFENSE_LOOKBACK)),
                 )["n"]
                 plan = self._policy.plan(tx, trust_domain=trust_domain, rule_group_id=rule_group_id,
                                          severity=intrinsic_severity, prior_offenses=prior)

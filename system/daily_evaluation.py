@@ -11,7 +11,15 @@ previous local day is evaluated exactly once:
 
 Everything for one date happens in ONE transaction and is keyed by (user, date): a re-run, a restart or two instances
 change nothing twice. Missed days (the process was down) are caught up, at most 7 and oldest first; the very first
-run evaluates only yesterday. Goal definition of a day: a goal is "assigned" for date d when its progress period ended on
+run evaluates only yesterday.
+
+Owner, 2026-11-13 (before, the pool filled on bad days and one incident spoiled days it should not):
+- A day without an assigned goal uses the share of check-ins answered as its goal ratio (1.0 only when nothing was due either), and a day
+  with a confirmed incident in any domain adds nothing to the pool.
+- `violations` (clean day, probation) counts only incidents of this evaluation's own Trust domain, and never the repeated-missed-check-ins
+  incident: it is created the morning after, and its misses already spoiled their own day.
+
+Goal definition of a day: a goal is "assigned" for date d when its progress period ended on
 d (the latest evidence of the goal counts) or it was marked COMPLETED on d (met). A day without any such goal has a goal
 ratio of 1.0.
 """
@@ -40,6 +48,8 @@ __all__ = ["DailyEvaluationTask", "DayFacts", "MAX_CATCH_UP_DAYS"]
 
 MAX_CATCH_UP_DAYS = 7
 _CHECK_IN_CONCLUDED = ("answered", "answered_uncertain", "insufficient", "missed")
+# Its misses already spoil their own day; the incident itself is created the next morning (owner, 2026-11-13: no double count).
+_NOT_A_DAY_VIOLATION = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE"})
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,7 @@ class DayFacts:
     check_ins_due: int
     check_ins_ok: int
     violations: int
+    any_violations: int = 0     # confirmed incidents of the day in ANY domain (still without the repeated-misses one): no pool progress
 
 
 class DailyEvaluationTask:
@@ -109,11 +120,12 @@ class DailyEvaluationTask:
             outcome[r["goal_group_id"]] = r["outcome"] == "met"
         for r in completed:
             outcome[r["goal_group_id"]] = True
-        violations = sum(1 for c in self._trust.get_confirmed_incidents_since(start) if c.created_at < end)
+        day_incidents = [c for c in self._trust.get_confirmed_incidents_since(start)
+                         if c.created_at < end and c.rule_group_id not in _NOT_A_DAY_VIOLATION]
         return DayFacts(
             goals_assigned=len(outcome), goals_met=sum(outcome.values()), check_ins_due=len(check_ins),
             check_ins_ok=sum(1 for c in check_ins if c["status"] in ("answered", "answered_uncertain")),
-            violations=violations,
+            violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
         )
 
     def _evaluate(self, day: date, now: datetime) -> bool:
@@ -139,7 +151,9 @@ class DailyEvaluationTask:
             streak_before = int(streak_row["streak"]) if streak_row else 0
 
             threshold = self._conditioning.threshold_in(tx, self._user) if self._conditioning is not None else 1
-            result = apply_day(pool_before, facts.goals_met, facts.goals_assigned, score, threshold)
+            done, total = ((facts.goals_met, facts.goals_assigned) if facts.goals_assigned
+                           else (facts.check_ins_ok, facts.check_ins_due))
+            result = apply_day(pool_before, done, total, score, threshold, earning=facts.any_violations == 0)
             if result.tokens_earned:
                 self._engine._earn_in_transaction(
                     tx, user_id=self._user, amount=result.tokens_earned, reason_code=TOKEN_SOURCE,

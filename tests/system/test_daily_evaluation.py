@@ -295,3 +295,52 @@ class TestWiring:
         assert wiring.daily is not None and wiring.daily._domain == "routine" and wiring.daily._user == "w"
         off = build_rules_and_execution(config(wiring_core), wiring_core, **_chaster_parts(wiring_core))
         assert off.daily is None
+
+
+class TestOwnerRules20261113:
+    """Owner, 2026-11-13: the pool no longer fills on bad days, and one incident no longer spoils days it should not."""
+
+    def _incident(self, w, rule="x", domain="routine", at=None):
+        from system.composition import _LOW_SEVERITY_EVIDENCE
+        from trust_manager.models import ConfirmationSource, IncidentConfirmation
+        if domain != "routine" and w.tm.get_domain_state(domain) is None:
+            w.tm.create_domain(domain_id=domain, display_name="H", description="d", created_via_consent_id="c", now=local(MON - timedelta(days=30)))
+        inc = w.tm.register_incident_report(rule_group_id=rule, trust_domain=domain, description="d", evidence=_LOW_SEVERITY_EVIDENCE,
+                                            now=at or local(MON, 12))
+        w.tm.confirm_incident(inc.id, new_confirmation=IncidentConfirmation.CONFIRMED, source=ConfirmationSource.SYSTEM_VERIFIED,
+                              evidence_description="e", now=at or local(MON, 12))
+
+    def test_a_goalless_day_uses_the_check_in_share(self, w) -> None:
+        w.check_in(MON, 1, "answered")
+        for n in (2, 3):
+            w.check_in(MON, n, "missed")
+        w.task.run(local(TUE, 1))
+        row = w.rows()[0]
+        trust = Decimal(row["trust_used"])
+        expected = ((Decimal("0.75") / 3 + Decimal("0.25") * trust) * Decimal("0.286")).quantize(Decimal("0.000001"))
+        assert Decimal(row["progress"]) == expected
+
+    def test_all_check_ins_missed_earn_only_the_trust_part(self, w) -> None:
+        for n in (1, 2, 3):
+            w.check_in(MON, n, "missed")
+        w.task.run(local(TUE, 1))
+        row = w.rows()[0]
+        assert Decimal(row["progress"]) == (Decimal("0.25") * Decimal(row["trust_used"]) * Decimal("0.286")).quantize(Decimal("0.000001"))
+
+    def test_a_day_with_an_incident_in_any_domain_adds_nothing(self, w) -> None:
+        self._incident(w, domain="hyg")
+        w.task.run(local(TUE, 1))
+        assert Decimal(w.rows()[0]["progress"]) == 0 and w.pool() == 0
+
+    def test_another_domains_incident_does_not_spoil_the_day(self, w) -> None:
+        self._incident(w, domain="hyg")
+        w.task.run(local(TUE, 1))
+        row = w.rows()[0]
+        assert row["violations"] == 0 and row["clean"] == 1 and w.streak() == 1
+
+    def test_the_repeated_misses_incident_does_not_spoil_the_next_day(self, w) -> None:
+        self._incident(w, rule="CHECKIN_REPEATED_NONCOMPLIANCE", at=local(MON, 6))
+        w.check_in(MON, 1, "answered")
+        w.task.run(local(TUE, 1))
+        row = w.rows()[0]
+        assert row["violations"] == 0 and row["clean"] == 1 and Decimal(row["progress"]) > 0

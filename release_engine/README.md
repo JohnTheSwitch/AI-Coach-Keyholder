@@ -69,7 +69,9 @@ log file, never into an event payload, a message or a model, which still see no 
 ## Phase 3: token earning and the re-freeze
 - **Earning (owner rule, superseding the per-goal token):** tokens come EXCLUSIVELY from the daily Token Progress Pool
   (`token_pool.py`, evaluated at local midnight by `system/daily_evaluation.py`): `P_daily = (0.75 * goals_met/goals_assigned
-  + 0.25 * Trust) * 0.286` (a day without goals counts as a goal ratio of 1.0); each full 1.0 earns one token
+  + 0.25 * Trust) * 0.286`. Owner, 2026-11-13: a day without goals uses the share of check-ins answered as its goal ratio (1.0 only when
+  nothing was due either), and a day with a confirmed incident in any domain adds nothing (before, the pool filled on bad days too, about one
+  token every five days at Trust 0.00 with every check-in missed). Each full 1.0 earns one token
   (`token_pool.earned`, idempotent per date) and is subtracted. A completed goal earns nothing by itself.
 - **Release session:** the discretionary window in which the provider confirmed a release (`last_confirmed_release()`,
   `release_session_over()`). It ends when quiet or workday hours begin or the local date changes (this is also the daily

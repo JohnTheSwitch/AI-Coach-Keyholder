@@ -174,3 +174,20 @@ def test_severity_mapping() -> None:
     from penalty_engine.duration import ViolationSeverity as V
     from penalty_engine.policy import severity_of
     assert [severity_of(t) for t in SeverityTier] == [V.MINOR, V.MODERATE, V.SEVERE, V.SEVERE]
+
+
+class TestTheWarningComesBack:
+    """Owner, 2026-11-13: an earlier offense of the same kind counts only within 30 days."""
+
+    def test_after_thirty_quiet_days_it_is_a_warning_again(self, w) -> None:
+        from penalty_engine.repository import PRIOR_OFFENSE_LOOKBACK
+        assert PRIOR_OFFENSE_LOOKBACK == timedelta(days=30)
+        w.consume(MINOR, rule="late")
+        _, window = w.consume(MINOR, rule="late", at=NOW + timedelta(days=30, minutes=1))
+        assert window is None and len(w.warnings()) == 2 and w.windows() == []
+
+    def test_within_thirty_days_it_still_opens_a_window(self, w) -> None:
+        w.set_trust(0.0)
+        w.consume(MINOR, rule="late")
+        _, window = w.consume(MINOR, rule="late", at=NOW + timedelta(days=29))
+        assert window is not None

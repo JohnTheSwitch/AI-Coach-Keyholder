@@ -158,7 +158,8 @@ to -- noted in its own comment in prose instead.
   `target_active_hours()` and the extension capacity use it. The reserved half is only reachable through extensions of
   later violations inside the active window.
 - **First minor offense = warning:** consumed into `incident_warnings` (event `penalty_warning.recorded`), no window; the Trust
-  drop already came with the incident evidence. A rule group counts earlier consumptions and warnings as prior offenses.
+  drop already came with the incident evidence. A rule group counts earlier consumptions and warnings as prior offenses,
+  owner 2026-11-13: only those of the last 30 days (`PRIOR_OFFENSE_LOOKBACK`), so a quiet month earns the warning back.
 - Without a policy (`PenaltyEngine(...)` built directly, as in older tests) the legacy 24 h base and the 336 h cap apply. The
   runtime builds the engine through `system/penalty_policy.make_penalty_engine`.
 - `violations_catalog.py`: the catalog with default Trust drops (minor 0.02, moderate 0.05, severe 0.10) for entries without a

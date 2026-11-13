@@ -53,16 +53,17 @@ def daily_progress(completed: int, total: int, trust: float | Decimal) -> Decima
 
 
 def apply_day(pool: float | Decimal, completed: int, total: int, trust: float | Decimal,
-              threshold: float | Decimal = _ONE) -> PoolDay:
+              threshold: float | Decimal = _ONE, *, earning: bool = True) -> PoolDay:
     """One day's progress. A token is paid each time the pool reaches `threshold` (1.0 by default; Phase F4 Progressive Conditioning uses
-    base(mode) * factor) and the threshold is subtracted. A stored pool above a lowered threshold simply pays out."""
+    base(mode) * factor) and the threshold is subtracted. A stored pool above a lowered threshold simply pays out.
+    `earning=False` (owner, 2026-11-13: a day with a confirmed incident) adds nothing."""
     p = _dec(pool)
     t = _dec(threshold)
     if p < 0:
         raise ValueError("a stored pool is never negative")
     if t <= 0:
         raise ValueError("threshold must be positive")
-    progress = daily_progress(completed, total, trust)
+    progress = daily_progress(completed, total, trust) if earning else Decimal(0).quantize(_QUANT)
     p += progress
     earned = 0
     while p >= t:
