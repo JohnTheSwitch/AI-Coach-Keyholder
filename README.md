@@ -1,5 +1,8 @@
 # AI Coach & Keyholder
 
+> **New here? Start with [`SETUP.md`](SETUP.md)**: from download to a running coach, step by step. `python -m cli setup check` shows what
+> is still missing at any time. The rest of this README is the project's architecture and development history.
+
 A personal, local AI system combining a long-term coach with a
 consistency/accountability system. See [`philosophy.md`](philosophy.md)
 for the principles every decision and every future change must satisfy,
@@ -79,7 +82,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**5101 passing tests** across the whole repository (`pytest`), including
+**5109 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms

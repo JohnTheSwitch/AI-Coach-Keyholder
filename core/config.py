@@ -147,10 +147,10 @@ class Config:
     quiet_hours_end: str = "07:00"
 
     # v0.39 scheduling windows (schedule_windows/). All local-time rules use APP_TIMEZONE.
-    app_timezone: str = "Europe/Prague"
+    app_timezone: str = "UTC"
     workday_start: str = "07:00"
     workday_end: str = "16:30"
-    holiday_country: str = "CZ"
+    holiday_country: str = ""
     weekend_release_start: str = "10:00"   # release base time on weekends / public holidays
     # Adaptive release: target = WORKDAY_END + a pseudorandom offset in this range (minutes).
     unlock_window_min_offset_minutes: int = 30
@@ -260,10 +260,10 @@ class Config:
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),
-            app_timezone=get("APP_TIMEZONE", "Europe/Prague") or "Europe/Prague",
+            app_timezone=get("APP_TIMEZONE", "UTC") or "UTC",               # owner, 2026-11-13: neutral default; set yours in .env
             workday_start=get("WORKDAY_START", "07:00") or "07:00",
             workday_end=get("WORKDAY_END", "16:30") or "16:30",
-            holiday_country=get("HOLIDAY_COUNTRY", "CZ") or "CZ",
+            holiday_country=(get("HOLIDAY_COUNTRY", "") or "").strip(),      # empty: no public holidays
             weekend_release_start=get("WEEKEND_RELEASE_START", "10:00") or "10:00",
             unlock_window_min_offset_minutes=int(get("UNLOCK_WINDOW_MIN_OFFSET_MINUTES", "30") or "30"),
             unlock_window_max_offset_minutes=int(get("UNLOCK_WINDOW_MAX_OFFSET_MINUTES", "210") or "210"),

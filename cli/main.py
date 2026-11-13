@@ -360,6 +360,43 @@ def build_peer_review_decisions_cli():
     return build_peer_review_decisions(config, CoreDatabase(config.db_path))
 
 
+def build_setup_context():
+    """(config, core, model_ready) for `setup`: the local configuration, the database (migrated like the bot does) and Ollama's readiness."""
+    from conversation_engine.ollama_adapter import OllamaConversationModel
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+
+    config = Config.load()
+    core = CoreDatabase(config.db_path) if Path(config.db_path).exists() else None     # read-only: a missing database is reported, not created
+    model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model)
+    return config, core, model.check_ready
+
+
+def run_setup(args, *, out, now, factory, domain_factory) -> int:
+    from cli.setup import DOMAIN_TEXTS, named_trust_domains, render_report, setup_report
+    config, core, model_ready = (factory or build_setup_context)()
+    if args.setup_command == "check":
+        print(render_report(setup_report(config, core, model_ready=model_ready)), file=out)
+        return 0
+    admin = (domain_factory or build_trust_domain_admin)()
+    refusal = admin.authorize(args.owner_id)
+    if refusal is not None:
+        print(_DOMAIN_TEXT[refusal.value], file=out)
+        return 3
+    if not args.yes:
+        print("This creates the Trust domains your configuration names, each with a consent record. Add --yes to do it.", file=out)
+        return 3
+    existing = {r["domain_id"] for r in admin.list_domains()}
+    for name in named_trust_domains(config):
+        if name in existing:
+            print(f"{name}: already exists.", file=out)
+            continue
+        display, description = DOMAIN_TEXTS.get(name, (name.replace("_", " ").title(), f"The {name} Trust domain."))
+        outcome = admin.create(actor=args.owner_id, domain_id=name, display_name=display, description=description, confirmed=True, now=now())
+        print(f"{name}: {_DOMAIN_TEXT[outcome.value]}", file=out)
+    return 0
+
+
 def build_release_test_request():
     """(engine, owner_user_id, release_user_id) for `release-test-override`. The release user is chosen like the composition does."""
     from core.config import Config
@@ -818,7 +855,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
          ideas_factory: Callable[[], tuple] | None = None, research_model_factory: Callable[[float], object] | None = None,
          config_factory: Callable[[], tuple] | None = None, review_factory: Callable[[], object] | None = None,
          peer_factory: Callable[[], object] | None = None, domain_factory: Callable[[], object] | None = None,
-         escalation_factory: Callable[[], tuple] | None = None, release_test_factory: Callable[[], tuple] | None = None) -> int:
+         escalation_factory: Callable[[], tuple] | None = None, release_test_factory: Callable[[], tuple] | None = None,
+         setup_factory: Callable[[], tuple] | None = None) -> int:
     from infrastructure.clock import SystemClock
 
     out = out or sys.stdout
@@ -895,6 +933,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
     dr.add_argument("--yes", action="store_true")
     for dp in dsub.choices.values():
         dp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    setup = sub.add_parser("setup", help="Owner, 2026-11-13: `check` (read-only: what is set up and what is missing) or `init` (create the "
+                                          "Trust domains the configuration names, with consent).")
+    ssub = setup.add_subparsers(dest="setup_command", required=True)
+    ssub.add_parser("check", help="READ-ONLY: one line per piece of the setup; never prints a secret.")
+    si = ssub.add_parser("init", help="Create the missing Trust domains the configuration names (owner only, --yes).")
+    si.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    si.add_argument("--yes", action="store_true")
     rt = sub.add_parser("release-test-override", help="Owner, 2026-11-13: file ONE test release that spends a token despite supervision or a "
                                                        "penalty window; the running bot carries it out only with a confirmed barrier in free time.")
     rt.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
@@ -1107,6 +1152,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
                                    confirmed=args.yes, now=now())
         print(f"{_PEER_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
         return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
+    if args.command == "setup":
+        return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory)
     if args.command == "release-test-override":
         return run_release_test_override(args, out=out, now=now, factory=release_test_factory)
     if args.command == "freeze-lock":
