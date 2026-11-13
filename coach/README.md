@@ -77,3 +77,20 @@ needs `ENABLE_CHECK_INS`, and multi-day memory needs `ENABLE_COACHING_MEMORY`.
 ## Only yesterday's commitment is asked about (owner, 2026-11-12)
 
 `OUTCOME_WINDOW` is one day: a Tuesday card shown on Thursday was stale. Older open commitments lapse, at no cost.
+
+## Commitment time windows (owner, 2026-11-13; honesty and proof, slice 1; migration 062)
+
+"To prove something, it has to be reported right after it." Design: `docs/architecture/honesty_and_proof_proposal.md`.
+
+- **Accepting picks the part of the day.** A commitment card offers **Morning** (end of quiet hours to 12:00), **Afternoon** (12:00-18:00),
+  **Evening** (18:00 to the waking day's end) and **Any time**, only the parts that have not ended; one tap accepts it. The waking day ends
+  `ASK_LEAD` (30 minutes) before quiet hours, so the question below is asked and answered before them. Accepted after its waking day: it can
+  still be reported for `REPORT_GRACE`, and is never asked about.
+- **"Done?" when it ends.** `CoachDesk.due_asks` (every minute, `CoachDm.ask_loop`) queues the card once per commitment through the notification
+  queue: **Done / Partly / Not done / Still doing it**. Nothing is asked during a vacation, or after the report window (the bot was off).
+  **Still doing it** asks once more, up to `EXTENSION` (1 hour) later, never in quiet hours and never past the report window.
+- **The report window.** A Kept counts from the window start plus the duration its text names (and the existing `MIN_KEPT_AFTER` rule) until
+  `REPORT_GRACE` (2 hours) after the window ends. Outside it, it is recorded (`report_timing` too_soon / late) and earns nothing: no Trust, no goal
+  result. A late Kept is told why; the review card says so beforehand. A **Not kept always counts**: owning up is never too late.
+- Commitments from before migration 062 have no window: the whole waking day of their date applies.
+- Without `to_utc` (tests, a wiring without a time zone) there are no windows and only the too-soon rule applies.

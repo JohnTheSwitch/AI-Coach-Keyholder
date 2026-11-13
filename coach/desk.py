@@ -33,7 +33,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Callable, Mapping
 
@@ -55,6 +55,7 @@ logger = logging.getLogger("ai_coach_keyholder.coach.desk")
 __all__ = [
     "CoachDesk", "Proposal", "SubmitResult", "Commitment", "Outcome", "MAX_PROPOSALS_PER_DAY", "MAX_COMMITMENTS_PER_DAY", "MAX_ACTIVE_GOALS",
     "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW", "without_day_words", "MIN_KEPT_AFTER", "reported_too_soon",
+    "PARTS", "REPORT_GRACE", "ASK_LEAD", "EXTENSION",
 ]
 
 MAX_PROPOSALS_PER_DAY = 3
@@ -69,6 +70,14 @@ PROGRESS_WINDOW = timedelta(days=14)
 MIN_KEPT_AFTER = timedelta(minutes=30)
 _DURATION = re.compile(r"(\d+(?:[.,]\d+)?|an?|half an|one|two|three)\s*(hours?|hrs?|h|hodin[auy]?|hod|minutes?|mins?|minut[ay]?|min)\b")
 _WORD_NUMBERS = {"a": 1.0, "an": 1.0, "one": 1.0, "half an": 0.5, "two": 2.0, "three": 3.0}
+# Owner, 2026-11-13 (honesty and proof, slice 1): "to prove something, it has to be reported right after it". A commitment gets a part of its day
+# when it is accepted; the bot asks "Done?" when that part ends, and a Kept counts only until REPORT_GRACE after it. Later it is recorded and earns
+# nothing (like a Kept that came too soon). A Not kept always counts: owning up is never too late.
+PARTS = ("morning", "afternoon", "evening", "any")
+REPORT_GRACE = timedelta(hours=2)
+ASK_LEAD = timedelta(minutes=30)          # the waking day ends this long before quiet hours, so "Done?" is asked and answered before them
+EXTENSION = timedelta(hours=1)            # "Still doing it" moves the question once, by up to this much
+_NOON, _SIX_PM = time(12, 0), time(18, 0)
 
 
 def _named_duration(text: str) -> timedelta:
@@ -162,6 +171,10 @@ class CoachDesk:
         # Owner, 2026-11-13: (UTC start, UTC end) of a local date. When set, a commitment tied to a goal and reported kept or not kept records that
         # day's goal result (`coach.goal_result_reported`); None: goals get no result from commitments.
         self.day_bounds: Callable[[date], tuple[datetime, datetime]] | None = None
+        # Owner, 2026-11-13: the user's local date + clock time -> UTC, and their quiet hours (start, end). With `to_utc` set, commitments get a part
+        # of the day and the report window applies; None (tests, old wiring): no windows, only the too-soon rule.
+        self.to_utc: Callable[[date, time], datetime] | None = None
+        self.quiet: tuple[time, time] = (time(22, 0), time(7, 0))
 
     # ------------------------------------------------------------------ model side
 
@@ -280,7 +293,7 @@ class CoachDesk:
 
     # ------------------------------------------------------------------ the user's buttons
 
-    def decide(self, user_id: str, proposal_id: str, *, accept: bool, now: datetime) -> str:
+    def decide(self, user_id: str, proposal_id: str, *, accept: bool, now: datetime, part: str = "any") -> str:
         """The ONLY way a proposal takes effect. Returns the text for the user. A second press, an expired card or someone else's press changes
         nothing."""
         self._expire(now)
@@ -294,27 +307,43 @@ class CoachDesk:
             return "Declined. I won't press it." if self._close(proposal_id, "pending", "declined", now) else "That proposal is being handled."
         kind, payload = ActionKind(row["kind"]), json.loads(row["payload_json"])
         if kind is ActionKind.PROPOSE_COMMITMENT:
-            return self._accept_commitment(row, payload, now)
+            return self._accept_commitment(row, payload, now, part if part in PARTS else "any")
         if kind is ActionKind.ADAPT_GOAL and self._targets_frozen(user_id):
             return "Not while you are locked. An agreed target stays as it is until you are known to be unlocked. Your card stays open until it expires."
         return self._accept_goal_change(row, kind, payload, now)
 
-    def _accept_commitment(self, row, payload: dict, now: datetime) -> str:
+    def _accept_commitment(self, row, payload: dict, now: datetime, part: str = "any") -> str:
         commitment_id = str(uuid.uuid4())
+        window, ask_at = None, None
+        if self.to_utc is not None:
+            window = self.window_for(part, date.fromisoformat(payload["for_date"]))
+            if window is not None and window[1] <= now and part != "any":
+                window = None
+            if window is None and part != "any":
+                return "That part of the day is already over. Pick a later one."
+            if window is None or window[1] <= now:
+                window = (now, now)                     # accepted after its waking day: it can still be reported for REPORT_GRACE, never asked about
+            else:
+                ask_at = window[1]
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE coach_proposals SET status = 'accepted', resolved_at = ?, result_id = ? WHERE id = ? AND status = 'pending'",
                               (_iso(now), commitment_id, row["id"])).rowcount
             if not done:
                 return False
-            tx.execute("INSERT INTO daily_commitments (id, user_id, for_date, text, goal_group_id, task_assignment_id, proposal_id, status, created_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+            tx.execute("INSERT INTO daily_commitments (id, user_id, for_date, text, goal_group_id, task_assignment_id, proposal_id, status, created_at, "
+                       "window_part, window_start, window_end, ask_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)",
                        (commitment_id, self.user_id, payload["for_date"], payload["text"], payload.get("goal_group_id"),
-                        payload.get("task_assignment_id"), row["id"], _iso(now)))
+                        payload.get("task_assignment_id"), row["id"], _iso(now), part if window is not None else None,
+                        _iso(window[0]) if window else None, _iso(window[1]) if window else None, _iso(ask_at) if ask_at else None))
             self._event(tx, "coach.proposal_resolved", now, proposal_id=row["id"], resolution="accepted")
             return True
 
-        return "Done, that's your commitment." if apply_transition(self._core, write=write) else "That proposal is being handled."
+        if not apply_transition(self._core, write=write):
+            return "That proposal is being handled."
+        if ask_at is not None:
+            return f"Done, that's your commitment. I'll ask you at {self._clock_text(ask_at)} whether it's done."
+        return "Done, that's your commitment."
 
     def _accept_goal_change(self, row, kind: ActionKind, payload: dict, now: datetime) -> str:
         """GoalManager has its own transactions, so the proposal is CLAIMED first: a double press applies once. A failure puts the card back."""
@@ -348,17 +377,22 @@ class CoachDesk:
         kept raises `coach.commitment_kept` the same way (owner, 2026-11-13). Partly kept stays neutral. A commitment tied to a goal also records that
         day's goal result (`coach.goal_result_reported`), kept = met, not kept = missed."""
         counts = outcome in (Outcome.NOT_KEPT, Outcome.KEPT) and not self._paused(now)
+        late = [False]
 
         def write(tx: Transaction, _s: object) -> bool:
-            row = tx.fetch_one("SELECT for_date, goal_group_id, text, created_at FROM daily_commitments WHERE id = ? AND user_id = ? AND status = 'open'",
-                               (commitment_id, user_id))
-            earns = True
-            if outcome is Outcome.KEPT and row is not None and reported_too_soon(
-                    text=row["text"], made_at=_parse_iso(row["created_at"]), for_date=date.fromisoformat(row["for_date"]), today=self.today(now), now=now):
-                earns = False
-                decision("coach", "A commitment was reported kept implausibly soon: recorded, but it earns nothing.", commitment_id=commitment_id)
-            done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ? AND status = 'open'",
-                              (outcome.value, _iso(now), commitment_id, user_id)).rowcount
+            row = tx.fetch_one("SELECT for_date, goal_group_id, text, created_at, window_start, window_end FROM daily_commitments "
+                               "WHERE id = ? AND user_id = ? AND status = 'open'", (commitment_id, user_id))
+            earns, timing = True, None
+            if outcome is Outcome.KEPT and row is not None:
+                timing = self._timing(row, now)
+                if timing == "too_soon":
+                    decision("coach", "A commitment was reported kept implausibly soon: recorded, but it earns nothing.", commitment_id=commitment_id)
+                elif timing == "late":
+                    decision("coach", "A commitment was reported kept after its report window: recorded, but it earns nothing.", commitment_id=commitment_id)
+                earns = timing == "timely"
+                late[0] = timing == "late"
+            done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ?, report_timing = ? WHERE id = ? AND user_id = ? AND status = 'open'",
+                              (outcome.value, _iso(now), timing, commitment_id, user_id)).rowcount
             if done:
                 self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=outcome.value)
                 if counts and earns:
@@ -373,8 +407,114 @@ class CoachDesk:
 
         if user_id != self.user_id or not apply_transition(self._core, write=write):
             return "That commitment isn't open."
+        if late[0]:
+            return ("Noted. It came too late to count: a Kept counts until two hours after its time, so report it when you finish. "
+                    "I ask you when its time ends.")
         return {Outcome.KEPT: "Noted, well done.", Outcome.PARTLY: "Noted. Part of it still counts for you.",
                 Outcome.NOT_KEPT: "Noted, thanks for being straight about it."}[outcome]
+
+    # ------------------------------------------------------------------ time windows (owner, 2026-11-13)
+
+    def _waking(self, day: date) -> tuple[datetime, datetime] | None:
+        """(UTC start, UTC end) of the user's waking day on `day`: from the end of quiet hours to their start."""
+        if self.to_utc is None:
+            return None
+        quiet_start, quiet_end = self.quiet
+        start = self.to_utc(day, quiet_end)
+        end = self.to_utc(day if quiet_start > quiet_end else day + timedelta(days=1), quiet_start)
+        return (start, end) if end > start else None
+
+    def window_for(self, part: str, day: date) -> tuple[datetime, datetime] | None:
+        """The UTC window of a part of `day`, inside the waking day and ending ASK_LEAD before quiet hours. None when that part does not exist."""
+        waking = self._waking(day)
+        if waking is None or part not in PARTS:
+            return None
+        lo, hi = waking[0], waking[1] - ASK_LEAD
+        start, end = {"morning": (lo, self.to_utc(day, _NOON)), "afternoon": (self.to_utc(day, _NOON), self.to_utc(day, _SIX_PM)),
+                      "evening": (self.to_utc(day, _SIX_PM), hi), "any": (lo, hi)}[part]
+        start, end = max(start, lo), min(end, hi)
+        return (start, end) if end > start else None
+
+    def open_parts(self, day: date, now: datetime) -> tuple[str, ...]:
+        """The parts of `day` that have not ended yet (all of them when windows are off)."""
+        if self.to_utc is None:
+            return PARTS
+        return tuple(p for p in PARTS if (w := self.window_for(p, day)) is not None and w[1] > now)
+
+    def _timing(self, row, now: datetime) -> str:
+        made_at, for_date = _parse_iso(row["created_at"]), date.fromisoformat(row["for_date"])
+        if reported_too_soon(text=row["text"], made_at=made_at, for_date=for_date, today=self.today(now), now=now):
+            return "too_soon"
+        if row["window_start"] and now < _parse_iso(row["window_start"]) + _named_duration(row["text"]):
+            return "too_soon"
+        end = _parse_iso(row["window_end"]) if row["window_end"] else (self.window_for("any", for_date) or (None, None))[1]
+        if end is not None and now > end + REPORT_GRACE:
+            return "late"
+        return "timely"
+
+    def _clock_text(self, instant: datetime) -> str:
+        local = self.local_now(instant) if self.local_now is not None else instant
+        return local.strftime("%H:%M")
+
+    def due_asks(self, now: datetime, enqueue: Callable[[Transaction, Commitment, str], None]) -> int:
+        """Queues "Done?" for each open commitment whose ask time has come, at most once (`enqueue` runs in the same transaction). Nothing is asked
+        while a vacation is in force, or once its report window is over (the bot was off): it stays open and lapses as before."""
+        def write(tx: Transaction, _s: object) -> int:
+            rows = tx.fetch_all("SELECT id, for_date, text, window_part, window_end, ask_at FROM daily_commitments "
+                                "WHERE user_id = ? AND status = 'open' AND ask_at IS NOT NULL AND asked_at IS NULL", (self.user_id,))
+            asked = 0
+            for row in rows:
+                if _parse_iso(row["ask_at"]) > now:
+                    continue
+                tx.execute("UPDATE daily_commitments SET asked_at = ? WHERE id = ? AND asked_at IS NULL", (_iso(now), row["id"]))
+                if self._paused(now) or now > _parse_iso(row["window_end"]) + REPORT_GRACE:
+                    continue
+                self._event(tx, "coach.commitment_asked", now, commitment_id=row["id"])
+                enqueue(tx, Commitment(id=row["id"], for_date=date.fromisoformat(row["for_date"]), text=without_day_words(row["text"])),
+                        row["window_part"] or "any")
+                asked += 1
+            return asked
+
+        return apply_transition(self._core, write=write)
+
+    def extend(self, user_id: str, commitment_id: str, now: datetime) -> str:
+        """"Still doing it": the question comes once more, up to EXTENSION later, never in quiet hours and never past the report window."""
+        state: dict = {}
+
+        def write(tx: Transaction, _s: object) -> None:
+            row = tx.fetch_one("SELECT for_date, window_end, extended_at FROM daily_commitments WHERE id = ? AND user_id = ? AND status = 'open'",
+                               (commitment_id, user_id))
+            if row is None or not row["window_end"]:
+                return
+            deadline = _parse_iso(row["window_end"]) + REPORT_GRACE
+            state["deadline"] = deadline
+            if now >= deadline or row["extended_at"]:
+                return
+            waking = self._waking(date.fromisoformat(row["for_date"]))
+            ask = min(now + EXTENSION, deadline - timedelta(minutes=10), *(() if waking is None else (waking[1],)))
+            if ask > now + timedelta(minutes=10):
+                tx.execute("UPDATE daily_commitments SET ask_at = ?, asked_at = NULL, extended_at = ? WHERE id = ?", (_iso(ask), _iso(now), commitment_id))
+                state["ask"] = ask
+            else:
+                tx.execute("UPDATE daily_commitments SET extended_at = ? WHERE id = ?", (_iso(now), commitment_id))
+            self._event(tx, "coach.commitment_extended", now, commitment_id=commitment_id)
+
+        if user_id != self.user_id:
+            return "That commitment isn't open."
+        apply_transition(self._core, write=write)
+        if "deadline" not in state:
+            return "That commitment isn't open."
+        if now >= state["deadline"]:
+            return "Its time to report is over. Not kept still counts if you want to tell me."
+        until = self._clock_text(state["deadline"])
+        if "ask" in state:
+            return f"OK. I'll ask again at {self._clock_text(state['ask'])}. A Kept counts until {until}."
+        return f"OK. Tell me when you're done: a Kept counts until {until}."
+
+    def past_report_window(self, commitment_id: str, now: datetime) -> bool:
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT for_date, text, created_at, window_start, window_end FROM daily_commitments WHERE id = ?", (commitment_id,))
+        return row is not None and self._timing(row, now) == "late"
 
     def forget_all(self, user_id: str) -> int:
         """`forget all`: the proposals, refusal codes and commitments of this user. Goals are agreed records with an append-only history and stay."""

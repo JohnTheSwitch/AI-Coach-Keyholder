@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Callable
 
 from application.models import ActionSpec, OutgoingMessage
@@ -63,7 +63,7 @@ def _weekday(day: date) -> str:
     return f"{day.strftime('%A')} {day.day} {day.strftime('%B')}"
 
 
-def proposal_card(proposal: Proposal) -> tuple[str, tuple[ActionSpec, ...]]:
+def proposal_card(proposal: Proposal, parts: tuple[str, ...] = ()) -> tuple[str, tuple[ActionSpec, ...]]:
     payload = proposal.payload
     if proposal.kind is ActionKind.PROPOSE_GOAL:
         text = f"**Proposed goal:** {payload['title']}\nTarget: {payload['target']}"
@@ -75,8 +75,26 @@ def proposal_card(proposal: Proposal) -> tuple[str, tuple[ActionSpec, ...]]:
             text += f"\nGoal: {payload['goal_title']}"
         if payload.get("task_title"):
             text += f"\nTask: {payload['task_title']}"
+        if parts:
+            # Owner, 2026-11-13: accepting picks the part of the day, so the bot asks "Done?" when it ends (one tap, no extra question).
+            text += "\nWhen will you do it? I'll ask you when that time ends."
+            return text, tuple(ActionSpec(action_id=f"coach:{_PART_ACTIONS[p]}:{proposal.id}", label=_PART_LABELS[p], style="success") for p in parts) + (
+                ActionSpec(action_id=f"coach:decline:{proposal.id}", label="Decline", style="secondary"),)
     return text, (ActionSpec(action_id=f"coach:accept:{proposal.id}", label="Accept", style="success"),
                   ActionSpec(action_id=f"coach:decline:{proposal.id}", label="Decline", style="secondary"))
+
+
+_PART_ACTIONS = {"morning": "morning", "afternoon": "afternoon", "evening": "evening", "any": "accept"}
+_PART_LABELS = {"morning": "Morning", "afternoon": "Afternoon", "evening": "Evening", "any": "Any time"}
+_ACTION_PARTS = {action: part for part, action in _PART_ACTIONS.items()}
+_PART_WORDS = {"morning": "this morning's", "afternoon": "this afternoon's", "evening": "this evening's", "any": "today's"}
+ASK_BUTTONS = (("kept", "Done", "success"), ("partly", "Partly", "secondary"), ("missed", "Not done", "secondary"), ("later", "Still doing it", "secondary"))
+
+
+def ask_card(commitment: Commitment, part: str) -> tuple[str, tuple[ActionSpec, ...]]:
+    """The "Done?" the bot sends when a commitment's time ends (owner, 2026-11-13: proof only works right after the act)."""
+    text = f"**{commitment.text}**: that was {_PART_WORDS.get(part, _PART_WORDS['any'])} plan. Done?"
+    return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style in ASK_BUTTONS)
 
 
 def describe_time_of_day(local: datetime) -> str:
@@ -84,8 +102,10 @@ def describe_time_of_day(local: datetime) -> str:
     return f"{local.strftime('%A')} {part}"
 
 
-def review_card(commitment: Commitment) -> tuple[str, tuple[ActionSpec, ...]]:
+def review_card(commitment: Commitment, late: bool = False) -> tuple[str, tuple[ActionSpec, ...]]:
     text = f"**Your commitment for {_weekday(commitment.for_date)}:** {commitment.text}\nHow did it go?"
+    if late:
+        text += "\n(Its time to report is over, so a Kept no longer counts. Not kept still does.)"
     return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style, _ in OUTCOME_BUTTONS)
 
 
@@ -153,9 +173,13 @@ class CoachDm:
             commitment = self._desk.commitment_to_review(now, include_today=done)
             if commitment is not None and (check_in_reply or done or proposed or self._reminded.get(commitment.id) != self._desk.today(now)):
                 self._reminded[commitment.id] = self._desk.today(now)
-                cards.append(review_card(commitment))
+                cards.append(review_card(commitment, late=self._desk.past_report_window(commitment.id, now)))
         if proposed:
-            cards.append(proposal_card(outcome.proposal))
+            proposal = outcome.proposal
+            parts = ()
+            if proposal.kind is ActionKind.PROPOSE_COMMITMENT and self._desk.to_utc is not None:
+                parts = self._desk.open_parts(date.fromisoformat(proposal.payload["for_date"]), now) or ("any",)
+            cards.append(proposal_card(proposal, parts))
         if claimed:
             has_card = any(action.action_id.startswith(("coach:kept", "coach:partly", "coach:missed")) for _, actions in cards for action in actions)
             note = "Nothing is recorded until you press a button below." if has_card else "Nothing was recorded: there is no open commitment to mark."
@@ -183,6 +207,30 @@ class CoachDm:
     def forget_all(self, user_id: str) -> int:
         return self._desk.forget_all(user_id)
 
+    # ------------------------------------------------------------------ "Done?" at the end of a commitment's time (owner, 2026-11-13)
+
+    def queue_asks(self, now: datetime) -> int:
+        """Queues the due "Done?" cards (notification queue, never in quiet hours: the windows end before them)."""
+        from notifications.queue import enqueue_in_transaction
+
+        def enqueue(tx, commitment: Commitment, part: str) -> None:
+            text, actions = ask_card(commitment, part)
+            enqueue_in_transaction(tx, user_id=self._desk.user_id, kind="commitment_ask", dedupe_key=f"commitment:ask:{commitment.id}:{now.isoformat()}",
+                                   text=text, now=now, actions=actions)
+
+        return self._desk.due_asks(now, enqueue)
+
+    async def ask_loop(self, interval_seconds: float = 60.0) -> None:
+        import asyncio
+        while True:
+            try:
+                await asyncio.to_thread(self.queue_asks, self._clock.now())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Queuing the commitment questions failed; will retry.")
+            await asyncio.sleep(interval_seconds)
+
     # ------------------------------------------------------------------ the buttons
 
     def press(self, *, discord_user_id: str, action: str, ident: str) -> str:
@@ -190,8 +238,12 @@ class CoachDm:
         if user_id is None:
             return "That isn't yours to decide."
         now = self._clock.now()
-        if action in ("accept", "decline"):
-            return self._desk.decide(user_id, ident, accept=action == "accept", now=now)
+        if action == "decline":
+            return self._desk.decide(user_id, ident, accept=False, now=now)
+        if action in _ACTION_PARTS:
+            return self._desk.decide(user_id, ident, accept=True, now=now, part=_ACTION_PARTS[action])
+        if action == "later":
+            return self._desk.extend(user_id, ident, now)
         outcome = _OUTCOMES.get(action)
         return "That isn't a choice here." if outcome is None else self._desk.record_outcome(user_id, ident, outcome, now)
 
@@ -220,7 +272,8 @@ def goal_targets_frozen(contract: IronContract) -> Callable[[str], bool]:
 def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Callable[[str], bool], paused: Callable[[str, datetime], bool],
                 today: Callable[[datetime], date], active_task: Callable[[str], tuple[str, str | None] | None], memory=None,
                 local_now: Callable[[datetime], datetime] | None = None,
-                day_bounds: Callable[[date], tuple[datetime, datetime]] | None = None) -> CoachDm | None:
+                day_bounds: Callable[[date], tuple[datetime, datetime]] | None = None,
+                to_utc: Callable[[date, time], datetime] | None = None, quiet: tuple[time, time] | None = None) -> CoachDm | None:
     """None unless ENABLE_COACH is on and there is a wearer and a Trust domain to label goals with."""
     if not getattr(config, "enable_coach", False):
         return None
@@ -237,4 +290,7 @@ def build_coach(config, core: CoreDatabase, *, clock: Clock, targets_frozen: Cal
         desk.time_of_day = lambda now: describe_time_of_day(local_now(now))
         desk.local_now = local_now
     desk.day_bounds = day_bounds
+    desk.to_utc = to_utc
+    if quiet is not None:
+        desk.quiet = quiet
     return CoachDm(desk, core=core, clock=clock, memory=memory if getattr(config, "enable_coaching_memory", False) else None)

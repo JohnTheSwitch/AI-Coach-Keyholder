@@ -9,7 +9,7 @@ community review consent buttons (`review_consent:<accept|decline|revoke>:<lock 
   registered template is simply not offered (dropped), never shown as a dead button.
 - `ReviewConsentButton` hands the click to `system.review_consent_dm.ReviewConsentDm.decide()` (owner's Discord account only)
   and replaces the buttons with the outcome.
-- `CoachButton` (Phase J3, `coach:<accept|decline|kept|partly|missed>:<id>`) hands the click to `system.coach_dm.CoachDm.press()`, which resolves the
+- `CoachButton` (Phase J3, `coach:<accept|morning|afternoon|evening|decline|kept|partly|missed|later>:<id>`) hands the click to `system.coach_dm.CoachDm.press()`, which resolves the
   presser and refuses anyone but the proposal's own user. Only the buttons of that one card are removed: a reply can carry two.
 """
 
@@ -31,7 +31,7 @@ __all__ = ["REVIEW_CONSENT_TEMPLATE", "COACH_TEMPLATE", "DM_ACTION_TEMPLATE", "R
            "REGISTERED_TEMPLATES", "DM_ACTIONS_ATTRIBUTE"]
 
 REVIEW_CONSENT_TEMPLATE = r"review_consent:(?P<action>accept|decline|revoke):(?P<lock>[A-Za-z0-9_-]{1,64})"
-COACH_TEMPLATE = r"coach:(?P<action>accept|decline|kept|partly|missed):(?P<ident>[0-9a-f-]{36})"
+COACH_TEMPLATE = r"coach:(?P<action>accept|morning|afternoon|evening|decline|kept|partly|missed|later):(?P<ident>[0-9a-f-]{36})"
 DM_ACTION_TEMPLATE = r"(?P<scope>exemption|infraction|hygiene|lock_report):(?P<action>[a-z0-9_]{1,20}):(?P<ident>[0-9a-f-]{36})"
 DM_ACTIONS_ATTRIBUTE = "dm_actions"              # the bot attribute: {scope: facade with press(discord_user_id=, action=, ident=) -> OutgoingMessage}
 HANDLER_ATTRIBUTE = "review_consent_dm"          # the bot attribute holding the ReviewConsentDm facade

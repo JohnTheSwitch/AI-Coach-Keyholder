@@ -165,6 +165,7 @@ class CoachKeyholderBot(discord.Client):
         self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
         self.keyholder_inbox = None              # messaging.keyholder_inbox.keyholder_inbox_loop coroutine (owner, 2026-11-13)
         self.update_check = None                 # system.update_check.update_check_loop coroutine (owner, 2026-11-13)
+        self.commitment_asks = None              # system.coach_dm.CoachDm.ask_loop coroutine: "Done?" when a commitment's time ends (owner, 2026-11-13)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -215,6 +216,8 @@ class CoachKeyholderBot(discord.Client):
             self._keyholder_inbox_task = asyncio.create_task(self.keyholder_inbox, name="keyholder-inbox")
         if self.update_check is not None:
             self._update_check_task = asyncio.create_task(self.update_check, name="update-check")
+        if self.commitment_asks is not None:
+            self._commitment_ask_task = asyncio.create_task(self.commitment_asks, name="commitment-asks")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -698,6 +701,8 @@ def main() -> None:
                            today=lambda now, cfg=window_config_from(config): cfg.local(now).date(), local_now=lambda now, cfg=window_config_from(config): cfg.local(now),
                            active_task=active_task_reader(task_runtime, task_catalog), memory=coaching,
                            day_bounds=lambda d, cfg=window_config_from(config): (cfg.to_utc(d, dt_time(0, 0)), cfg.to_utc(d + timedelta(days=1), dt_time(0, 0))),
+                           to_utc=window_config_from(config).to_utc,
+                           quiet=(window_config_from(config).quiet_start, window_config_from(config).quiet_end),
                            ) if config.enable_coach else None
     # Owner, 2026-11-12: the model knows the detector questions it was asked about ("What about my incident?" got "No report from you yet").
     from conversation_engine.context_providers.detector_questions_provider import DetectorQuestionsContextProvider
@@ -796,6 +801,8 @@ def main() -> None:
         bot.exemptions = exemption_dm.service
     bot.review_consent_dm = review_consent_dm
     bot.coach_dm = coach_dm
+    if coach_dm is not None:
+        bot.commitment_asks = coach_dm.ask_loop()
     check_in_sender.attach(bot)
     if platform is not None:
         # Phase E2: every ACTIVE wearer runs as an isolated tenant (own database, own staggered loop); tenant zero keeps the loop above.

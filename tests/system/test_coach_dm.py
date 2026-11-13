@@ -509,3 +509,32 @@ def test_coach_status_command_runs_against_a_real_database(core, monkeypatch):  
     refused = StringIO()
     assert main(["coach-status", "--owner-id", "someone-else"], out=refused) == 1
     assert "Refused" in refused.getvalue()
+
+
+class TestCommitmentWindows:
+    """Honesty and proof, slice 1 (owner, 2026-11-13): the part of the day is picked on the card, and "Done?" comes when it ends."""
+
+    def world(self, core):  # noqa: F811
+        from datetime import datetime, time, timezone
+        w = World(core, proposal=COMMIT)
+        w.desk.to_utc = lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc)
+        w.desk.local_now = lambda now: now
+        w.desk.quiet = (time(22, 0), time(7, 0))
+        return w
+
+    def test_the_card_offers_the_parts_and_the_ask_comes_through_the_queue(self, core) -> None:  # noqa: F811
+        w = self.world(core)
+        reply = w.say()
+        assert [a.label for a in reply.actions] == ["Morning", "Afternoon", "Evening", "Any time", "Decline"]
+        evening = next(a.action_id for a in reply.actions if a.label == "Evening").split(":")
+        assert "21:30" in w.dm.press(discord_user_id=discord_id(core), action=evening[1], ident=evening[2])
+        tomorrow_evening = FIXED_TIME.replace(hour=21, minute=30) + timedelta(days=1)
+        assert w.dm.queue_asks(tomorrow_evening) == 1 and w.dm.queue_asks(tomorrow_evening) == 0
+        with core.transaction() as tx:
+            row = tx.fetch_one("SELECT kind, text, actions_json FROM notifications WHERE kind = 'commitment_ask'")
+            commitment = tx.fetch_one("SELECT id FROM daily_commitments")["id"]
+        assert row["text"] == "**Study for 30 minutes**: that was this evening's plan. Done?"
+        assert [a["label"] for a in json.loads(row["actions_json"])] == ["Done", "Partly", "Not done", "Still doing it"]
+        w.clock.set(tomorrow_evening + timedelta(minutes=5))
+        assert w.dm.press(discord_user_id=discord_id(core), action="later", ident=commitment).startswith("OK. I'll ask again at 22:00.")
+        assert w.dm.press(discord_user_id=discord_id(core), action="kept", ident=commitment) == "Noted, well done."
