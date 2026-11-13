@@ -27,7 +27,7 @@ from supervision.checkin_evaluator import mentions_safety_issue
 
 logger = logging.getLogger("ai_coach_keyholder.infractions.judge")
 
-__all__ = ["Verdict", "Judgement", "ExplanationJudge", "is_health_or_safety", "MAX_EXPLANATION"]
+__all__ = ["Verdict", "Judgement", "ExplanationJudge", "is_health_or_safety", "brings_nothing_new", "MAX_EXPLANATION"]
 
 MAX_EXPLANATION = 1500
 
@@ -46,6 +46,23 @@ def is_health_or_safety(text: str | None) -> bool:
     return mentions_safety_issue(text) or _HEALTH.search(plain_text(text)) is not None
 
 
+_WORD = re.compile(r"[a-z0-9]{4,}")
+_FILLER = frozenset({"really", "please", "just", "that", "this", "with", "have", "what", "your", "were", "would", "could", "should", "again", "still",
+                     "sorry", "know", "told", "said", "because", "about", "there", "their", "they", "them", "then", "than", "when", "only", "very",
+                     "fault", "promise", "better", "appeal", "explained", "already", "think", "believe", "mean", "true", "honest", "honestly",
+                     "opravdu", "prosim", "jenom", "uz", "jsem", "bylo", "byl", "byla", "protoze", "rikal", "rekl"})
+
+
+def brings_nothing_new(appeal: str | None, earlier: list[str | None] | tuple) -> bool:
+    """Owner, 2026-11-13: an appeal must bring something new. Decided in code first: no word of four letters or more that is not already in the earlier
+    answers (apart from filler like "really", "please", "sorry") means nothing new, and the model is not asked again."""
+    words = {w for w in _WORD.findall(plain_text(appeal or "").lower()) if w not in _FILLER}
+    seen = set()
+    for text in earlier:
+        seen |= set(_WORD.findall(plain_text(text or "").lower()))
+    return not (words - seen)
+
+
 class Verdict(StrEnum):
     EXPLAINED = "explained"
     UNCLEAR = "unclear"
@@ -58,6 +75,7 @@ class Judgement:
     reason: str
     by_code: bool = False
     admitted: bool = False          # they owned up: never an excuse, but it softens what follows
+    nothing_new: bool = False       # an appeal that only repeated, insisted or apologised: rejected without judging it again
 
 
 _SYSTEM = (
@@ -90,6 +108,8 @@ class ExplanationJudge:
             return Judgement(Verdict.EXPLAINED, "A health or safety need.", by_code=True)
         if self._complete is None or not explanation or not explanation.strip():
             return None
+        if appeal and brings_nothing_new(explanation, [earlier, *related]):
+            return Judgement(Verdict.NOT_EXPLAINED, "The appeal brings nothing new.", nothing_new=True)
         words = explanation.strip()[:MAX_EXPLANATION]
         parts = [f"What was found: {detail}", f"Facts: {facts or 'none recorded'}"]
         if related:
@@ -97,15 +117,27 @@ class ExplanationJudge:
                 f"<<<EXPLANATION\n{r.strip()[:MAX_EXPLANATION]}\nEXPLANATION>>>" for r in related[:3]))
         if earlier:
             parts.append(f"Their earlier answer, which was not enough on its own:\n<<<EXPLANATION\n{earlier.strip()[:MAX_EXPLANATION]}\nEXPLANATION>>>")
-        parts.append(("This is an APPEAL against an earlier decision: accept it only if it brings new information or shows a mistake. Repeating an "
-                      "answer, apologising or owning up is not new information.\n" if appeal else "")
+        parts.append(("This is an APPEAL against an earlier decision, and the only one: accept it only if it brings new information or shows a mistake. "
+                      "Repeating an answer, insisting, apologising or owning up is not new information. Add \"new_information\": true or false to your "
+                      "JSON.\n" if appeal else "")
                      + f"<<<EXPLANATION\n{words}\nEXPLANATION>>>")
         try:
             raw = self._complete(_SYSTEM, "\n\n".join(parts))
         except Exception:
             logger.exception("The explanation could not be judged; it waits for the next attempt.")
             return None
-        return parse_judgement(raw)
+        judgement = parse_judgement(raw)
+        if appeal and judgement is not None and judgement.verdict is Verdict.EXPLAINED and _says_nothing_new(raw):
+            return Judgement(Verdict.NOT_EXPLAINED, judgement.reason or "The appeal brings nothing new.", admitted=judgement.admitted, nothing_new=True)
+        return judgement
+
+
+def _says_nothing_new(raw: str) -> bool:
+    match = _JSON.search(raw) if isinstance(raw, str) else None
+    try:
+        return match is not None and json.loads(match.group(0)).get("new_information") is False
+    except (ValueError, AttributeError):
+        return False
 
 
 def parse_judgement(raw: object) -> Judgement | None:

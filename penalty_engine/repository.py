@@ -48,7 +48,8 @@ from infrastructure.time_format import parse_iso as _parse_iso
 
 # Never a Penalty Window, never an Extension: the check-in escalation (supervision/escalation.py), and a detection the wearer never answered
 # (infractions/signals.py UNANSWERED_RULE_GROUP, owner 2026-11-10: silence is Trust and a Warning only). Pinned by tests, because this package imports neither.
-WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE", "DETECTION_UNANSWERED"})
+# EXEMPTION_OVERRIDE (owner, 2026-11-13): taking a declined exemption anyway is honest, so it costs Trust and a Warning, never a window.
+WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE", "DETECTION_UNANSWERED", "EXEMPTION_OVERRIDE"})
 
 
 def active_hours_elapsed_from_row(row, now: datetime) -> float:

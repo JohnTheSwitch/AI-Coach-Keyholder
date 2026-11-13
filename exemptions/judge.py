@@ -81,8 +81,8 @@ class ExemptionJudge:
             return None
         parts = [f"Asked for: {what}, for {length}."]
         if appeal_of:
-            parts.append("They asked earlier today and were declined. That reason was:\n<<<REASON\n" + appeal_of.strip()[:MAX_REASON] + "\nREASON>>>\n"
-                         "Approve now only if this brings something new, not the same request in other words.")
+            parts.append("This is their one APPEAL. They asked earlier today and were declined. That reason was:\n<<<REASON\n" + appeal_of.strip()[:MAX_REASON]
+                         + "\nREASON>>>\nApprove now only if this brings something new, not the same request in other words, insistence or pleading.")
         if earlier:
             parts.append("Their first answer, which was not enough on its own:\n<<<REASON\n" + earlier.strip()[:MAX_REASON] + "\nREASON>>>\n"
                          "Their answer to your question:")

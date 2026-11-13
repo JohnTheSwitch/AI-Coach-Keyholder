@@ -56,6 +56,8 @@ class ModelMessage:
 class ModelGenerationRequest:
     messages: tuple[ModelMessage, ...]
     max_output_characters: int
+    # Owner, 2026-11-13: a judge gives the same answer to the same input, so an appeal cannot win by asking again (temperature 0, fixed seed).
+    deterministic: bool = False
 
 
 class ConversationModel(Protocol):

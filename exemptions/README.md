@@ -34,6 +34,9 @@ judge (infractions/judge.py):
 - Like the button, the judge reads only the request (I7), plus the reason of a decline in the last day for an appeal.
 - `decide()` refuses a request's own wearer, also without a judge. A separate keyholder (OWNER_USER_ID not the wearer) only gets a note of the ruling.
 - `decided_by`: `judge`, `judge_health` or `unjudged`; `verdict_reason` is what the wearer was told.
-- **Two appeals** (owner, 2026-11-13, "2 appeals for any judge"): each new request within 24 hours of a declined one is an appeal, judged with
-  all the declined reasons of that day. After two declined appeals, a further request that day is declined in code without the model, except a
-  health or safety need, which is never held back.
+- **One appeal, then "Take it anyway"** (owner, 2026-11-13): a new request within 24 hours of a declined one is its one appeal. An appeal with no new
+  word beyond the declined reasons is declined in code, without the model. After the appeal is declined, a further request that day is declined in
+  code, and the decline carries a **Take it anyway** button (valid 2 hours): the lock opens as for an approved request (`decided_by`
+  `wearer_override`) and, in the same transaction, it is filed as an incident the wearer disclosed themselves (`EXEMPTION_OVERRIDE`, warning only:
+  Trust and a Warning, never a Penalty Window; Trust domain `routine`, or `hygiene` for an extra hygiene opening). If it cannot be recorded,
+  nothing opens. A health or safety need is never held back by a used appeal and never needs the button.

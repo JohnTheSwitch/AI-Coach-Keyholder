@@ -11,8 +11,8 @@ is the system's own role (philosophy 2.9), so the system asks the wearer, judges
                                                                     not explained -> `decided`
              -> no answer by the deadline: a hygiene finding -> cleared (an unanswered break may be a health need and never counts)
                                            anything else -> `decided` (silence, filed warning-only: Trust and a Warning, never a Penalty Window)
-    `decided` -> up to two appeals (owner, 2026-11-13) within 2 hours, each judged; accepted -> cleared. The first rejected one leaves at least an hour
-             for the second. Otherwise `confirmed`: the Incident is registered and confirmed by the system.
+    `decided` -> one appeal within 2 hours (owner, 2026-11-13), and only one that brings something new: an appeal that only repeats is rejected in
+             code without asking the model again. Accepted -> cleared. Otherwise `confirmed`: the Incident is registered and confirmed by the system.
 
 A model failure is never a verdict against the wearer: the answer waits as `judging` and is retried; after 3 days it is dropped (cleared). An Emergency
 Override, an approved exemption or a vacation that overlaps the finding clears it at every step. "It was a health or safety need" is a button that clears
@@ -47,7 +47,7 @@ __all__ = ["SignalKind", "InfractionSignals", "GRACE", "APPEAL_WINDOW", "CAPTURE
 
 GRACE = timedelta(hours=12)                 # how long the wearer has to answer before silence counts
 APPEAL_WINDOW = timedelta(hours=2)          # between "unexplained" and the Incident counting
-MAX_APPEALS = 2                              # owner, 2026-11-13: two appeals for any judge
+MAX_APPEALS = 1                              # owner, 2026-11-13: one appeal for any judge, and it must bring something new
 SECOND_APPEAL_TIME = timedelta(hours=1)      # after a rejected first appeal, at least this long for the second
 _APPEAL_SEP = "\n---\n"                      # the appeals are kept in one column, in order
 CAPTURE_WINDOW = timedelta(hours=1)         # after pressing Explain or Appeal, the next message in this time is the answer
@@ -76,15 +76,17 @@ class SignalKind(StrEnum):
     PHOTO_REJECTED = "photo_rejected"
     CHECKIN_NONCOMPLIANCE = "checkin_noncompliance"
     SELF_REPORT_HYGIENE = "self_report_hygiene"      # owner, 2026-11-12 (option A): the wearer owned up to misusing a hygiene opening
+    EXEMPTION_OVERRIDE = "exemption_override"        # owner, 2026-11-13: took a declined exemption anyway (warning only)
 
 
 RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
                SignalKind.EXEMPTION_OVERRUN: "HYGIENE_MISUSE", SignalKind.PHOTO_REJECTED: "peer_review_rejection",
-               SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE", SignalKind.SELF_REPORT_HYGIENE: "HYGIENE_MISUSE"}
+               SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE", SignalKind.SELF_REPORT_HYGIENE: "HYGIENE_MISUSE",
+               SignalKind.EXEMPTION_OVERRIDE: "EXEMPTION_OVERRIDE"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious; a community vote is one weak signal.
 EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
             SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE,
-            SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE}
+            SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE, SignalKind.EXEMPTION_OVERRIDE: _MINOR_EVIDENCE}
 # Incidents another module registers UNCONFIRMED by itself; they are taken into this path instead of waiting for a button nobody presses.
 ADOPTED_RULE_GROUPS = {"CHECKIN_REPEATED_NONCOMPLIANCE": SignalKind.CHECKIN_NONCOMPLIANCE}
 _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIENE_FREQUENCY})
@@ -95,13 +97,14 @@ _EXPLAINED = "Thank you, that explains it. It doesn't count."
 _FOLLOW_UP = "I need a little more to go on. What exactly happened, and when? Tell me in your next message."
 _UNCERTAIN = "Thank you. I can't be sure either way, so it doesn't count."
 _NOT_EXPLAINED = ("That doesn't explain it, so it will count as an incident in two hours. If I got something wrong, or there's something you haven't told me, "
-                  "you can appeal up to twice: press **Appeal**.")
-_SILENCE = ("You didn't explain this in time, so it will count as an incident in two hours. If there's something I should know, you can appeal up to twice: "
+                  "you can appeal once with something new: press **Appeal**.")
+_SILENCE = ("You didn't explain this in time, so it will count as an incident in two hours. If there's something I should know, you can appeal once with something new: "
             "press **Appeal**.")
 _APPEAL_ACCEPTED = "You're right. It doesn't count."
 _ADMITTED = ("Owning it counts for something, and it'll weigh less because you did. But a sorry isn't a reason, so it counts as an incident in two hours. "
              "If there was an actual reason, press **Appeal** and tell me.")
 _APPEAL_REJECTED = "I've looked at your appeal, and it doesn't change the decision. It counts as an incident."
+_APPEAL_NOTHING_NEW = "Your appeal doesn't tell me anything new, so it doesn't change the decision. It counts as an incident."
 _APPEAL_REJECTED_ONE_LEFT = ("I've looked at your appeal, and it doesn't change the decision. You have one more appeal before it counts: press **Appeal** "
                              "and tell me what I'm missing.")
 _COUNTED = "It now counts as an incident."
@@ -109,10 +112,11 @@ _PENDING = "Thank you. I'll look at it shortly and let you know."
 _UNJUDGED = "I couldn't look at your explanation in time, so it doesn't count."
 _HEALTH = "Thank you for telling me. It doesn't count, and that's the end of it."
 SELF_REPORT_DETAIL = "The wearer said they used a hygiene opening for something other than hygiene."
+OVERRIDE_DETAIL = "The wearer took an exemption the judge had declined, by their own choice."
 SELF_REPORT_QUESTION = ("**Owning up?** Did you just tell me you used a hygiene opening for something other than hygiene? If you did, say so: it counts, "
                         "but it weighs less because you told me yourself.")
 _OWNED = ("Thank you for owning it. It counts as hygiene misuse in two hours, and it weighs less because you told me yourself. If I misread you, "
-          "you can appeal up to twice.")
+          "you can appeal once.")
 _DISOWNED = "Okay, I misread you. Nothing is recorded."
 
 
@@ -209,6 +213,19 @@ class InfractionSignals:
         decision("infractions", "The wearer's message read as owning up to hygiene misuse: asked whether that is right.", signal_id=signal_id)
         return signal_id
 
+    def record_override_in_transaction(self, tx: Transaction, *, user_id: str, subject_id: str, trust_domain: str, facts: str, now: datetime) -> bool:
+        """Owner, 2026-11-13: the wearer took a declined exemption anyway. Nothing to ask or judge: they chose it, so it is decided at once as
+        self-disclosed and counts on the next pass (warning only, EXEMPTION_OVERRIDE). In the caller's transaction, with the opening itself."""
+        if tx.fetch_one("SELECT 1 FROM infraction_signals WHERE kind = ? AND subject_id = ?", (SignalKind.EXEMPTION_OVERRIDE.value, subject_id)):
+            return False
+        tx.execute("INSERT INTO infraction_signals (id, user_id, kind, subject_id, trust_domain, detail, status, review_after, incident_id, created_at, facts, "
+                   "verdict, verdict_reason, admitted, judged_at, decided_at, confirm_after, rule_group_id) "
+                   "VALUES (?, ?, ?, ?, ?, ?, 'decided', ?, ?, ?, ?, 'self_reported', ?, 1, ?, ?, ?, ?)",
+                   (str(uuid4()), user_id, SignalKind.EXEMPTION_OVERRIDE.value, subject_id, trust_domain, OVERRIDE_DETAIL, _iso(now), str(uuid4()), _iso(now),
+                    facts[:1000], "Took a declined exemption anyway, by their own choice.", _iso(now), _iso(now), _iso(now),
+                    RULE_GROUPS[SignalKind.EXEMPTION_OVERRIDE]))
+        return True
+
     def raise_signal(self, **kwargs) -> bool:
         """`raise_in_transaction` in its own transaction, for a caller outside this package's transactions."""
         return apply_transition(self._core, write=lambda tx, _s: self.raise_in_transaction(tx, **kwargs))
@@ -235,7 +252,7 @@ class InfractionSignals:
             if row["judge_pending_since"] is not None:
                 return OutgoingMessage(text="I'm still looking at your appeal.")
             if _appeals(row) >= MAX_APPEALS:
-                return OutgoingMessage(text="You've used both appeals.")
+                return OutgoingMessage(text="You've already used your appeal.")
             self._await(signal_id, "appeal", now)
             return OutgoingMessage(text="Write your appeal in your next message: what did I get wrong, or what haven't you told me yet?")
         return OutgoingMessage(text="That isn't one of the options.")
@@ -412,7 +429,7 @@ class InfractionSignals:
                 apply_transition(self._core, write=extend)
                 return OutgoingMessage(text=_APPEAL_REJECTED_ONE_LEFT, actions=_appeal_buttons(signal_id))
             self._count(self._row(signal_id), now, None, quiet=True)
-            return OutgoingMessage(text=_APPEAL_REJECTED)
+            return OutgoingMessage(text=_APPEAL_NOTHING_NEW if judgement.nothing_new else _APPEAL_REJECTED)
         if judgement.verdict is Verdict.UNCLEAR and stage == "explanation":
             def write(tx: Transaction, _s: object) -> None:
                 tx.execute("UPDATE infraction_signals SET status = 'waiting', judge_pending_since = NULL, verdict = 'unclear', verdict_reason = ?, judged_at = ?, "
@@ -484,7 +501,7 @@ class InfractionSignals:
         return 1 if counted else 0
 
     def _excused(self, row, signal: Signal, window_of) -> str | None:
-        if signal.kind is SignalKind.SELF_REPORT_HYGIENE:
+        if signal.kind in (SignalKind.SELF_REPORT_HYGIENE, SignalKind.EXEMPTION_OVERRIDE):
             return None                              # it happened during an approved opening by definition: that cannot excuse it
         if row["window_start"] and row["window_end"]:
             start, end = parse_iso(row["window_start"]), parse_iso(row["window_end"])

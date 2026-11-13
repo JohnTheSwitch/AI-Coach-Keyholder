@@ -119,7 +119,7 @@ CHECK_IN_RECEIVED_WITHOUT_MODEL = "Got your check-in answer, it's recorded. I ca
 PHOTO_UNAVAILABLE = "Photo check-ins are not available on this bot."
 PHOTO_ON = ("Photo check-ins are on. Now and then, at a random moment in your free time, I'll ask for a verification picture in Chaster, "
             "with 2 hours to take it. The picture stays on Chaster and its community review; I only see that it arrived. No picture by the "
-            "deadline counts as a missed check-in. How often depends on trust: fewer as you earn it. `photo check-ins off` stops them any time.")
+            "deadline counts as a missed check-in. How often depends on how reliably you keep to things: fewer as you do. `photo check-ins off` stops them any time.")
 
 CONFESSION_NOTE = (
     "THIS MESSAGE: the user is owning up to using a hygiene opening for something other than hygiene (such as edging or touching themselves). "

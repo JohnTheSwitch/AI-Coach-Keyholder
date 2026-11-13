@@ -57,7 +57,8 @@ CATEGORIES = {"family": "Family event", "social": "Social occasion", "work_schoo
 DURATIONS = (3, 6, 12, 24, 72, 168)         # hours; a longer absence is what a vacation is for. 3 and 12: live, 2026-11-13, "till evening" had to be 24
 UNJUDGED_LIMIT = timedelta(hours=1)          # a request the judge could not decide this long is closed, never as a decline: "ask again"
 APPEAL_WINDOW = timedelta(hours=24)          # a new request this soon after a declined one is judged as an appeal
-MAX_APPEALS = 2                              # owner, 2026-11-13: two appeals for any judge; a third request in that day is declined without a model
+MAX_APPEALS = 1                              # owner, 2026-11-13: one appeal, and it must bring something new; after it, "Take it anyway"
+ANYWAY_VALID = timedelta(hours=2)            # how long after the decline the "Take it anyway" button works
 REASON_QUESTION = ("In a sentence or two: what is it, and why does the lock need to come off for it? I decide on that, the way a keyholder "
                    "would.")
 SAFETY_LINE = "If this is an urgent health or safety matter, you don't need this: do what keeps you safe, and it will never be held against you."
@@ -135,6 +136,11 @@ class ExemptionService:
         self._raise_overrun = raise_overrun
         self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
         self._judge = None                          # exemptions.judge.ExemptionJudge: when set, requests are decided by it and never by a keyholder's button
+        self._record_override = None                # (tx, row, now) -> bool: records "taken anyway" as a self-disclosed incident; None: not offered
+
+    def set_override_signal(self, record_override: Callable[[Transaction, dict, datetime], bool]) -> None:
+        """Owner, 2026-11-13: after a declined appeal the wearer may take it anyway, as an incident they disclose themselves. Built after this service."""
+        self._record_override = record_override
 
     def set_judge(self, judge) -> None:
         """Owner, 2026-11-13: the wearer is also the account that got the keyholder's button. The judge is built after this service."""
@@ -328,13 +334,14 @@ class ExemptionService:
         first, _, answer = (row["reason"] or "").partition("\n---\n") if follow_up else (row["reason"] or "", "", "")
         declined = self._declined_lately(row, now)
         health = row["category"] == "health"
-        if len(declined) > MAX_APPEALS and not health:
-            from exemptions.judge import ExemptionRuling
-            from infractions.judge import is_health_or_safety
-            ruling = None if is_health_or_safety(row["reason"]) else ExemptionRuling(
-                Ruling.DECLINE, "You've already appealed twice today; ask again tomorrow.", by_code=True)
-        else:
-            ruling = None
+        from exemptions.judge import ExemptionRuling
+        from infractions.judge import brings_nothing_new, is_health_or_safety
+        ruling = None
+        if declined and not health and not is_health_or_safety(row["reason"]):
+            if len(declined) > MAX_APPEALS:
+                ruling = ExemptionRuling(Ruling.DECLINE, "You've already used your appeal today.", by_code=True)
+            elif brings_nothing_new(answer if follow_up else first, declined):
+                ruling = ExemptionRuling(Ruling.DECLINE, "Your appeal doesn't tell me anything new.", by_code=True)
         if ruling is None:
             ruling = self._judge.judge(what=what, length=_length(row), reason=answer if follow_up else first, earlier=first if follow_up else None,
                                        appeal_of="\n---\n".join(declined) or None, health=health)
@@ -366,12 +373,53 @@ class ExemptionService:
             return "That request was already decided.", ()
         decision("exemptions", f"Request {'approved' if approve else 'declined'} by the judge.", exemption_id=exemption_id, by=by, reason=said)
         if not approve:
-            left = MAX_APPEALS - len(declined)
-            more = (f" You can appeal {'once more' if left == 1 else 'up to twice'}: ask again and tell me what's new." if left > 0
-                    else " That was your last appeal for today.")
-            return f"Declined. {said}{more} {SAFETY_LINE}", ()
+            if len(declined) < MAX_APPEALS:
+                return f"Declined. {said} You can appeal once: ask again and tell me what's new. {SAFETY_LINE}", ()
+            if self._record_override is None:
+                return f"Declined. {said} That was your appeal for today. {SAFETY_LINE}", ()
+            return (f"Declined. {said} That was your appeal. If you need it anyway, you can take it: the lock opens as usual, and it counts as an "
+                    f"incident you disclosed yourself (it counts against you and gives a warning, nothing more). {SAFETY_LINE}",
+                    (ActionSpec(action_id=f"exemption:anyway:{exemption_id}", label="Take it anyway", style="danger"),))
         self.tick(now)
         return f"{said} {self._approval_text(row)}", self._back_button(exemption_id)
+
+    def take_anyway(self, user_id: str, exemption_id: str, now: datetime) -> OutgoingMessage:
+        """Owner, 2026-11-13: a request declined after its appeal, taken anyway. It opens as an approved one would, and in the same transaction it is
+        recorded as an incident the wearer disclosed themselves (warning only)."""
+        if self._record_override is None:
+            return OutgoingMessage(text="That isn't available right now.")
+
+        def write(tx: Transaction, _s: object) -> str:
+            row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ? AND user_id = ? AND status = 'declined' AND decided_by = 'judge'", (exemption_id, user_id))
+            if row is None:
+                return "gone"
+            if now - parse_iso(row["decided_at"]) > ANYWAY_VALID:
+                return "late"
+            if tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND status IN ('requested', 'approved')", (user_id,)):
+                return "busy"
+            tx.execute("DELETE FROM wear_exemptions WHERE user_id = ? AND status = 'draft'", (user_id,))
+            tx.execute("UPDATE wear_exemptions SET status = 'approved', decided_at = ?, decided_by = 'wearer_override', expires_at = ? WHERE id = ? AND status = 'declined'",
+                       (_iso(now), _iso(now + _span(row)), exemption_id))
+            if not self._record_override(tx, dict(row), now):
+                raise RuntimeError("the override could not be recorded")
+            return "ok"
+
+        try:
+            outcome = apply_transition(self._core, write=write)
+        except Exception:
+            logger.exception("Taking an exemption anyway failed; nothing was opened or recorded.")
+            return OutgoingMessage(text="I couldn't do that just now, so nothing was opened or recorded. Try again in a moment.")
+        if outcome == "gone":
+            return OutgoingMessage(text="That request is no longer open to take.")
+        if outcome == "late":
+            return OutgoingMessage(text="That was too long ago. Ask again if you still need it.")
+        if outcome == "busy":
+            return OutgoingMessage(text="You already have a request open or running.")
+        decision("exemptions", "Declined request taken anyway by the wearer: opening, recorded as a self-disclosed incident (warning only).", exemption_id=exemption_id)
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ?", (exemption_id,))
+        self.tick(now)
+        return OutgoingMessage(text=f"Taken anyway, and recorded as you disclosing it yourself. {self._approval_text(row)}", actions=self._back_button(exemption_id))
 
     def _rule_pending(self, now: datetime) -> None:
         """Requests the judge could not decide when they came in: retried each pass; after UNJUDGED_LIMIT closed, never as a decline."""

@@ -101,7 +101,8 @@ class TestNothingInternalReachesADm:
         for name in self.NEW_DM_MODULES + ("peer_review/notices.py",):
             assert not any("python -m" in s for s in _user_strings(ROOT / name)), name
 
-    @pytest.mark.parametrize("name", ["system/penalty_notices.py", "exemptions/service.py", "infractions/hygiene.py", "infractions/lock_claims.py", "application/natural_queries.py"])
+    @pytest.mark.parametrize("name", ["system/penalty_notices.py", "exemptions/service.py", "infractions/hygiene.py", "infractions/lock_claims.py", "application/natural_queries.py",
+                                      "supervision/photo_check_ins.py"])
     def test_no_new_text_names_trust(self, name) -> None:
         for text in _user_strings(ROOT / name):
             if " " in text and not text.startswith(("SELECT", "UPDATE", "INSERT", "DELETE")) and "trust_domain" not in text:

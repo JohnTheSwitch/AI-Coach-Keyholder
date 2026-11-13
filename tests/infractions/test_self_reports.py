@@ -94,3 +94,20 @@ class TestTheCardGoesUnderTheReply:
     def test_the_voice_never_dodges_the_topic(self) -> None:
         from conversation_engine.prompt_builder import VOICE_GUIDE
         assert "never dodge or refuse the topic" in VOICE_GUIDE and "only explicit description stays out" in VOICE_GUIDE
+
+
+class TestTakenAnyway:
+    """Owner, 2026-11-13: a declined exemption taken anyway is an incident the wearer disclosed themselves, warning only."""
+
+    def test_it_counts_on_the_next_pass_as_self_disclosed_and_never_excused(self, tmp_path) -> None:
+        from infrastructure.database import apply_transition
+        from penalty_engine.repository import WARNING_ONLY_RULE_GROUPS
+        w = World(tmp_path)
+        assert apply_transition(w.core, write=lambda tx, _s: w.signals.record_override_in_transaction(
+            tx, user_id=USER, subject_id="ex-1", trust_domain="hygiene", facts="made up", now=NOW)) is True
+        assert apply_transition(w.core, write=lambda tx, _s: w.signals.record_override_in_transaction(
+            tx, user_id=USER, subject_id="ex-1", trust_domain="hygiene", facts="made up", now=NOW)) is False
+        w.signals._excuses.reason = lambda *a, **k: "approved_exemption"
+        w.advance(NOW + timedelta(minutes=1))
+        assert w.status() == [("exemption_override", "confirmed")] and w.confirmed[-1][1] is True
+        assert "EXEMPTION_OVERRIDE" in WARNING_ONLY_RULE_GROUPS

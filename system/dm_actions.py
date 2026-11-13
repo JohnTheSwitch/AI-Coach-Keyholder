@@ -53,6 +53,8 @@ class ExemptionDm:
                                          ExemptionDecision.NOT_PENDING: "This request was already decided."}[outcome])
         if action == "end":
             return self.service.end_early(user, ident, now)
+        if action == "anyway":
+            return self.service.take_anyway(user, ident, now)
         if action in ("hopen", "hask", "hhealth", "hcancel"):
             return self.service.press_hygiene(user, ident, action, now)
         if action.startswith("cat_"):

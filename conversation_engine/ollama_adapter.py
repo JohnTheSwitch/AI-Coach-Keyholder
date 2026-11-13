@@ -256,6 +256,8 @@ class OllamaConversationModel:
             body["keep_alive"] = self._keep_alive
         if self._num_ctx:
             body["options"] = {"num_ctx": self._num_ctx}
+        if getattr(request, "deterministic", False):
+            body.setdefault("options", {}).update({"temperature": 0, "seed": 42})
         try:
             response = requests.post(
                 f"{self._host}/api/chat",

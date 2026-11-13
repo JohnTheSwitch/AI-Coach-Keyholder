@@ -414,19 +414,24 @@ class TestTheSystemDecides:
         w.advance(NOW + GRACE * 3)
         assert w.incidents() == []
 
-    def test_two_appeals_then_it_counts_at_once(self, tmp_path) -> None:
-        # Owner, 2026-11-13: two appeals for any judge.
+    def test_one_appeal_then_it_counts_at_once(self, tmp_path) -> None:
+        # Owner, 2026-11-13: one appeal for any judge, and it must bring something new.
         w = World(tmp_path)
         signal = self._signal(w)
-        w.model.replies = [verdict("not_explained"), verdict("not_explained"), verdict("not_explained")]
+        w.model.replies = [verdict("not_explained"), verdict("not_explained")]
         self._answer(w, signal, "I just felt like it.")
-        first = self._answer(w, signal, "Still felt like it.", at=NOW + timedelta(hours=2), action="appeal")
-        assert "one more appeal" in first.text and [a.label for a in first.actions][0] == "Appeal" and w.incidents() == []
-        assert "doesn't change" in self._answer(w, signal, "Really.", at=NOW + timedelta(hours=2, minutes=30), action="appeal").text
-        assert w.incidents()[0]["confirmation"] == "confirmed"
-        assert "Still felt like it." in w.model.prompts[2][1] and "Really." in w.model.prompts[2][1]
+        out = self._answer(w, signal, "The shower drain was blocked and the plumber came late.", at=NOW + timedelta(hours=2), action="appeal")
+        assert "doesn't change" in out.text and w.incidents()[0]["confirmation"] == "confirmed"
         assert w.dm.press(discord_user_id="42", action="appeal", ident=signal["id"]).text.startswith("You can appeal only before it counts")
         assert "Do not simply believe it" in w.model.prompts[1][0] and "APPEAL" in w.model.prompts[1][1]
+
+    def test_an_appeal_with_nothing_new_is_rejected_without_asking_the_model(self, tmp_path) -> None:
+        w = World(tmp_path)
+        signal = self._signal(w)
+        w.model.replies = [verdict("not_explained"), verdict("explained")]
+        self._answer(w, signal, "I just felt like it.")
+        out = self._answer(w, signal, "Really, I just felt like it, sorry.", at=NOW + timedelta(hours=1, minutes=30), action="appeal")
+        assert "anything new" in out.text and w.incidents()[0]["confirmation"] == "confirmed" and len(w.model.prompts) == 1
 
     def test_silence_about_a_hygiene_break_never_counts(self, tmp_path) -> None:
         """An unanswered break may be exactly the health need Mandatory Access exists for (3.9)."""
@@ -571,8 +576,8 @@ class TestAnAdmissionIsNotAReason:
 
     def test_an_appeal_is_told_that_repeating_is_not_new(self) -> None:
         seen = []
-        ExplanationJudge(lambda s, u: seen.append(u) or verdict("not_explained")).judge(detail="d", facts="f", explanation="sorry", appeal=True)
-        assert "Repeating an answer, apologising or owning up is not new information." in seen[0]
+        ExplanationJudge(lambda s, u: seen.append(u) or verdict("not_explained")).judge(detail="d", facts="f", explanation="the app crashed", appeal=True)
+        assert "Repeating an answer, insisting, apologising or owning up is not new information." in seen[0]
 
 
 class TestSilenceElsewhere:

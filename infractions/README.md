@@ -16,7 +16,7 @@ There is no second person to press a keyholder button: the Keyholder is the syst
    the wearer's recent answers to the same kind of finding.
 4. **Silence.** An unanswered hygiene finding never counts (it may be the health need Mandatory Access exists for). Anything else unanswered is decided,
    filed under `DETECTION_UNANSWERED`, which is warning-only: Trust and a Warning, never a Penalty Window.
-5. **Appeal.** A decided finding counts after two hours. In that time the wearer may appeal up to twice (owner, 2026-11-13: two appeals for any judge); an accepted appeal clears it, a rejected first one leaves at least an hour for the second, and a rejected second one counts at once.
+5. **Appeal.** A decided finding counts after two hours. In that time the wearer may appeal once (owner, 2026-11-13: one appeal for any judge, and it must bring something new). An appeal with no new word beyond the earlier answers (filler like "really", "sorry" aside) is rejected in code without asking the model again (`brings_nothing_new`); otherwise it is judged, and the model also says whether it brought new information. An accepted appeal clears it, a rejected one counts at once.
 6. **Counted.** The system registers the Incident and confirms it itself (`ConfirmationSource.SYSTEM_VERIFIED`). The Penalty Engine decides what follows.
 
 A model that is down or answers nonsense is never a verdict: the answer waits as `judging` and is retried; after three days it is dropped. The wearer's
@@ -59,7 +59,7 @@ and Czech, deliberately broad) puts a card under the bot's reply: "Did you just 
 `InfractionSignals.offer_self_report` stores it as `offered` (kind `self_report_hygiene`, the wearer's words in `explanation`, erased by `forget all`).
 
 - **Yes, I did** -> `decided`, verdict `self_reported`, `admitted` = 1, rule group HYGIENE_MISUSE; after the appeal window it is confirmed with
-  `self_disclosed` cooperation, so it weighs less than a detected one. Two appeals are possible, as everywhere.
+  `self_disclosed` cooperation, so it weighs less than a detected one. One appeal is possible, as everywhere.
 - **No, you misread me** -> cleared, nothing recorded. An unanswered card lapses after 12 hours, also without a trace.
 - An approved hygiene opening never excuses it (it happened during one by definition).
 - One open card at a time. The model sees the card as `awaiting_confirmation` in its detector-question context.
@@ -70,3 +70,13 @@ Live, the model answered a confession with "Good for you, taking care of your hy
 ("without edging"). `ApplicationService.confession_check` (the same `is_hygiene_confession`) now runs before the model: such a turn gets
 `CONFESSION_NOTE` as its last system message (never praise, name what they did, not pleased, telling was right, no mention of the card), is a plain
 context turn (no coach proposal, nothing saved to memory) and is remembered as conversation. The card under the reply is still what records it.
+
+## Judges are deterministic (owner, 2026-11-13)
+
+Every judge call (`judge_complete` in the bot) runs at temperature 0 with a fixed seed (`ModelGenerationRequest.deterministic`), so the same
+explanation always gets the same answer: an appeal cannot win by being asked again.
+
+## Taken anyway (owner, 2026-11-13; migration 055)
+
+`record_override_in_transaction` files kind `exemption_override` (rule group `EXEMPTION_OVERRIDE`, warning only) in the exemption's own
+transaction: decided at once as self-reported and admitted, confirmed on the next pass with self-disclosed cooperation, never excused.

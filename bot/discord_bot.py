@@ -831,7 +831,7 @@ def main() -> None:
         return ollama_model.generate(request=ModelGenerationRequest(
             messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt),
                       ModelMessage(role=ModelMessageRole.USER, content=user_message)),
-            max_output_characters=600,
+            max_output_characters=600, deterministic=True,
         ))
 
     detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
@@ -846,6 +846,13 @@ def main() -> None:
             return service.give_reason(user_id, text, now) if service.awaiting_reason(user_id) else None
 
         application_service.exemption_reason = exemption_reason
+        if detectors.signals is not None:
+            def record_override(tx, row, now, signals=detectors.signals):
+                domain = (config.hygiene_trust_domain or "hygiene") if row.get("kind") == "hygiene" else (config.check_in_trust_domain or "routine")
+                return signals.record_override_in_transaction(tx, user_id=row["user_id"], subject_id=row["id"], trust_domain=domain, now=now,
+                                                              facts=f"Declined {row.get('kind') or 'exemption'} ({row.get('category') or 'extra hygiene'}) taken anyway at {now.isoformat()}.")
+
+            exemption_service.set_override_signal(record_override)
         logger.info("Exemption requests are decided by the system on the wearer's reason (health and safety in code first).")
     for note in detectors.notes:
         (logger.warning if "NOT active" in note else logger.info)(note)

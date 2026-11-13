@@ -115,7 +115,7 @@ class TestTheFlow:
         ask(w)
         w.service.give_reason(WEARER, "I just want a break.", w.at)
         ask(w)
-        w.service.give_reason(WEARER, "Really, a break.", w.at)
+        w.service.give_reason(WEARER, "Really, a break: there is a pool party tonight.", w.at)
         assert "were declined" in w.model.prompts[-1][1] and "I just want a break." in w.model.prompts[-1][1]
 
     def test_the_reason_is_data_to_the_model(self, tmp_path) -> None:
@@ -158,20 +158,67 @@ class TestParsing:
         assert 3 in DURATIONS and 12 in DURATIONS
 
 
-class TestTwoAppeals:
-    def test_two_appeals_in_a_day_then_no_model_until_tomorrow(self, tmp_path) -> None:
-        w = world(tmp_path, DECLINE)
-        replies = []
-        for words in ("I want a break.", "Please, a break.", "A break, really.", "Once more."):
-            ask(w)
-            replies.append(w.service.give_reason(WEARER, words, w.at).text)
-        assert "appeal up to twice" in replies[0] and "once more" in replies[1] and "last appeal" in replies[2]
-        assert "appealed twice today" in replies[3] and len(w.model.prompts) == 3
+class TestOneAppealThenTakeItAnyway:
+    def _declined_twice(self, w):
+        ask(w)
+        first = w.service.give_reason(WEARER, "I want a break.", w.at)
+        ident, _ = ask(w)
+        second = w.service.give_reason(WEARER, "There is a pool party tonight with friends.", w.at)
+        return first, second, ident
 
-    def test_health_is_never_held_back_by_used_appeals(self, tmp_path) -> None:
+    def _with_override(self, w):
+        w.recorded = []
+        w.service.set_override_signal(lambda tx, row, now: w.recorded.append(row["id"]) or True)
+        return w
+
+    def test_the_first_decline_offers_the_appeal_not_the_override(self, tmp_path) -> None:
+        w = self._with_override(world(tmp_path, DECLINE))
+        first, second, _ = self._declined_twice(w)
+        assert "appeal once" in first.text and first.actions == ()
+        assert [a.label for a in second.actions] == ["Take it anyway"] and len(w.model.prompts) == 2
+
+    def test_an_appeal_with_nothing_new_is_declined_without_the_model(self, tmp_path) -> None:
         w = world(tmp_path, DECLINE)
-        for words in ("I want a break.", "Please.", "Really."):
-            ask(w)
-            w.service.give_reason(WEARER, words, w.at)
+        ask(w)
+        w.service.give_reason(WEARER, "I want a break.", w.at)
+        ask(w)
+        assert "anything new" in w.service.give_reason(WEARER, "Please, I really want a break.", w.at).text and len(w.model.prompts) == 1
+
+    def test_after_the_appeal_no_more_judging_that_day(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        self._declined_twice(w)
+        ask(w)
+        assert "already used your appeal" in w.service.give_reason(WEARER, "A completely different sauna evening.", w.at).text
+        assert len(w.model.prompts) == 2
+
+    def test_taking_it_anyway_opens_and_records_it_as_self_disclosed(self, tmp_path) -> None:
+        w = self._with_override(world(tmp_path, DECLINE))
+        _, _, ident = self._declined_twice(w)
+        out = w.dm.press(discord_user_id=WEARER_DISCORD, action="anyway", ident=ident)
+        row = w.q("SELECT * FROM wear_exemptions WHERE id = ?", (ident,))[0]
+        assert "disclosing it yourself" in out.text and row["status"] == "approved" and row["decided_by"] == "wearer_override"
+        assert w.recorded == [ident] and w.opening.opens
+
+    def test_the_button_expires(self, tmp_path) -> None:
+        w = self._with_override(world(tmp_path, DECLINE))
+        _, _, ident = self._declined_twice(w)
+        w.at = w.at + timedelta(hours=3)
+        assert "too long ago" in w.dm.press(discord_user_id=WEARER_DISCORD, action="anyway", ident=ident).text and w.recorded == []
+
+    def test_if_it_cannot_be_recorded_nothing_opens(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        w.service.set_override_signal(lambda tx, row, now: False)
+        _, _, ident = self._declined_twice(w)
+        assert "nothing was opened" in w.dm.press(discord_user_id=WEARER_DISCORD, action="anyway", ident=ident).text
+        assert w.q("SELECT status FROM wear_exemptions WHERE id = ?", (ident,))[0]["status"] == "declined" and w.opening.opens == []
+
+    def test_without_a_way_to_record_it_there_is_no_button(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        _, second, _ = self._declined_twice(w)
+        assert second.actions == ()
+
+    def test_health_is_never_held_back_by_a_used_appeal(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        self._declined_twice(w)
         ask(w, category="other")
         assert "approved" in w.service.give_reason(WEARER, "I have an injury there.", w.at).text
