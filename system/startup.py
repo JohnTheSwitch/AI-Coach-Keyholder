@@ -166,6 +166,14 @@ def build_consumer_registry(
 
     registry.register("coach.commitment_kept", "trust_manager", on_commitment_kept)
 
+    def on_proof_check_passed(tx, event) -> None:
+        # Owner, 2026-11-13 (honesty and proof, slice 3): a passed spot check is Honesty evidence.
+        trust_manager._record_proof_verified_in_transaction(
+            tx, check_id=event.payload["check_id"], trust_domain=event.payload["trust_domain"], now=event.occurred_at,
+        )
+
+    registry.register("proof_checks.check_passed", "trust_manager", on_proof_check_passed)
+
     def on_goal_result_reported(tx, event) -> None:
         # Owner, 2026-11-13: a goal counts through the commitments tied to it.
         from goal_management.repository import record_reported_result_in_transaction

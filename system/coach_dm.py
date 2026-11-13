@@ -128,6 +128,12 @@ class CoachDm:
         self._clock = clock
         self._memory = memory
         self._reminded: dict[str, date] = {}               # commitment id -> the local day its card was last shown outside a check-in
+        self.after_kept: Callable[[datetime], object] | None = None    # proof_checks: start a picked spot check at once (owner, 2026-11-13)
+        self.forget_also: Callable[[str], int] | None = None
+
+    @property
+    def desk(self) -> CoachDesk:
+        return self._desk
 
     # ------------------------------------------------------------------ the engine's port
 
@@ -205,7 +211,10 @@ class CoachDm:
             logger.exception("A check-in could not be kept in Coaching Memory; the reply is unaffected.")
 
     def forget_all(self, user_id: str) -> int:
-        return self._desk.forget_all(user_id)
+        erased = self._desk.forget_all(user_id)
+        if self.forget_also is not None:
+            erased += self.forget_also(user_id)              # the spot checks' copy of the commitment text
+        return erased
 
     # ------------------------------------------------------------------ "Done?" at the end of a commitment's time (owner, 2026-11-13)
 
@@ -245,7 +254,15 @@ class CoachDm:
         if action == "later":
             return self._desk.extend(user_id, ident, now)
         outcome = _OUTCOMES.get(action)
-        return "That isn't a choice here." if outcome is None else self._desk.record_outcome(user_id, ident, outcome, now)
+        if outcome is None:
+            return "That isn't a choice here."
+        reply = self._desk.record_outcome(user_id, ident, outcome, now)
+        if outcome is Outcome.KEPT and self.after_kept is not None:
+            try:
+                self.after_kept(now)                       # a picked spot check's task is assigned now, so its challenge follows this reply
+            except Exception:
+                logger.exception("Starting a spot check failed; the loop retries it.")
+        return reply
 
     def _internal_user(self, discord_user_id: str) -> str | None:
         with self._core.transaction() as tx:

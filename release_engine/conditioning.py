@@ -20,6 +20,7 @@ from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
+from infrastructure.decision_log import release_decision
 from infrastructure.time_format import iso as _iso
 
 __all__ = ["ConditioningPreferences", "ProgressiveConditioning", "IncrementOutcome", "FACTOR_START", "FACTOR_STEP", "FACTOR_CAP", "BASE_THRESHOLD"]
@@ -61,6 +62,15 @@ class IncrementOutcome(StrEnum):
     WEARER_OFF = "wearer_off"          # the wearer ran `conditioning off`: the factor stays frozen
     OWNER_OFF = "owner_off"            # the owner's switch for this database is off
     PAUSED = "paused"                  # Phase G6: a vacation was in force (audited in conditioning_paused_releases, not training_increments)
+
+
+_LOGGED = {
+    IncrementOutcome.INCREASED: "Progressive Conditioning: this token release counted; the next one costs a little more.",
+    IncrementOutcome.CAPPED: "Progressive Conditioning: this token release counted, but the factor is already at its cap.",
+    IncrementOutcome.NOT_TOKEN: "Progressive Conditioning: not a token release (the backstop), so it does not count.",
+    IncrementOutcome.OWNER_OFF: "Progressive Conditioning: the owner switch was off, so this release did not count.",
+    IncrementOutcome.WEARER_OFF: "Progressive Conditioning: the wearer has `conditioning off`, so this release did not count.",
+}
 
 
 class ProgressiveConditioning:
@@ -128,6 +138,8 @@ class ProgressiveConditioning:
         if vacation_id is not None:
             tx.execute("INSERT INTO conditioning_paused_releases (authorization_id, user_id, vacation_id, created_at) VALUES (?, ?, ?, ?)",
                        (authorization_id, user_id, vacation_id, _iso(now)))
+            release_decision("Progressive Conditioning: a vacation was in force, so this release did not count.", authorization_id=authorization_id,
+                             outcome=IncrementOutcome.PAUSED.value)
             return IncrementOutcome.PAUSED
         before = self.factor_in(tx, user_id)
         if auth["kind"] != "token":
@@ -147,6 +159,8 @@ class ProgressiveConditioning:
                        (user_id, str(after), _iso(now)))
         tx.execute("INSERT INTO training_increments (id, user_id, authorization_id, outcome, factor_before, factor_after, created_at) "
                    "VALUES (?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), user_id, authorization_id, outcome.value, str(before), str(after), _iso(now)))
+        # Owner, 2026-11-13: "it should be somewhere in the logs too". Whether the release counted, and why not; never the factor itself.
+        release_decision(_LOGGED.get(outcome, f"Progressive Conditioning: {outcome.value}."), authorization_id=authorization_id, outcome=outcome.value)
         return outcome
 
     @staticmethod

@@ -32,7 +32,7 @@ __all__ = ["REVIEW_CONSENT_TEMPLATE", "COACH_TEMPLATE", "DM_ACTION_TEMPLATE", "R
 
 REVIEW_CONSENT_TEMPLATE = r"review_consent:(?P<action>accept|decline|revoke):(?P<lock>[A-Za-z0-9_-]{1,64})"
 COACH_TEMPLATE = r"coach:(?P<action>accept|morning|afternoon|evening|decline|kept|partly|missed|later):(?P<ident>[0-9a-f-]{36})"
-DM_ACTION_TEMPLATE = r"(?P<scope>exemption|infraction|hygiene|lock_report):(?P<action>[a-z0-9_]{1,20}):(?P<ident>[0-9a-f-]{36})"
+DM_ACTION_TEMPLATE = r"(?P<scope>exemption|infraction|hygiene|lock_report|proof):(?P<action>[a-z0-9_]{1,20}):(?P<ident>[0-9a-f-]{36})"
 DM_ACTIONS_ATTRIBUTE = "dm_actions"              # the bot attribute: {scope: facade with press(discord_user_id=, action=, ident=) -> OutgoingMessage}
 HANDLER_ATTRIBUTE = "review_consent_dm"          # the bot attribute holding the ReviewConsentDm facade
 COACH_ATTRIBUTE = "coach_dm"                     # the bot attribute holding the CoachDm facade

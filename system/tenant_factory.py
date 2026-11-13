@@ -155,7 +155,9 @@ def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str, locale: W
     days = {"holiday_country": locale.holiday_country} if locale.holiday_country is not None else {}
     return dataclasses.replace(
         base, db_path=db_path, chaster_execution_wearer_user_id=wearer_user_id, check_in_user_id=None,
-        enable_chaster_messaging=False, chaster_llm_tools_enabled=False, enable_multi_wearer=False, **zone, **days)
+        enable_chaster_messaging=False, chaster_llm_tools_enabled=False, enable_multi_wearer=False,
+        enable_proof_checks=False,      # owner, 2026-11-13: only once the invitation discloses spot checks and the wearer can turn them off
+        **zone, **days)
 
 
 class TenantFactory:

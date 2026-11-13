@@ -46,6 +46,7 @@ CATALOG: tuple[Violation, ...] = (
        "Three consecutive missed check-ins, or three within 48 hours"),
     _v("DETECTION_UNANSWERED", "supervision", S.MINOR, "0.02", "A detector's question went unanswered past its deadline (warning only)"),
     _v("EXEMPTION_OVERRIDE", "supervision", S.MINOR, "0.03", "Took a declined exemption anyway, disclosed by the wearer (warning only)"),
+    _v("FALSE_REPORT", "integrity", S.MINOR, "0.03", "A spot check of a Done report was missed or its photo rejected, and not explained (warning only)"),
     _v("SUPERVISION_ABANDONED", "supervision", S.SEVERE, None, "No communication for more than 24 hours",
        ("high_security_status",), detectable=False),
     _v("STATUS_REPORT_LATE", "integrity", S.MINOR, "0.02", "Late status report in the app", detectable=False),

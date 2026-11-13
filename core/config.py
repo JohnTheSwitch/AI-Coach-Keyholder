@@ -191,6 +191,10 @@ class Config:
     extension_guard_poll_seconds: int = 900   # how often they are checked (at least 300)
     enable_peer_review_watch: bool = True    # Phase I4: read community review results; a rejection -> one UNCONFIRMED Incident
     peer_review_trust_domain: str = "routine"  # the Trust domain those Incidents are filed under
+    # Owner, 2026-11-13 (honesty and proof, slice 3): random spot checks of timely Done reports through Chaster tasks. Not active until the
+    # Honesty domain exists (`python -m cli trust-domain create honesty ...`, with consent).
+    enable_proof_checks: bool = True
+    honesty_trust_domain: str = "honesty"
     peer_review_poll_seconds: int = 600       # how often the reviews are read (at least 120)
     enable_penalty_barrier: bool = True      # Phase J2: a Penalty Window really freezes PENALTY_FREEZE_LOCK_ID (off = logged and queued only)
     penalty_freeze_lock_id: str | None = None  # the one lock the account holds as KEYHOLDER; a worn lock is never called
@@ -299,6 +303,8 @@ class Config:
             extension_guard_poll_seconds=max(300, int(get("EXTENSION_GUARD_POLL_SECONDS", "900") or "900")),
             enable_peer_review_watch=(get("ENABLE_PEER_REVIEW_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             peer_review_trust_domain=get("PEER_REVIEW_TRUST_DOMAIN", "routine") or "routine",
+            enable_proof_checks=(get("ENABLE_PROOF_CHECKS", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
+            honesty_trust_domain=get("HONESTY_TRUST_DOMAIN", "honesty") or "honesty",
             peer_review_poll_seconds=max(120, int(get("PEER_REVIEW_POLL_SECONDS", "600") or "600")),
             enable_penalty_barrier=(get("ENABLE_PENALTY_BARRIER", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             penalty_freeze_lock_id=(get("PENALTY_FREEZE_LOCK_ID") or "").strip() or None,

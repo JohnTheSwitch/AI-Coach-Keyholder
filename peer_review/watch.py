@@ -126,6 +126,8 @@ class PeerReviewWatch:
         self._list_lock_ids = list_lock_ids
         self._register = register_incident
         self._unavailable: set[str] = set()
+        # Owner, 2026-11-13 (honesty and proof): a spot check's task is judged by proof_checks; its rejection is never a second Incident here.
+        self.is_spot_check: Callable[[PeerReviewObservation], bool] = lambda _obs: False
 
     # ------------------------------------------------------------------ the poll
 
@@ -159,6 +161,15 @@ class PeerReviewWatch:
         """`complete` is False when one of the lock's two reads failed: the baseline is then postponed (a review missing from a partial
         read could otherwise look new later and turn an old rejection into an Incident)."""
         stamp = _iso(now)
+        observations = list(observations)
+        spot_checks = set()
+        for obs in observations:                                 # read before the write: the check opens its own transaction
+            try:
+                if self.is_spot_check(obs):
+                    spot_checks.add(obs.review_id)
+            except Exception:
+                logger.exception("Could not tell whether a review belongs to a spot check; it is treated as one (never a double count).")
+                spot_checks.add(obs.review_id)
 
         def write(tx: Transaction, _s: object) -> tuple[int, int]:
             baselining = tx.fetch_one("SELECT 1 FROM peer_review_locks WHERE lock_id = ?", (lock_id,)) is None
@@ -190,7 +201,7 @@ class PeerReviewWatch:
                     (str(uuid.uuid4()), stamp, lock_id, obs.review_id, obs.source.value, previous, obs.status.value,
                      obs.verified_votes, obs.rejected_votes))
                 transitions += 1
-                if obs.status is ReviewStatus.REJECTED and incident is None and not is_baseline:
+                if obs.status is ReviewStatus.REJECTED and incident is None and not is_baseline and obs.review_id not in spot_checks:
                     tx.execute("UPDATE peer_reviews SET incident_id = ? WHERE lock_id = ? AND review_id = ? AND incident_id IS NULL",
                                (str(uuid.uuid4()), lock_id, obs.review_id))
                     claimed += 1

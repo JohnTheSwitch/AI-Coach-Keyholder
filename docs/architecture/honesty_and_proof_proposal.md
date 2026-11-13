@@ -137,7 +137,9 @@ Deterministic, and only on facts. A contradiction is a question first (the infra
    the gallery is allowed, so the code is the only freshness proof; one task at a time; the community vote runs up to 6 hours. Consequences for
    slice 3: the 60-minute deadline covers the **submission** (`tasks_task_completed`), the vote may take longer and is waited for; an open check
    blocks a second one (fits "one open check at a time"); task texts stay short ("Show your ..."). `tasks` stays on the lock.
-3. **Honesty domain and spot checks** with Chaster tasks, retraction of a Done, the "can't show it now" pass, the infractions path for missed or rejected proof.
+3. **Honesty domain and spot checks (built 2026-11-13, `proof_checks/README.md`):** retraction is the "I didn't actually do it" button on a
+   check (a Done that is never checked needs no retraction until contradictions exist, slice 4). Originally:
+   with Chaster tasks, retraction of a Done, the "can't show it now" pass, the infractions path for missed or rejected proof.
 4. **Contradictions:** bedtime / "no phone after", Chaster task times. Move lock claims to Honesty.
 5. **Additional wearers:** opt-in and invitation text (with the multi-wearer parity slices).
 

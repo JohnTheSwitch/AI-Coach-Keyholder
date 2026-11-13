@@ -38,6 +38,7 @@ COMMITMENT_NOT_KEPT_WEIGHT = -0.01
 
 # Owner, 2026-11-13: a commitment reported as kept earns as much as not keeping it costs (before, commitments could only lower Trust).
 COMMITMENT_KEPT_WEIGHT = 0.01
+PROOF_VERIFIED_WEIGHT = 0.01                     # owner, 2026-11-13: "a passed check (+0.01)" in the Honesty domain
 
 
 def checkin_evidence_spec(kind: str, streak: int = 1) -> tuple[EvidenceType, float, float]:

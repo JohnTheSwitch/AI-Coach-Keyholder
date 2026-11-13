@@ -175,6 +175,8 @@ class CoachDesk:
         # of the day and the report window applies; None (tests, old wiring): no windows, only the too-soon rule.
         self.to_utc: Callable[[date, time], datetime] | None = None
         self.quiet: tuple[time, time] = (time(22, 0), time(7, 0))
+        # Honesty and proof, slice 3: (commitment id, text, now) -> whether this timely Kept gets a spot check (proof_checks.ProofChecks.select).
+        self.proof_selector: Callable[[str, str, datetime], bool] | None = None
 
     # ------------------------------------------------------------------ model side
 
@@ -378,6 +380,17 @@ class CoachDesk:
         day's goal result (`coach.goal_result_reported`), kept = met, not kept = missed."""
         counts = outcome in (Outcome.NOT_KEPT, Outcome.KEPT) and not self._paused(now)
         late = [False]
+        checking = False
+        if outcome is Outcome.KEPT and self.proof_selector is not None and user_id == self.user_id:
+            # Honesty and proof, slice 3: a timely Kept may be picked for a spot check BEFORE it is recorded; picked, it earns nothing until the check says so.
+            with self._core.transaction() as tx:
+                peek = tx.fetch_one("SELECT for_date, text, created_at, window_start, window_end FROM daily_commitments "
+                                    "WHERE id = ? AND user_id = ? AND status = 'open'", (commitment_id, user_id))
+            if peek is not None and counts and self._timing(peek, now) == "timely":
+                try:
+                    checking = bool(self.proof_selector(commitment_id, without_day_words(peek["text"]), now))
+                except Exception:
+                    logger.exception("The spot-check selection failed; the report counts as usual.")
 
         def write(tx: Transaction, _s: object) -> bool:
             row = tx.fetch_one("SELECT for_date, goal_group_id, text, created_at, window_start, window_end FROM daily_commitments "
@@ -391,27 +404,63 @@ class CoachDesk:
                     decision("coach", "A commitment was reported kept after its report window: recorded, but it earns nothing.", commitment_id=commitment_id)
                 earns = timing == "timely"
                 late[0] = timing == "late"
+                if earns and checking:
+                    timing, earns = "checking", False
             done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ?, report_timing = ? WHERE id = ? AND user_id = ? AND status = 'open'",
                               (outcome.value, _iso(now), timing, commitment_id, user_id)).rowcount
             if done:
                 self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=outcome.value)
-                if counts and earns:
-                    self._event(tx, "coach.commitment_missed" if outcome is Outcome.NOT_KEPT else "coach.commitment_kept", now,
-                                commitment_id=commitment_id, trust_domain=self._domain)
-                if row is not None and row["goal_group_id"] and outcome is not Outcome.PARTLY and earns and self.day_bounds is not None:
-                    start, end = self.day_bounds(date.fromisoformat(row["for_date"]))
-                    at = max(start, min(now, end - timedelta(seconds=1)))       # inside that local day, so the daily evaluation counts it
-                    self._event(tx, "coach.goal_result_reported", now, goal_group_id=row["goal_group_id"], commitment_id=commitment_id,
-                                outcome="met" if outcome is Outcome.KEPT else "missed", period_start=_iso(start), period_end=_iso(at))
+                if earns:
+                    self._result_events(tx, row, commitment_id, outcome, now, trust=counts)
             return bool(done)
 
         if user_id != self.user_id or not apply_transition(self._core, write=write):
             return "That commitment isn't open."
+        if checking:
+            return "Noted. This one gets a spot check: see my next message."
         if late[0]:
             return ("Noted. It came too late to count: a Kept counts until two hours after its time, so report it when you finish. "
                     "I ask you when its time ends.")
         return {Outcome.KEPT: "Noted, well done.", Outcome.PARTLY: "Noted. Part of it still counts for you.",
                 Outcome.NOT_KEPT: "Noted, thanks for being straight about it."}[outcome]
+
+    def _result_events(self, tx: Transaction, row, commitment_id: str, outcome: Outcome, now: datetime, *, trust: bool = True,
+                       reported_at: datetime | None = None) -> None:
+        """Trust (`coach.commitment_kept` / `_missed`, not during a vacation) and, for a commitment tied to a goal, that day's goal result.
+        Partly kept stays neutral."""
+        if outcome is Outcome.PARTLY:
+            return
+        if trust:
+            self._event(tx, "coach.commitment_missed" if outcome is Outcome.NOT_KEPT else "coach.commitment_kept", now,
+                        commitment_id=commitment_id, trust_domain=self._domain)
+        if row is not None and row["goal_group_id"] and self.day_bounds is not None:
+            start, end = self.day_bounds(date.fromisoformat(row["for_date"]))
+            at = max(start, min(reported_at or now, end - timedelta(seconds=1)))       # inside that local day, so the daily evaluation counts it
+            self._event(tx, "coach.goal_result_reported", now, goal_group_id=row["goal_group_id"], commitment_id=commitment_id,
+                        outcome="met" if outcome is Outcome.KEPT else "missed", period_start=_iso(start), period_end=_iso(at))
+
+    def settle_check(self, commitment_id: str, result: str, now: datetime) -> bool:
+        """What a spot check decided about a Kept recorded as `checking` (proof_checks.service.Settle): "kept" -> it counts now (Trust and the goal
+        result as of the report); "unproven" -> it stays recorded and earns nothing; "not_kept" -> it becomes Not kept and counts as such."""
+        def write(tx: Transaction, _s: object) -> bool:
+            row = tx.fetch_one("SELECT for_date, goal_group_id, resolved_at FROM daily_commitments WHERE id = ? AND status = 'kept' AND report_timing = 'checking'",
+                               (commitment_id,))
+            if row is None:
+                return False
+            reported = _parse_iso(row["resolved_at"])
+            if result == "kept":
+                tx.execute("UPDATE daily_commitments SET report_timing = 'proven' WHERE id = ?", (commitment_id,))
+                self._result_events(tx, row, commitment_id, Outcome.KEPT, now, trust=not self._paused(reported), reported_at=reported)
+            elif result == "not_kept":
+                tx.execute("UPDATE daily_commitments SET status = 'not_kept', report_timing = 'retracted' WHERE id = ?", (commitment_id,))
+                self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=Outcome.NOT_KEPT.value)
+                self._result_events(tx, row, commitment_id, Outcome.NOT_KEPT, now, trust=not self._paused(now), reported_at=reported)
+            else:
+                tx.execute("UPDATE daily_commitments SET report_timing = 'unproven' WHERE id = ?", (commitment_id,))
+                self._event(tx, "coach.commitment_unproven", now, commitment_id=commitment_id)
+            return True
+
+        return apply_transition(self._core, write=write)
 
     # ------------------------------------------------------------------ time windows (owner, 2026-11-13)
 

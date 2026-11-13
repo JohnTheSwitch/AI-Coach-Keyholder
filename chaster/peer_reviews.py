@@ -63,6 +63,7 @@ class PeerReviewObservation:
     verified_votes: int | None = None
     rejected_votes: int | None = None
     submitted_at: str | None = None     # as Chaster reports it (createdAt / submittedAt), only for display
+    task_id: str | None = None          # tasks only: the Chaster task id (a spot check's review is decided by proof_checks, not as a rejected photo)
 
 
 @dataclass
@@ -76,7 +77,7 @@ def _count(value) -> int | None:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _observation(lock_id: str, source: ReviewSource, review: dict, *, fallback_id=None, submitted=None) -> PeerReviewObservation | None:
+def _observation(lock_id: str, source: ReviewSource, review: dict, *, fallback_id=None, submitted=None, task_id=None) -> PeerReviewObservation | None:
     review_id = review.get("_id") or fallback_id
     try:
         status = ReviewStatus(review.get("status"))
@@ -87,7 +88,8 @@ def _observation(lock_id: str, source: ReviewSource, review: dict, *, fallback_i
     verified = review.get("nbVerifiedVotes", review.get("verifiedVotes"))
     rejected = review.get("nbRejectedVotes", review.get("rejectedVotes"))
     return PeerReviewObservation(lock_id=lock_id, source=source, review_id=review_id, status=status, verified_votes=_count(verified),
-                                 rejected_votes=_count(rejected), submitted_at=submitted if isinstance(submitted, str) else None)
+                                 rejected_votes=_count(rejected), submitted_at=submitted if isinstance(submitted, str) else None,
+                                 task_id=task_id if isinstance(task_id, str) else None)
 
 
 def parse_task_history(raw: Iterable, lock_id: str) -> list[PeerReviewObservation]:
@@ -95,7 +97,7 @@ def parse_task_history(raw: Iterable, lock_id: str) -> list[PeerReviewObservatio
     for entry in raw or ():
         review = entry.get("peerVerification") if isinstance(entry, dict) else None
         if isinstance(review, dict):
-            obs = _observation(lock_id, ReviewSource.TASKS, review, submitted=entry.get("createdAt"))
+            obs = _observation(lock_id, ReviewSource.TASKS, review, submitted=entry.get("createdAt"), task_id=entry.get("id"))
             if obs is not None:
                 found.append(obs)
     return found

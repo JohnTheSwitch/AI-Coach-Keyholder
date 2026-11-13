@@ -166,6 +166,7 @@ class CoachKeyholderBot(discord.Client):
         self.keyholder_inbox = None              # messaging.keyholder_inbox.keyholder_inbox_loop coroutine (owner, 2026-11-13)
         self.update_check = None                 # system.update_check.update_check_loop coroutine (owner, 2026-11-13)
         self.commitment_asks = None              # system.coach_dm.CoachDm.ask_loop coroutine: "Done?" when a commitment's time ends (owner, 2026-11-13)
+        self.proof_checks_loop = None            # system.proof_wiring.proof_loop coroutine: proof spot checks (owner, 2026-11-13)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -218,6 +219,8 @@ class CoachKeyholderBot(discord.Client):
             self._update_check_task = asyncio.create_task(self.update_check, name="update-check")
         if self.commitment_asks is not None:
             self._commitment_ask_task = asyncio.create_task(self.commitment_asks, name="commitment-asks")
+        if self.proof_checks_loop is not None:
+            self._proof_task = asyncio.create_task(self.proof_checks_loop, name="proof-checks")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -950,6 +953,20 @@ def main() -> None:
                                             send=queued_send(notification_queue, user_id=config.owner_user_id, clock=clock),
                                             owner_target=peer.owner_target, view_for=decision_actions, embed_for=lambda spec: spec,
                                             incident_notices=peer.incident_notices)
+    # Proof spot checks (owner, 2026-11-13; honesty and proof, slice 3): a random share of timely Done reports is checked through a Chaster task.
+    from system.proof_wiring import build_proof_checks, proof_loop
+    proof_notes: list[str] = []
+    proof_checks = build_proof_checks(config, core, coach_dm=coach_dm, signals=detectors.signals, keyholder_tokens=background_tokens or chaster_token_manager,
+                                      lock_client=chaster_lock_client, owner_lock=wiring.owner_lock, vacation=wiring.vacation,
+                                      window_cfg=window_config_from(config), clock=clock, notes=proof_notes)
+    for note in proof_notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if proof_checks is not None:
+        from system.dm_actions import ProofDm
+        bot.dm_actions["proof"] = ProofDm(proof_checks, resolve_user=resolve_user, now=clock.now)
+        bot.proof_checks_loop = proof_loop(proof_checks, clock)
+        if peer.watch is not None:
+            peer.watch.is_spot_check = lambda obs, checks=proof_checks: checks.is_check_task(obs.task_id)
     # Photo check-ins (owner, 2026-11-13): the submission times of the verification pictures on the connected account's locked locks.
     photo_account = config.chaster_execution_keyholder_user_id
     photo_tokens = background_tokens or chaster_token_manager

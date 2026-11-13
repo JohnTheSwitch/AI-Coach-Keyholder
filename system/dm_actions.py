@@ -97,3 +97,20 @@ class HygieneDm:
         if not recorded:
             return OutgoingMessage(text="Already noted, thank you.")
         return OutgoingMessage(text="Noted. Take care of yourself; this never counts against anything." if action == "health" else "Noted, thank you.")
+
+
+class ProofDm:
+    """The wearer's two buttons on a spot check (owner, 2026-11-13): "I can't show it now" and "I didn't actually do it"."""
+
+    def __init__(self, checks, *, resolve_user: Callable[[str], str | None], now: Callable[[], datetime]) -> None:
+        self._checks = checks
+        self._resolve = resolve_user
+        self._now = now
+
+    def press(self, *, discord_user_id: str, action: str, ident: str) -> OutgoingMessage:
+        user = self._resolve(discord_user_id)
+        if user is None:
+            return _NOT_YOURS
+        if action not in ("pass", "retract"):
+            return OutgoingMessage(text="That isn't one of the options.")
+        return OutgoingMessage(text=self._checks.press(user_id=user, check_id=ident, action=action, now=self._now()))

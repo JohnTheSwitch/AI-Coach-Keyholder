@@ -156,4 +156,4 @@ class TestCatalog:
     def test_only_existing_modules_are_marked_detectable(self) -> None:
         assert {v.code for v in cat.CATALOG if v.detectable} == {
             "CHECKIN_MISSED_FIRST", "CHECKIN_INSUFFICIENT", "CHECKIN_REPEATED_NONCOMPLIANCE", "HYGIENE_MISUSE", "EPISTEMIC_MISREPRESENTATION", "DETECTION_UNANSWERED",
-            "EXEMPTION_OVERRIDE"}
+            "EXEMPTION_OVERRIDE", "FALSE_REPORT"}

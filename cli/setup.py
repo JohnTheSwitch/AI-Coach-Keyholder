@@ -106,6 +106,9 @@ def setup_report(config, core, *, model_ready: Callable[[], object] | None = Non
     for name in named_trust_domains(config):
         exists = domains.get(name)
         add(bool(exists), f"Trust domain {name}", "exists" if exists else "missing: run `python -m cli setup init --owner-id <id> --yes`")
+    if getattr(config, "enable_proof_checks", False):
+        add(None, "Proof spot checks", "on: your lock needs Chaster's Tasks extension with community review, or every check is skipped "
+            "(the bot reads the lock; nothing is added for you)")
 
     try:
         ZoneInfo(config.app_timezone)

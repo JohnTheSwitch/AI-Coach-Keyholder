@@ -22,7 +22,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from trust_manager.checkin_scoring import (
-    CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_KEPT_WEIGHT, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, checkin_evidence_spec,
+    CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_KEPT_WEIGHT, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, PROOF_VERIFIED_WEIGHT, checkin_evidence_spec,
 )
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
@@ -802,6 +802,16 @@ class TrustManager:
             tx, trust_domain=trust_domain, evidence_type=EvidenceType.COMMITMENT_KEPT, source_entity_type="daily_commitment",
             source_entity_id=commitment_id, weight=COMMITMENT_KEPT_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="commitment", now=now,
             explanation="A daily commitment was reported as kept.",
+        )
+
+    def _record_proof_verified_in_transaction(
+        self, tx: Transaction, *, check_id: str, trust_domain: str, now: datetime,
+    ) -> TrustEvidence | None:
+        """Owner, 2026-11-13 (honesty and proof): a spot check passed, its photo verified by the Chaster community. Observed, not self-reported."""
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=EvidenceType.PROOF_VERIFIED, source_entity_type="proof_check",
+            source_entity_id=check_id, weight=PROOF_VERIFIED_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="proof_check", now=now,
+            explanation="A spot check was passed: the community verified the photo.",
         )
 
     def _record_minor_evidence_in_transaction(

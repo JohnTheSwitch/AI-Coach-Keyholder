@@ -83,6 +83,7 @@ class EvidenceType(StrEnum):
     CHECKIN_ANSWERED = "checkin_answered"             # owner, 2026-11-13: a check-in answered on time and well enough
     HYGIENE_ON_TIME = "hygiene_on_time"               # owner, 2026-11-13: a planned hygiene opening relocked on time
     COMMITMENT_KEPT = "commitment_kept"               # owner, 2026-11-13: the wearer reported a daily commitment as kept
+    PROOF_VERIFIED = "proof_verified"                 # owner, 2026-11-13: a spot check's photo was verified by the Chaster community (Honesty)
 
 
 @dataclass(frozen=True, kw_only=True)

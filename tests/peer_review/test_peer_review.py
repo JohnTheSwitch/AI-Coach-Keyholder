@@ -224,6 +224,24 @@ class TestWatch:
         row, = w.q("SELECT * FROM peer_reviews")
         assert row["incident_id"] == incident["id"] and row["incident_registered_at"] is not None
 
+    def test_a_spot_checks_rejection_is_not_a_second_incident(self, w) -> None:
+        # Owner, 2026-11-13 (honesty and proof): proof_checks decides a spot check's review; the watch only records it.
+        w.watch.is_spot_check = lambda obs: obs.task_id == "t-pv1"
+        w.set(tasks=[task("pv1", "ongoing"), task("pv2", "ongoing")])
+        w.watch.poll(NOW)
+        w.set(tasks=[task("pv1", "rejected"), task("pv2", "rejected")])
+        assert w.watch.poll(NOW + timedelta(minutes=10)).incidents_registered == 1
+        assert {r["review_id"]: r["incident_id"] is not None for r in w.q("SELECT * FROM peer_reviews")} == {"pv1": False, "pv2": True}
+
+    def test_a_failing_spot_check_lookup_never_double_counts(self, w) -> None:
+        def broken(_obs):
+            raise RuntimeError("db")
+        w.watch.is_spot_check = broken
+        w.set(tasks=[task("pv1", "ongoing")])
+        w.watch.poll(NOW)
+        w.set(tasks=[task("pv1", "rejected")])
+        assert w.watch.poll(NOW + timedelta(minutes=10)).incidents_registered == 0
+
     def test_a_new_review_already_rejected_after_the_baseline_creates_one(self, w) -> None:
         w.set()
         w.watch.poll(NOW)                                            # baseline: nothing yet

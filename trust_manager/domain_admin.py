@@ -31,8 +31,12 @@ __all__ = ["DomainAdminOutcome", "TrustDomainAdmin", "domain_explanation", "rese
 DEFAULT_DOMAIN_TEXTS = {
     "routine": ("Routine", "Daily check-ins, commitments and goals: how reliably the wearer does what they said."),
     "hygiene": ("Hygiene", "Hygiene openings: used for hygiene and relocked on time."),
+    "honesty": ("Honesty", "Whether the wearer's reports hold up: spot checks of Done reports passed, missed or rejected. Sets how often reports are checked."),
 }
 
+
+# Owner, 2026-11-13: Honesty starts at level 3 (a 20 % spot-check rate), so a new wearer is not met with suspicion. Part of the consent shown.
+STARTING_SCORES = {"honesty": 0.75}
 
 _PARAGRAPH = chr(10) * 2
 
@@ -40,6 +44,8 @@ _PARAGRAPH = chr(10) * 2
 def named_trust_domains(config) -> list[str]:
     names = [getattr(config, attr, None) for attr in ("check_in_trust_domain", "daily_evaluation_trust_domain", "hygiene_trust_domain",
                                                      "lock_claim_trust_domain", "peer_review_trust_domain")]
+    if getattr(config, "enable_proof_checks", False):           # owner, 2026-11-13: on by default, created with consent like the others
+        names.append(getattr(config, "honesty_trust_domain", None))
     return sorted({n for n in names if isinstance(n, str) and _DOMAIN_ID.match(n)})
 
 
@@ -62,7 +68,8 @@ def ensure_domains_with_consent(core, names, *, explanation: str, comment: str, 
                 (cid, _iso(now), f"trust_domain:{n}", domain_explanation(n, d, desc) + _PARAGRAPH + explanation, comment))
 
         apply_transition(core, write=write)
-        trust.create_domain(domain_id=name, display_name=display, description=description, created_via_consent_id=consent_id, now=now)
+        trust.create_domain(domain_id=name, display_name=display, description=description, created_via_consent_id=consent_id, now=now,
+                            initial_score_override=STARTING_SCORES.get(name))
         created.append(name)
     return created
 
@@ -88,7 +95,7 @@ def reset_explanation(domain_id: str) -> str:
 
 def domain_explanation(domain_id: str, display_name: str, description: str) -> str:
     return (f"Create the Trust domain '{domain_id}' ({display_name}): {description}\n"
-            f"It starts at score {DEFAULT_NEW_DOMAIN_SCORE} and confidence {DEFAULT_NEW_DOMAIN_CONFIDENCE}. Only CONFIRMED Incidents and "
+            f"It starts at score {STARTING_SCORES.get(domain_id, DEFAULT_NEW_DOMAIN_SCORE)} and confidence {DEFAULT_NEW_DOMAIN_CONFIDENCE}. Only CONFIRMED Incidents and "
             f"recorded evidence change it; an UNCONFIRMED Incident never does. The domain can later be deactivated with consent.")
 
 
@@ -155,5 +162,5 @@ class TrustDomainAdmin:
 
         apply_transition(self._core, write=write)
         self._trust.create_domain(domain_id=domain_id, display_name=display_name.strip(), description=description.strip(),
-                                  created_via_consent_id=consent_id, now=now)
+                                  created_via_consent_id=consent_id, now=now, initial_score_override=STARTING_SCORES.get(domain_id))
         return DomainAdminOutcome.CREATED
