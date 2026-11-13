@@ -106,7 +106,7 @@ one number, a bad week took weeks to climb out of. Now:
   Trust part and the **check-in level** (check-ins per day). The level stays long-term on purpose: check-ins produce the short-term evidence, and
   tying their number to it would switch them off after one good week, leave short-term Trust without evidence and switch them back on.
 - **Short-term Trust** (`trust_manager/short_term.py`) is the share of good evidence among all evidence of the domain in a rolling window:
-  `good / (good + bad)`, with effective weights (raw x confidence, capped). `clean_streak_bonus` is left out (it repeats the check-ins). No
+  `good / (good + bad)`, with effective weights (raw x confidence, capped). `clean_streak_bonus` is left out (it repeats the check-ins), and so are commitment reports (`commitment_kept`, `commitment_not_kept`): nothing checks them, so supervision is decided only on what the system observed. No
   evidence: unknown. The window is **7 days** for the check-in domain (`CHECK_IN_DOMAIN_WINDOW`) and **14 days** for any other (hygiene).
 - **Supervision Mode** follows short-term Trust only (`supervision/models.py::decide`): it starts below **0.40** from at least **5** pieces, ends at
   **0.60** or above (any number of pieces), and the band between changes nothing. Unknown changes nothing, so a domain with no evidence at all

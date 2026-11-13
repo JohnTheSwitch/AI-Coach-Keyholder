@@ -44,6 +44,8 @@ Each refusal stores a reason code in `coach_refusals`, never the text. `python -
 - It reads no Trust state and imports no execution, release, penalty, Trust, rules or Iron Contract code (guard test). Locks and vacations arrive as injected callables.
 - A commitment reported as not kept is a minor Trust reduction (-0.01, through `coach.commitment_missed`); owner, 2026-11-13: kept is the mirror, +0.01
   (`coach.commitment_kept`). Neither takes a token or reaches a lock. Partly kept, unanswered, and anything reported during a vacation do nothing for Trust.
+- Owner, 2026-11-13: a KEPT report sooner than `MIN_KEPT_AFTER` (30 minutes) after the commitment was made, sooner than the time its text names
+  ("study for an hour"), or before its day has begun is recorded but earns nothing (no Trust, no goal result); a decision line says so.
 - Owner, 2026-11-13 (before, nothing ever recorded goal evidence, so goals counted for nothing): a commitment tied to a goal and reported kept or not kept
   is that day's goal result (`coach.goal_result_reported` -> `goal_management.record_reported_result_in_transaction`, MET or MISSED, period inside the
   commitment's local day). The daily evaluation then counts the goal for the token pool and the clean day. Partly kept records nothing.

@@ -457,8 +457,8 @@ class TestAMissedCommitmentEndToEnd:
                 return {t: tx.fetch_one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in counted}
 
         before, score = counts(), trust.get_domain_state("routine").score
-        w.desk.record_outcome(w.user, commitment, outcome, FIXED_TIME)
-        on_system_startup(core, "p1", FrozenClock(FIXED_TIME + timedelta(minutes=1)))
+        w.desk.record_outcome(w.user, commitment, outcome, FIXED_TIME + timedelta(days=1, hours=1))   # it is for tomorrow: reported then
+        on_system_startup(core, "p1", FrozenClock(FIXED_TIME + timedelta(days=1, hours=1, minutes=1)))
         return trust.get_domain_state("routine").score - score, before, counts(), counted
 
     def test_not_kept_is_a_small_trust_reduction_and_nothing_else(self, core) -> None:  # noqa: F811

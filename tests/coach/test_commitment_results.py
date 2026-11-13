@@ -18,6 +18,7 @@ from trust_manager.models import EvidenceType
 from trust_manager.repository import TrustManager
 
 ROOT = Path(__file__).parent.parent.parent
+LATER = NOW + timedelta(hours=1)            # a KEPT report needs to come plausibly after the commitment was made
 
 
 def bounds(d: date) -> tuple[datetime, datetime]:
@@ -52,8 +53,8 @@ class TestAKeptCommitmentEarns:
 
     def test_kept_raises_the_event_once(self, w) -> None:
         commitment = accepted(w)
-        w.desk.record_outcome(U, commitment, Outcome.KEPT, NOW)
-        w.desk.record_outcome(U, commitment, Outcome.KEPT, NOW)
+        w.desk.record_outcome(U, commitment, Outcome.KEPT, LATER)
+        w.desk.record_outcome(U, commitment, Outcome.KEPT, LATER)
         assert [e["commitment_id"] for e in events(w, "coach.commitment_kept")] == [commitment]
         assert events(w, "coach.commitment_missed") == []
 
@@ -86,7 +87,7 @@ class TestAGoalCountsThroughItsCommitments:
     def test_a_goal_commitment_reports_the_day(self, w, outcome, result) -> None:
         goal = w.goal()
         commitment = accepted(w, goal)
-        w.desk.record_outcome(U, commitment, outcome, NOW)
+        w.desk.record_outcome(U, commitment, outcome, LATER)
         (e,) = events(w, "coach.goal_result_reported")
         start, end = bounds(NOW.date())
         assert e["goal_group_id"] == goal and e["outcome"] == result and e["commitment_id"] == commitment
@@ -155,3 +156,49 @@ class TestStrictModeKeepsTheNormalTimeToAnswer:
         sent = datetime.fromisoformat(row["sent_at"].replace("Z", "+00:00"))
         deadline = datetime.fromisoformat(row["deadline_at"].replace("Z", "+00:00"))
         assert deadline - sent == timedelta(minutes=60)
+
+
+class TestImplausiblySoon:
+    """Owner, 2026-11-13: a KEPT report that cannot be right yet is recorded, but earns nothing."""
+
+    from coach.desk import MIN_KEPT_AFTER, reported_too_soon  # noqa: E402
+
+    def soon(self, text, minutes, *, today=None, for_date=None):
+        from coach.desk import reported_too_soon
+        day = NOW.date()
+        return reported_too_soon(text=text, made_at=NOW, for_date=for_date or day, today=today or day, now=NOW + timedelta(minutes=minutes))
+
+    @pytest.mark.parametrize("text,minutes,expected", [
+        ("Tidy the desk", 5, True), ("Tidy the desk", 30, False),
+        ("Study for 30 minutes", 31, False), ("Study for an hour", 45, True), ("Study for an hour", 61, False),
+        ("Run 2 hours", 90, True), ("Run 2 hours", 121, False), ("Učit se 90 minut", 60, True), ("Read for half an hour", 31, False),
+    ])
+    def test_the_time_it_names_or_half_an_hour(self, text, minutes, expected) -> None:
+        assert self.soon(text, minutes) is expected
+
+    def test_before_its_day_has_begun(self) -> None:
+        tomorrow = NOW.date() + timedelta(days=1)
+        assert self.soon("Tidy the desk", 600, for_date=tomorrow) is True
+
+    def test_a_named_duration_is_capped(self) -> None:
+        assert self.soon("Work 100 hours", 13 * 60) is False
+
+    def test_it_is_recorded_but_earns_nothing(self, w) -> None:
+        goal = w.goal()
+        commitment = accepted(w, goal)
+        assert w.desk.record_outcome(U, commitment, Outcome.KEPT, NOW + timedelta(minutes=2)) == "Noted, well done."
+        assert w.rows("SELECT status FROM daily_commitments") == [{"status": "kept"}]
+        assert events(w, "coach.commitment_kept") == [] and events(w, "coach.goal_result_reported") == []
+
+    def test_not_kept_still_counts_at_once(self, w) -> None:
+        w.desk.record_outcome(U, accepted(w), Outcome.NOT_KEPT, NOW + timedelta(minutes=2))
+        assert len(events(w, "coach.commitment_missed")) == 1
+
+
+class TestShortTermCountsOnlyWhatWasObserved:
+    def test_commitment_reports_are_left_out(self) -> None:
+        from trust_manager.short_term import SELF_REPORTED_TYPES, short_term_from
+        assert SELF_REPORTED_TYPES == {"commitment_kept", "commitment_not_kept"}
+        st = short_term_from([("commitment_kept", 0.01, 1.0)] * 3 + [("checkin_missed", -0.02, 1.0)])
+        assert st.score == 0.0 and st.pieces == 1
+        assert short_term_from([("commitment_not_kept", -0.01, 1.0)]).score is None

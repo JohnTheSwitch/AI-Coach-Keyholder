@@ -15,6 +15,9 @@ where good / bad are the summed effective weights (raw_weight * evidence_confide
 pieces. It is read from the same `trust_evidence` rows the long-term score consumes, so nothing new is recorded. Left out:
 
 - `clean_streak_bonus`: it is derived from the same check-ins that already count one by one (they would count twice);
+- the wearer's own word (owner, 2026-11-13: "if he lied, would anything catch it?"): `commitment_kept` and `commitment_not_kept`. Nothing checks
+  a commitment report, and up to three a day could otherwise outweigh missed check-ins and end supervision on self-report alone. Both are left
+  out, so being honest about a broken commitment costs nothing here either. They still count for the long-term score;
 - zero weights.
 
 No evidence in the window: the score is None (unknown). Pure arithmetic plus one read; no clock, no writes, no events.
@@ -31,10 +34,11 @@ from infrastructure.time_format import iso as _iso
 from trust_manager.models import EvidenceType
 from trust_manager.recalculation import MAX_ABS_EFFECTIVE_WEIGHT
 
-__all__ = ["DEFAULT_WINDOW", "EXCLUDED_TYPES", "ShortTermTrust", "short_term_from", "determine_short_term_trust_in_transaction"]
+__all__ = ["DEFAULT_WINDOW", "EXCLUDED_TYPES", "SELF_REPORTED_TYPES", "ShortTermTrust", "short_term_from", "determine_short_term_trust_in_transaction"]
 
 DEFAULT_WINDOW = timedelta(days=14)
-EXCLUDED_TYPES = frozenset({EvidenceType.CLEAN_STREAK_BONUS.value})
+SELF_REPORTED_TYPES = frozenset({EvidenceType.COMMITMENT_KEPT.value, EvidenceType.COMMITMENT_NOT_KEPT.value})
+EXCLUDED_TYPES = frozenset({EvidenceType.CLEAN_STREAK_BONUS.value}) | SELF_REPORTED_TYPES
 
 
 @dataclass(frozen=True)

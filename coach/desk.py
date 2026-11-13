@@ -45,14 +45,16 @@ from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
+from infrastructure.decision_log import decision
 from infrastructure.time_format import iso as _iso
+from infrastructure.time_format import parse_iso as _parse_iso
 from supervision.checkin_evaluator import mentions_safety_issue
 
 logger = logging.getLogger("ai_coach_keyholder.coach.desk")
 
 __all__ = [
     "CoachDesk", "Proposal", "SubmitResult", "Commitment", "Outcome", "MAX_PROPOSALS_PER_DAY", "MAX_COMMITMENTS_PER_DAY", "MAX_ACTIVE_GOALS",
-    "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW", "without_day_words",
+    "PROPOSAL_TTL", "DECLINE_MEMORY", "OUTCOME_WINDOW", "without_day_words", "MIN_KEPT_AFTER", "reported_too_soon",
 ]
 
 MAX_PROPOSALS_PER_DAY = 3
@@ -62,6 +64,29 @@ PROPOSAL_TTL = timedelta(hours=24)
 DECLINE_MEMORY = timedelta(days=14)
 OUTCOME_WINDOW = timedelta(days=1)               # only yesterday's is still asked about (owner, 2026-11-12: a Tuesday card on Thursday is stale); then it lapses, at no cost
 PROGRESS_WINDOW = timedelta(days=14)
+# Owner, 2026-11-13: a commitment reported kept sooner than this after it was made, or sooner than the time its own text names ("study for an hour"),
+# or before its day has begun, is implausible. It is still recorded as kept, but earns nothing: no Trust and no goal result.
+MIN_KEPT_AFTER = timedelta(minutes=30)
+_DURATION = re.compile(r"(\d+(?:[.,]\d+)?|an?|half an|one|two|three)\s*(hours?|hrs?|h|hodin[auy]?|hod|minutes?|mins?|minut[ay]?|min)\b")
+_WORD_NUMBERS = {"a": 1.0, "an": 1.0, "one": 1.0, "half an": 0.5, "two": 2.0, "three": 3.0}
+
+
+def _named_duration(text: str) -> timedelta:
+    longest = timedelta(0)
+    for amount, unit in _DURATION.findall((text or "").lower()):
+        value = _WORD_NUMBERS.get(amount)
+        if value is None:
+            value = float(amount.replace(",", "."))
+        hours = unit.startswith("h")
+        longest = max(longest, timedelta(hours=value) if hours else timedelta(minutes=value))
+    return min(longest, timedelta(hours=12))
+
+
+def reported_too_soon(*, text: str, made_at: datetime, for_date: date, today: date, now: datetime) -> bool:
+    """True when a KEPT report cannot be right yet (see MIN_KEPT_AFTER)."""
+    if today < for_date:
+        return True
+    return now - made_at < max(MIN_KEPT_AFTER, _named_duration(text))
 TASK_WINDOW = timedelta(days=7)
 _SIMILAR = 0.6
 _WORD = re.compile(r"[a-z0-9]+")
@@ -325,16 +350,21 @@ class CoachDesk:
         counts = outcome in (Outcome.NOT_KEPT, Outcome.KEPT) and not self._paused(now)
 
         def write(tx: Transaction, _s: object) -> bool:
-            row = tx.fetch_one("SELECT for_date, goal_group_id FROM daily_commitments WHERE id = ? AND user_id = ? AND status = 'open'",
+            row = tx.fetch_one("SELECT for_date, goal_group_id, text, created_at FROM daily_commitments WHERE id = ? AND user_id = ? AND status = 'open'",
                                (commitment_id, user_id))
+            earns = True
+            if outcome is Outcome.KEPT and row is not None and reported_too_soon(
+                    text=row["text"], made_at=_parse_iso(row["created_at"]), for_date=date.fromisoformat(row["for_date"]), today=self.today(now), now=now):
+                earns = False
+                decision("coach", "A commitment was reported kept implausibly soon: recorded, but it earns nothing.", commitment_id=commitment_id)
             done = tx.execute("UPDATE daily_commitments SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ? AND status = 'open'",
                               (outcome.value, _iso(now), commitment_id, user_id)).rowcount
             if done:
                 self._event(tx, "coach.commitment_resolved", now, commitment_id=commitment_id, outcome=outcome.value)
-                if counts:
+                if counts and earns:
                     self._event(tx, "coach.commitment_missed" if outcome is Outcome.NOT_KEPT else "coach.commitment_kept", now,
                                 commitment_id=commitment_id, trust_domain=self._domain)
-                if row is not None and row["goal_group_id"] and outcome is not Outcome.PARTLY and self.day_bounds is not None:
+                if row is not None and row["goal_group_id"] and outcome is not Outcome.PARTLY and earns and self.day_bounds is not None:
                     start, end = self.day_bounds(date.fromisoformat(row["for_date"]))
                     at = max(start, min(now, end - timedelta(seconds=1)))       # inside that local day, so the daily evaluation counts it
                     self._event(tx, "coach.goal_result_reported", now, goal_group_id=row["goal_group_id"], commitment_id=commitment_id,
