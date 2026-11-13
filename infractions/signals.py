@@ -78,16 +78,19 @@ class SignalKind(StrEnum):
     SELF_REPORT_HYGIENE = "self_report_hygiene"      # owner, 2026-11-12 (option A): the wearer owned up to misusing a hygiene opening
     EXEMPTION_OVERRIDE = "exemption_override"        # owner, 2026-11-13: took a declined exemption anyway (warning only)
     PROOF_FAILED = "proof_failed"                    # owner, 2026-11-13: a spot check was missed or its photo rejected (Honesty, warning only)
+    CONTRADICTION = "contradiction"                  # owner, 2026-11-13 (slice 4): a fact contradicts a report (Honesty, warning only)
 
 
 RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
                SignalKind.EXEMPTION_OVERRUN: "HYGIENE_MISUSE", SignalKind.PHOTO_REJECTED: "peer_review_rejection",
                SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE", SignalKind.SELF_REPORT_HYGIENE: "HYGIENE_MISUSE",
-               SignalKind.EXEMPTION_OVERRIDE: "EXEMPTION_OVERRIDE", SignalKind.PROOF_FAILED: "FALSE_REPORT"}
+               SignalKind.EXEMPTION_OVERRIDE: "EXEMPTION_OVERRIDE", SignalKind.PROOF_FAILED: "FALSE_REPORT",
+               SignalKind.CONTRADICTION: "FALSE_REPORT"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious; a community vote is one weak signal.
 EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
             SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE,
-            SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE, SignalKind.EXEMPTION_OVERRIDE: _MINOR_EVIDENCE, SignalKind.PROOF_FAILED: _MINOR_EVIDENCE}
+            SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE, SignalKind.EXEMPTION_OVERRIDE: _MINOR_EVIDENCE, SignalKind.PROOF_FAILED: _MINOR_EVIDENCE,
+            SignalKind.CONTRADICTION: _MINOR_EVIDENCE}
 # Incidents another module registers UNCONFIRMED by itself; they are taken into this path instead of waiting for a button nobody presses.
 ADOPTED_RULE_GROUPS = {"CHECKIN_REPEATED_NONCOMPLIANCE": SignalKind.CHECKIN_NONCOMPLIANCE}
 _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIENE_FREQUENCY})

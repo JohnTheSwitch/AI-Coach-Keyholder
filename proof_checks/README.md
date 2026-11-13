@@ -42,3 +42,17 @@ off until their invitation discloses spot checks and they can switch them off.
 - Holds an unknown against the wearer.
 
 `forget all` erases the stored commitment text.
+
+## Contradictions (roadmap slice 4, owner 2026-11-13; migration 064; `contradictions.py`)
+
+A fact that contradicts a report becomes a **question** to the wearer through the same infractions path (explain, health in code, the judge,
+one appeal); unexplained, it is `FALSE_REPORT` in Honesty, warning only.
+
+- **Bedtime:** a kept bedtime commitment that names a time ("Sleep by 23:00", "in bed before 11 pm") is contradicted when the wearer wrote to the
+  bot more than 15 minutes after it and before quiet hours ended. Looked at once, after the night (every 30 minutes, the last 3 days). Without
+  a stated time ("30 minutes earlier") it cannot be contradicted (`no_time`). Health, pain or emergency messages never count. Only the
+  wearer's own messages are read, through `Database.get_user_messages_between`.
+- **Chaster task times:** the only Chaster tasks tied to reports are spot checks, and a photo after their deadline already fails them (`late`).
+  Nothing more to build until other tasks are tied to commitments.
+- **Lock claims:** a lock report that Chaster contradicts (`infractions/lock_claims.py`) is now filed under `honesty` by default
+  (`LOCK_CLAIM_TRUST_DOMAIN`); additional wearers keep `routine` until they get a Honesty domain. Earlier Incidents stay where they were.

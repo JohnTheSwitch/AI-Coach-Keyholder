@@ -709,6 +709,17 @@ class Database:
             )
         return m.id
 
+    def get_user_messages_between(self, start: datetime, end: datetime) -> list[tuple[datetime, str]]:
+        """Honesty and proof, slice 4: (time, text) of the user's own messages in [start, end), oldest first. Read-only, for contradiction checks."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT created_at, content FROM conversation_messages WHERE role = 'user' ORDER BY created_at")
+        found = []
+        for r in rows:
+            at = parse_iso(r["created_at"])
+            if start <= at < end:
+                found.append((at, r["content"] or ""))
+        return found
+
     def get_recent_messages(
         self, discord_channel_id: str, limit: int = 20
     ) -> list[ConversationMessage]:

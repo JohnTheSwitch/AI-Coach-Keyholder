@@ -595,6 +595,18 @@ class CoachDesk:
             return f"OK. I'll ask again at {self._clock_text(state['ask'])}. A Kept counts until {until}."
         return f"OK. Tell me when you're done: a Kept counts until {until}."
 
+    def get_kept_night_commitments(self, since: date) -> list[dict]:
+        """Honesty and proof, slice 4: bedtime commitments reported kept (and counted, or still being checked) for `since` or later."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT id, for_date, text, resolved_at FROM daily_commitments WHERE user_id = ? AND status = 'kept' "
+                                "AND report_timing IN ('timely', 'proven', 'checking') AND for_date >= ?", (self.user_id, since.isoformat()))
+        return [dict(r) for r in rows if is_night_commitment(r["text"])]
+
+    def next_waking_start(self, day: date) -> datetime | None:
+        """When quiet hours end on the morning after `day` (None without a time zone)."""
+        waking = self._waking(day + timedelta(days=1))
+        return None if waking is None else waking[0]
+
     def past_report_window(self, commitment_id: str, now: datetime) -> bool:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT for_date, text, created_at, window_start, window_end FROM daily_commitments WHERE id = ?", (commitment_id,))

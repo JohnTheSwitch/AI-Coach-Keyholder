@@ -14,7 +14,9 @@ from datetime import datetime
 
 from chaster_execution.control import ExecutionControl
 from infractions.signals import SignalKind
+from database.database import Database
 from proof_checks.chaster_tasks import ChasterTasks
+from proof_checks.contradictions import BedtimeContradictions
 from proof_checks.service import Ports, ProofChecks
 from schedule_windows.windows import WindowKind, classify
 from system.owner_lock import is_auto
@@ -76,6 +78,16 @@ def build_proof_checks(config, core, *, coach_dm, signals, keyholder_tokens, loc
                                      settle=desk.settle_check, raise_failure=raise_failure, quiet_between=quiet_between))
     desk.proof_selector = checks.select
     coach_dm.after_kept = checks.start_pending
+
+    def ask(*, subject_id, now, detail, wearer_text, facts, window) -> bool:
+        return signals.raise_signal(user_id=user_id, kind=SignalKind.CONTRADICTION, subject_id=subject_id, trust_domain=domain, now=now,
+                                    detail=detail, wearer_text=wearer_text, facts=facts, window=window)
+
+    if desk.to_utc is not None:
+        checks.contradictions = BedtimeContradictions(
+            core, user_id=user_id, honesty_domain=domain, kept_night=desk.get_kept_night_commitments,
+            messages_between=Database(core.db_path, core=core).get_user_messages_between, to_utc=desk.to_utc, morning_after=desk.next_waking_start,
+            today=lambda now: window_cfg.local(now).date(), local_clock=lambda instant: window_cfg.local(instant).strftime("%H:%M"), raise_question=ask)
     coach_dm.forget_also = checks.forget_all
     if trust.get_domain_state(domain) is None:
         notes.append(f"Proof spot checks are wired but NOT active yet: the '{domain}' Trust domain does not exist "
@@ -85,14 +97,18 @@ def build_proof_checks(config, core, *, coach_dm, signals, keyholder_tokens, loc
     return checks
 
 
-async def proof_loop(checks: ProofChecks, clock, *, interval_seconds: float = 60.0, poll_every: int = 2) -> None:
-    """Starts picked checks every minute and reads the open ones' Chaster tasks every `poll_every` minutes."""
+async def proof_loop(checks: ProofChecks, clock, *, interval_seconds: float = 60.0, poll_every: int = 2, contradictions_every: int = 30) -> None:
+    """Starts picked checks every minute, reads the open ones' Chaster tasks every `poll_every` minutes and looks for contradictions every
+    `contradictions_every` minutes (slice 4)."""
     tick = 0
     while True:
         try:
             await asyncio.to_thread(checks.start_pending, clock.now())
             if tick % poll_every == 0 and checks.get_open_check() is not None:
                 await asyncio.to_thread(checks.poll, clock.now())
+            contradictions = getattr(checks, "contradictions", None)
+            if contradictions is not None and tick % contradictions_every == 0:
+                await asyncio.to_thread(contradictions.run, clock.now())
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -184,7 +184,7 @@ class Config:
     enable_hygiene_watch: bool = True        # follow Chaster's temporary openings; planned breaks past the limits -> UNCONFIRMED Incidents
     hygiene_trust_domain: str = "hygiene"     # never another domain: a hygiene finding stays in its own area (philosophy 3.7)
     enable_lock_claim_watch: bool = True     # compare lock reports with Chaster; a report that was false when made -> UNCONFIRMED Incident
-    lock_claim_trust_domain: str = "routine"
+    lock_claim_trust_domain: str = "honesty"      # owner, 2026-11-13 (honesty slice 4): a false lock report is a lie about the lock
     detector_poll_seconds: int = 120          # how often the two watches read Chaster (at least 60)
     enable_extension_guard: bool = True       # keep the owner's required lock settings true on Chaster (subject to the runtime halt)
     enable_update_check: bool = True          # owner, 2026-11-13: once a day, tell the owner when GitHub has a newer version (never installs)
@@ -296,7 +296,7 @@ class Config:
             enable_hygiene_watch=(get("ENABLE_HYGIENE_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             hygiene_trust_domain=get("HYGIENE_TRUST_DOMAIN", "hygiene") or "hygiene",
             enable_lock_claim_watch=(get("ENABLE_LOCK_CLAIM_WATCH", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
-            lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "routine") or "routine",
+            lock_claim_trust_domain=get("LOCK_CLAIM_TRUST_DOMAIN", "honesty") or "honesty",
             detector_poll_seconds=max(60, int(get("DETECTOR_POLL_SECONDS", "120") or "120")),
             enable_extension_guard=(get("ENABLE_EXTENSION_GUARD", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             enable_update_check=(get("ENABLE_UPDATE_CHECK", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),

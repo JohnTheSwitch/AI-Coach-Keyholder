@@ -109,6 +109,7 @@ class ProofChecks:
         self._chaster = chaster
         self._ports = ports
         self._rng = rng
+        self.contradictions = None          # proof_checks.contradictions.BedtimeContradictions, set by the wiring (slice 4)
 
     # ------------------------------------------------------------------ select (from the coach desk)
 

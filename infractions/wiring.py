@@ -152,7 +152,7 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
                                        read_opening=read_opening, get_trust_score=score, interval_seconds=out.interval_seconds)
             out.notes.append(f"Hygiene watch enabled: every {out.interval_seconds} s; a planned break past the limits is asked about, then judged.")
     if want_claims:
-        domain = getattr(config, "lock_claim_trust_domain", None) or "routine"
+        domain = getattr(config, "lock_claim_trust_domain", None) or "honesty"
         if trust.get_domain_state(domain) is None:
             out.notes.append(f"ENABLE_LOCK_CLAIM_WATCH is true but the lock-claim watch is NOT active: the Trust domain '{domain}' (LOCK_CLAIM_TRUST_DOMAIN) does not exist.")
         else:
