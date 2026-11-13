@@ -372,6 +372,26 @@ def build_setup_context():
     return config, core, model.check_ready
 
 
+def run_economy(*, out, now, factory=None) -> int:
+    """Read-only token pace report (roadmap slice 4). `factory()` returns (core, user id, today) in tests."""
+    from cli.economy import economy_report, render_economy
+    if factory is not None:
+        core, user_id, today = factory()
+    else:
+        from core.config import Config
+        from infrastructure.database import Database as CoreDatabase
+        from system.composition import window_config_from
+        config = Config.load()
+        core = CoreDatabase(config.db_path)
+        user_id = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
+        today = window_config_from(config).local(now()).date()
+    if not user_id:
+        print("No wearer is configured.", file=out)
+        return 3
+    print(render_economy(*economy_report(core, user_id, today)), file=out)
+    return 0
+
+
 def run_setup(args, *, out, now, factory, domain_factory) -> int:
     from cli.setup import DOMAIN_TEXTS, named_trust_domains, render_report, setup_report
     config, core, model_ready = (factory or build_setup_context)()
@@ -933,6 +953,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     dr.add_argument("--yes", action="store_true")
     for dp in dsub.choices.values():
         dp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    sub.add_parser("economy", help="READ-ONLY (owner, 2026-11-13): how fast tokens are earned over 7 / 14 / 30 days and what held progress back.")
     setup = sub.add_parser("setup", help="Owner, 2026-11-13: `check` (read-only: what is set up and what is missing) or `init` (create the "
                                           "Trust domains the configuration names, with consent).")
     ssub = setup.add_subparsers(dest="setup_command", required=True)
@@ -1152,6 +1173,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
                                    confirmed=args.yes, now=now())
         print(f"{_PEER_TEXT[outcome.value]} [outcome={outcome.value}]", file=out)
         return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
+    if args.command == "economy":
+        return run_economy(out=out, now=now)
     if args.command == "setup":
         return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory)
     if args.command == "release-test-override":
