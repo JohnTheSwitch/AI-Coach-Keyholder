@@ -167,3 +167,22 @@ connected account. They did not go through `ExtensionReviewService`, so they hav
 **End state, verified:** both locks have `penaltyTime` 0. `6aca95c...` has its five extensions, status `locked`, still frozen, same `endDate`, `tasks` data unchanged. `6ae98ca...` had only the `penaltyTime` edit.
 
 Not tried: playing or using any extension, a real hygiene opening, a verification-picture request (it would leave a pending request with no way to cancel it), and anything on the never list above.
+
+## 8. Live test: tasks as proof (2026-11-13, lock `6af757...`, the owner's go-ahead; honesty and proof, slice 2)
+
+The live lock had no `tasks`; it was added (the owner chose to keep it for the spot checks): `unlimited`, regularity 3600, no points, no votes,
+`preventWearerFromAssigningTasks` true, no wearer editing or choosing, `actionsOnAbandonedTask` empty, `peerVerification` `{enabled: true,
+punishments: []}`. The other two extensions were resent exactly as read. The lock stayed `locked` and frozen, `endDate` unchanged.
+
+| Question | Answer (verified) |
+|---|---|
+| `assignTask` with `verificationRequired` and `codeRequired` | 201. Chaster generates a **6-digit code at assignment**, in `userData.currentTask.code`, readable by the keyholder |
+| Does the wearer see the code? | Yes, in the task |
+| Camera only? | **No: camera and gallery.** An old photo can be picked, so freshness rests on the code alone |
+| Only one task at a time | A second `assignTask` while one is open: 400 "You must complete the current task before you can get a new one." |
+| Take a task back | `POST /extensions/tasks/{lockId}/unassign-task` (the **lock** id; the extension id gives 404), 201. Logged `tasks_task_unassigned` |
+| History | `tasks_task_assigned` and `tasks_task_completed` with exact times and the task (text, id, code). Completion = the moment the photo was submitted |
+| Community review | `GET /extensions/tasks/{lockId}/history`: status `pending_verification`, `peerVerification.status` `ongoing`, `checks: [{task, code}]` (reviewers are shown the task text and the code to compare), `endsAt` **6 hours** after submission. First verified vote within a minute |
+| Task text | Owner: short and plain ("Show your lockbox"); reviewers read it, so it names what to show, never a long instruction |
+
+Not tested: the task timer (`start-task-timer`).

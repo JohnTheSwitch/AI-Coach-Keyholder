@@ -133,7 +133,10 @@ Deterministic, and only on facts. A contradiction is a question first (the infra
 
 1. **Time binding (built 2026-11-13, see `coach/README.md`):** commitment windows, the "Done?" ask at the window end, the report window
    (levels T / L). No Chaster, no checks. Retraction moved to slice 3: it only matters once a check can follow a Done.
-2. **Live Chaster test:** task with code and community review, timer, gallery, history entries. Results into `chaster_capability_map.md`.
+2. **Live Chaster test (done 2026-11-13, `chaster_capability_map.md` section 8):** the code is generated at assignment and readable by the bot;
+   the gallery is allowed, so the code is the only freshness proof; one task at a time; the community vote runs up to 6 hours. Consequences for
+   slice 3: the 60-minute deadline covers the **submission** (`tasks_task_completed`), the vote may take longer and is waited for; an open check
+   blocks a second one (fits "one open check at a time"); task texts stay short ("Show your ..."). `tasks` stays on the lock.
 3. **Honesty domain and spot checks** with Chaster tasks, retraction of a Done, the "can't show it now" pass, the infractions path for missed or rejected proof.
 4. **Contradictions:** bedtime / "no phone after", Chaster task times. Move lock claims to Honesty.
 5. **Additional wearers:** opt-in and invitation text (with the multi-wearer parity slices).
