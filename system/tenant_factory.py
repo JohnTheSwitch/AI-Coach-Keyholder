@@ -52,6 +52,7 @@ from system.startup import on_system_startup
 from task_catalog.repository import TaskCatalog
 from task_runtime.repository import TaskRuntime
 from tenancy.registry import TenantError, TenantRegistry, resolve_db_path
+from trust_manager.domain_admin import ensure_domains_with_consent, named_trust_domains
 
 logger = logging.getLogger("ai_coach_keyholder.system.tenant_factory")
 
@@ -185,6 +186,14 @@ class TenantFactory:
 
         # 2. The wearer's local account inside THIS database (idempotent).
         wearer = UserService(path, core=core).get_or_create_user("discord", tenant.discord_id, now=now)
+
+        # 2b. Owner, 2026-11-13: the Trust domains this tenant's configuration names, created once with consent: the accepted invitation names
+        # the wearer's trust records. Without them the daily evaluation, the check-in level and supervision never ran for an additional wearer.
+        from system.tenant_gateway import invitation_text           # lazy: the gateway imports this module
+        created = ensure_domains_with_consent(core, named_trust_domains(tenant_config(s.config, db_path=path, wearer_user_id=wearer.id)),
+                                              explanation=invitation_text(tenant.display_name), comment="tenant: accepted invitation", now=now)
+        if created:
+            logger.info("Tenant %s: created the Trust domains %s.", tenant.id, created)
 
         # 3. Wearer-side Chaster objects live in the tenant's database; the keyholder side is the platform's.
         connections = tokens = None

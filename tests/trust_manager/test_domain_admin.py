@@ -82,5 +82,31 @@ def test_every_outcome_has_a_text() -> None:
 
 
 def test_only_the_cli_creates_domains_with_consent() -> None:
-    for name in ("system/composition.py", "bot/discord_bot.py", "system/tenant_factory.py", "application/service.py"):
+    for name in ("system/composition.py", "bot/discord_bot.py", "application/service.py"):
         assert "domain_admin" not in (ROOT / name).read_text(encoding="utf-8")
+    # Owner, 2026-11-13: an additional wearer's runtime creates its named domains, but only through the consent-writing function, citing the
+    # invitation the wearer accepted (only an ACTIVE tenant is ever built).
+    factory = (ROOT / "system" / "tenant_factory.py").read_text(encoding="utf-8")
+    assert "from trust_manager.domain_admin import ensure_domains_with_consent, named_trust_domains" in factory
+    assert "explanation=invitation_text(tenant.display_name)" in factory and "TrustDomainAdmin" not in factory
+    assert 'raise TenantError("only an active tenant can be built")' in factory
+
+
+def test_a_tenant_domain_gets_its_consent_first(tmp_path) -> None:
+    from datetime import datetime, timezone
+    from tests.supervision.test_short_term import ROOT as _R  # noqa: F401
+    from infrastructure.database import Database as CoreDatabase
+    from trust_manager.domain_admin import ensure_domains_with_consent
+    from trust_manager.repository import TrustManager
+    core = CoreDatabase(tmp_path / "t.db")
+    with core.raw_connection() as conn:
+        for path in sorted((ROOT / "database" / "migrations").glob("*.sql")):
+            conn.executescript(path.read_text(encoding="utf-8"))
+    now = datetime(2026, 11, 13, 20, 0, tzinfo=timezone.utc)
+    assert ensure_domains_with_consent(core, ["hygiene", "routine"], explanation="INVITATION", comment="tenant: accepted invitation", now=now) == ["hygiene", "routine"]
+    assert ensure_domains_with_consent(core, ["hygiene", "routine"], explanation="INVITATION", comment="x", now=now) == []
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT target_id, explanation_shown FROM consent_log ORDER BY target_id")
+        domains = tx.fetch_all("SELECT domain_id, created_via_consent_id FROM trust_domains ORDER BY domain_id")
+    assert [r["target_id"] for r in rows] == ["trust_domain:hygiene", "trust_domain:routine"] and all("INVITATION" in r["explanation_shown"] for r in rows)
+    assert all(d["created_via_consent_id"] for d in domains) and TrustManager(core.db_path, core=core).get_domain_state("routine").score == 0.6

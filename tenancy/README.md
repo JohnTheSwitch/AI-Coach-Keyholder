@@ -38,3 +38,13 @@ request budget (`chaster/api_budget.py`, `CHASTER_API_BUDGET_PER_MINUTE`). See t
 
 Phase E6: `archive.py` moves a removed tenant's database to `tenants/archive/` (read-only, after a 5-minute grace; platform migration 004), plus isolation
 hardening and an end-to-end isolation audit test. Operator runbook: `docs/operations/multi_wearer_runbook.md`. See the proposal, section 16.
+
+
+## Feature parity for additional wearers (owner, 2026-11-13; one slice at a time)
+
+1. **Trust domains and the daily evaluation (done).** An additional wearer's database had no Trust domain, so their daily evaluation, check-in
+   level and supervision never ran. `TenantFactory.build` now creates the domains the tenant configuration names
+   (`trust_manager.domain_admin.ensure_domains_with_consent`), each with its consent record first, quoting the invitation the wearer accepted
+   (which names their trust records). Only an ACTIVE tenant is ever built; a rebuild creates nothing twice.
+2. Next: the wearer's own time zone and public holidays (today every wearer gets the owner's).
+3. Then: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the notification queue, the confession handling.

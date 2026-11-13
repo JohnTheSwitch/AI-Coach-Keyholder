@@ -104,6 +104,24 @@ class TestFactory:
             identity = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = '2000002'")
         assert identity["user_account_id"] == runtime.wearer_user_id
 
+    def test_an_additional_wearer_gets_the_named_trust_domains_with_consent(self, w) -> None:
+        """Owner, 2026-11-13: without them the daily evaluation, the check-in level and supervision never ran for an additional wearer."""
+        from trust_manager.repository import TrustManager
+        runtime = w.factory.build(w.wearer("Alex", "2000002").id)
+        trust = TrustManager(runtime.db_path, core=runtime.core)
+        assert trust.get_domain_state("routine") is not None and trust.get_domain_state("hygiene") is not None
+        with runtime.core.transaction() as tx:
+            consents = tx.fetch_all("SELECT target_id, user_comment FROM consent_log WHERE target_id LIKE 'trust_domain:%'")
+        assert {c["target_id"] for c in consents} == {"trust_domain:routine", "trust_domain:hygiene"}
+        assert all(c["user_comment"] == "tenant: accepted invitation" for c in consents)
+        daily = runtime.wiring.daily
+        assert daily is not None
+        from datetime import timedelta
+        assert daily.run(NOW + timedelta(days=1)) != []                  # the daily evaluation now runs for this wearer
+        w.factory.build(runtime.tenant_id)                               # a rebuild creates nothing twice
+        with runtime.core.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM consent_log WHERE target_id LIKE 'trust_domain:%'")["n"] == 2
+
     def test_tenant_zero_is_never_touched(self, w) -> None:
         before = w.fingerprint(w.main_path)
         runtime = w.factory.build(w.wearer("Alex", "2000002").id)

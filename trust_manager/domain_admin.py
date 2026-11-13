@@ -24,7 +24,47 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from trust_manager.repository import DEFAULT_NEW_DOMAIN_CONFIDENCE, DEFAULT_NEW_DOMAIN_SCORE, TrustManager
 
-__all__ = ["DomainAdminOutcome", "TrustDomainAdmin", "domain_explanation", "reset_explanation"]
+__all__ = ["DomainAdminOutcome", "TrustDomainAdmin", "domain_explanation", "reset_explanation", "DEFAULT_DOMAIN_TEXTS", "named_trust_domains",
+           "ensure_domains_with_consent"]
+
+# Owner, 2026-11-13: the standard domains a configuration names, with their texts (`setup init`, and every additional wearer at acceptance).
+DEFAULT_DOMAIN_TEXTS = {
+    "routine": ("Routine", "Daily check-ins, commitments and goals: how reliably the wearer does what they said."),
+    "hygiene": ("Hygiene", "Hygiene openings: used for hygiene and relocked on time."),
+}
+
+
+_PARAGRAPH = chr(10) * 2
+
+
+def named_trust_domains(config) -> list[str]:
+    names = [getattr(config, attr, None) for attr in ("check_in_trust_domain", "daily_evaluation_trust_domain", "hygiene_trust_domain",
+                                                     "lock_claim_trust_domain", "peer_review_trust_domain")]
+    return sorted({n for n in names if isinstance(n, str) and _DOMAIN_ID.match(n)})
+
+
+def ensure_domains_with_consent(core, names, *, explanation: str, comment: str, now) -> list[str]:
+    """Creates each named domain that does not exist yet in THIS database, each with its own consent record written first (TI1). Returns the
+    ids created. Owner, 2026-11-13: an additional wearer's database had no domain at all, so their daily evaluation, check-in level and
+    supervision could never run; their accepted invitation (which names their trust records) is the consent, quoted in `explanation`."""
+    trust = TrustManager(core.db_path, core=core)
+    created: list[str] = []
+    for name in names:
+        if trust.get_domain_state(name) is not None:
+            continue
+        display, description = DEFAULT_DOMAIN_TEXTS.get(name, (name.replace("_", " ").title(), f"The {name} Trust domain."))
+        consent_id = str(uuid.uuid4())
+
+        def write(tx: Transaction, _s: object, cid=consent_id, n=name, d=display, desc=description) -> None:
+            tx.execute(
+                "INSERT INTO consent_log (id, created_at, target_type, target_id, target_version, action, decision_result_id, "
+                "explanation_shown, user_comment) VALUES (?, ?, 'trust_algorithm', ?, NULL, 'approved', NULL, ?, ?)",
+                (cid, _iso(now), f"trust_domain:{n}", domain_explanation(n, d, desc) + _PARAGRAPH + explanation, comment))
+
+        apply_transition(core, write=write)
+        trust.create_domain(domain_id=name, display_name=display, description=description, created_via_consent_id=consent_id, now=now)
+        created.append(name)
+    return created
 
 _DOMAIN_ID = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 

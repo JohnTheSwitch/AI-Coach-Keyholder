@@ -262,6 +262,8 @@ class TestWiring:
         assert runtime.cycle()
         with runtime.core.transaction() as tx:
             found = tx.fetch_all("SELECT user_id, event_type FROM behavioral_telemetry")
-        assert [(r["user_id"], r["event_type"]) for r in found] == [(runtime.wearer_user_id, "llm_generation")]
+        # 2026-11-13: the tenant's daily evaluation now runs too (its daily summary), still only its own wearer
+        assert [(r["user_id"], r["event_type"]) for r in found if r["event_type"] == "llm_generation"] == [(runtime.wearer_user_id, "llm_generation")]
+        assert {r["user_id"] for r in found} == {runtime.wearer_user_id}
         with w.main.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM behavioral_telemetry")["n"] == 0

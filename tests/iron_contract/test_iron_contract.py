@@ -372,7 +372,9 @@ class TestCrossTenantAudit:
         rows = {}
         for runtime in (a, b):
             with runtime.core.transaction() as tx:
-                rows[runtime.tenant_id] = [r["user_id"] for r in tx.fetch_all("SELECT user_id FROM behavioral_telemetry")]
+                rows[runtime.tenant_id] = [r["user_id"] for r in tx.fetch_all("SELECT user_id FROM behavioral_telemetry WHERE event_type = 'llm_generation'")]
+                # 2026-11-13: each tenant's daily evaluation now runs too; its rows stay its own wearer's, in its own database
+                assert {r["user_id"] for r in tx.fetch_all("SELECT user_id FROM behavioral_telemetry")} <= {runtime.wearer_user_id}
         assert rows[a.tenant_id] == [a.wearer_user_id] and rows[b.tenant_id] == []
         with tw.main.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM behavioral_telemetry")["n"] == 0
@@ -389,7 +391,7 @@ class TestCrossTenantAudit:
         assert subject_pseudonym(key, a.tenant_id, "same-id") != subject_pseudonym(key, b.tenant_id, "same-id")
         # analysis reads one database only
         assert [s.user_id for s in summarize(a.db_path, days=30, now=tw.clock.now())] == [a.wearer_user_id]
-        assert summarize(b.db_path, days=30, now=tw.clock.now()) == []
+        assert {x.user_id for x in summarize(b.db_path, days=30, now=tw.clock.now())} <= {b.wearer_user_id}   # its own daily evaluation only
         # vacations and the contract are per tenant
         wa.vacation.schedule(a.wearer_user_id, date(2026, 11, 20), date(2026, 11, 21), now=tw.clock.now())
         assert wb.vacation.current_or_next(a.wearer_user_id, tw.clock.now()) is None

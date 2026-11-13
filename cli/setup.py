@@ -22,24 +22,14 @@ from zoneinfo import ZoneInfo
 
 __all__ = ["Line", "setup_report", "render_report", "named_trust_domains", "DOMAIN_TEXTS", "REQUIRED_KEYHOLDER_SCOPES"]
 
+from trust_manager.domain_admin import DEFAULT_DOMAIN_TEXTS as DOMAIN_TEXTS, named_trust_domains  # noqa: E402,F401  (shared with tenants)
+
 REQUIRED_KEYHOLDER_SCOPES = ("locks", "keyholder", "messaging", "offline_access")   # plain names; split ones count (chaster/oauth_client.py)
-DOMAIN_TEXTS = {
-    "routine": ("Routine", "Daily check-ins, commitments and goals: how reliably the wearer does what they said."),
-    "hygiene": ("Hygiene", "Hygiene openings: used for hygiene and relocked on time."),
-}
-
-
 @dataclass(frozen=True)
 class Line:
     status: str          # OK | MISSING | INFO
     item: str
     detail: str
-
-
-def named_trust_domains(config) -> list[str]:
-    names = [getattr(config, attr, None) for attr in ("check_in_trust_domain", "daily_evaluation_trust_domain", "hygiene_trust_domain",
-                                                     "lock_claim_trust_domain", "peer_review_trust_domain")]
-    return sorted({n for n in names if isinstance(n, str) and n.strip()})
 
 
 def setup_report(config, core, *, model_ready: Callable[[], object] | None = None) -> list[Line]:
