@@ -113,6 +113,16 @@ def requires_unlocked(*, always: bool = False):
 
 CHECK_IN_RECEIVED_WITHOUT_MODEL = "Got your check-in answer, it's recorded. I can't say more right now; give me a minute and talk to me again."
 
+# Live, 2026-11-12: a confession of edging during a hygiene opening got "Good for you, taking care of your hygiene needs", and an earlier one was
+# saved to memory the wrong way round ("without edging"). On a turn that reads as owning up, the model gets this note as the last thing before the
+# message, the turn is plain (no goal proposal, nothing saved to memory) and the card under the reply is what records it.
+CONFESSION_NOTE = (
+    "THIS MESSAGE: the user is owning up to using a hygiene opening for something other than hygiene (such as edging or touching themselves). "
+    "That broke the rule of the opening. Never praise it and never call it hygiene or self-care. React as their keyholder: say plainly what they "
+    "did, that you are not pleased, and that telling you was the right thing. Two or three sentences, no lecture, no new goal. Do not mention any "
+    "card, record or consequence."
+)
+
 
 class ApplicationService:
     def __init__(
@@ -162,6 +172,8 @@ class ApplicationService:
         self.explanations = None
         # Owner, 2026-11-12 (option A): (user_id, text, now) -> (card text, buttons) or None, when the wearer seems to own up to something.
         self.self_reports = None
+        # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
+        self.confession_check = None
         self._clock = clock                                  # only a button press needs it: a message brings its own time
 
         self.user_service = UserService(self.db_path, core=self._core)
@@ -311,10 +323,13 @@ class ApplicationService:
                 return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
 
             chat_context = self._chaster_chat_context(incoming.text, context)
+            confession = self._is_confession(incoming.text)
+            if confession:
+                chat_context = CONFESSION_NOTE if chat_context is None else f"{chat_context}\n\n{CONFESSION_NOTE}"
             context_kwargs: dict = (
                 {"extra_system_context": chat_context, "remember_exchange": True} if chat_context is not None else {}
             )
-            guidance = self._coach_guidance(user.id, incoming.text, incoming.received_at, check_in_reply)
+            guidance = None if confession else self._coach_guidance(user.id, incoming.text, incoming.received_at, check_in_reply)
             if guidance:
                 context_kwargs["coach_guidance"] = guidance
             try:
@@ -360,6 +375,15 @@ class ApplicationService:
         except Exception:
             logger.exception("ApplicationService.handle_conversation_only failed.")
             return None
+
+    def _is_confession(self, text: str) -> bool:
+        if self.confession_check is None:
+            return False
+        try:
+            return self.confession_check(text) is True
+        except Exception:
+            logger.exception("The confession check failed; this turn is ordinary conversation.")
+            return False
 
     def _with_self_report(self, outgoing: OutgoingMessage, user_id: str, text: str, now) -> OutgoingMessage:
         """The reply stays the model's; a question card is added under it. Never raises: a failure only means no card."""

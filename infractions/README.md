@@ -63,3 +63,10 @@ and Czech, deliberately broad) puts a card under the bot's reply: "Did you just 
 - **No, you misread me** -> cleared, nothing recorded. An unanswered card lapses after 12 hours, also without a trace.
 - An approved hygiene opening never excuses it (it happened during one by definition).
 - One open card at a time. The model sees the card as `awaiting_confirmation` in its detector-question context.
+
+## The reply to a confession (2026-11-12)
+
+Live, the model answered a confession with "Good for you, taking care of your hygiene needs", and an earlier turn saved it to memory inverted
+("without edging"). `ApplicationService.confession_check` (the same `is_hygiene_confession`) now runs before the model: such a turn gets
+`CONFESSION_NOTE` as its last system message (never praise, name what they did, not pleased, telling was right, no mention of the card), is a plain
+context turn (no coach proposal, nothing saved to memory) and is remembered as conversation. The card under the reply is still what records it.

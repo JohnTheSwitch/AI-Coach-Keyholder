@@ -513,6 +513,11 @@ def main() -> None:
         install_decision_files(Path(__file__).resolve().parents[1] / "logs")
     except Exception:
         logger.exception("The decision log could not be opened; decisions still reach the main log.")
+    try:
+        from infrastructure.decision_log import log_system_version
+        log_system_version(Path(__file__).resolve().parents[1], model=config.ollama_model)
+    except Exception:
+        logger.exception("The version line could not be written.")
 
     clock = SystemClock()
     core = CoreDatabase(config.db_path)
@@ -846,6 +851,7 @@ def main() -> None:
             return (SELF_REPORT_QUESTION, self_report_buttons(signal_id)) if signal_id else None
 
         application_service.self_reports = offer_self_report
+        application_service.confession_check = is_hygiene_confession
     if detectors.hygiene is not None:
         bot.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=resolve_user, now=clock.now)
     if detectors.active:

@@ -22,7 +22,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-__all__ = ["decision", "release_decision", "log_event", "model_call", "install_decision_files", "DECISIONS_LOGGER", "RELEASE_LOGGER", "MODEL_LOGGER"]
+__all__ = ["decision", "release_decision", "log_event", "model_call", "install_decision_files", "system_version", "log_system_version", "DECISIONS_LOGGER", "RELEASE_LOGGER", "MODEL_LOGGER"]
 
 DECISIONS_LOGGER = "ai_coach_keyholder.decisions"
 RELEASE_LOGGER = "ai_coach_keyholder.decisions.release"
@@ -116,3 +116,33 @@ def install_decision_files(log_dir: str | Path) -> None:
         handler.setLevel(logging.INFO)
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
+
+
+def system_version(repo: str | Path) -> dict[str, Any]:
+    """Which code is running (owner, 2026-11-12: every log names the version it came from). Read-only `git` queries; never raises, unknown stays
+    unknown. `dirty` means files differ from that commit, so the commit alone does not describe the running code."""
+    import subprocess
+
+    def git(*args: str) -> str | None:
+        try:
+            out = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=10, check=False)
+        except Exception:
+            return None
+        return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {"commit": git("rev-parse", "--short=12", "HEAD") or "unknown", "commit_date": git("log", "-1", "--format=%cI") or "unknown",
+            "subject": git("log", "-1", "--format=%s") or "unknown", "dirty": None if status is None and git("rev-parse", "HEAD") is None else bool(status)}
+
+
+def log_system_version(repo: str | Path, **extra: Any) -> dict[str, Any]:
+    """One "System started" line in every log file (bot.log, decisions.log, release.log, model.log), so each line after it can be tied to code."""
+    try:
+        details = {**system_version(repo), **extra}
+        line = _line("system", "System started.", details)
+        _release.info(line)            # reaches release.log, decisions.log and bot.log
+        _model.info(line)
+        return details
+    except Exception:
+        logging.getLogger(__name__).debug("The version line could not be written.", exc_info=True)
+        return {}

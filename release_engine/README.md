@@ -96,3 +96,9 @@ eligible before anything else happens. If today's check-in is incomplete, that s
 them on the next cycle (at most `CHASTER_EXECUTION_INTERVAL_SECONDS`), whatever a rubric makes of it. No token is spent while waiting. An unanswered
 prompt expires as `skipped` with no Trust effect; an undeliverable prompt never holds a release; a window that closes meanwhile is explained once.
 The backstop never passes through this.
+
+## The age of the lock reading in release.log (2026-11-12)
+
+Live, every "release_held" line carried a 42-hour-old reading ("lock_frozen": false) that read like the lock's current state. The decisions
+themselves refresh the reading when they need it and treat an old one as unknown; the log line now adds `lock_reading_age_hours` and, past
+`LOCK_DATA_MAX_AGE`, `"lock_reading": "stale: ..."`.

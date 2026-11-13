@@ -506,3 +506,9 @@ own `sqlite3.connect()`.
 event after it was published, so a rolled-back event never appears. `decision()` and `release_decision()` add lines with the reasoning from the
 modules that decide (the release engine and tick, the detector judge). A key containing "score" is written as `[hidden]`. A failing log never
 stops a decision.
+
+## The version in every log (owner, 2026-11-12)
+
+At start the bot writes one "System started." line to bot.log, decisions.log, release.log and model.log: the git commit (12 characters), its date
+and subject, `dirty` (true when files differ from that commit, so the commit alone does not describe the running code) and the model name. Every
+line after it came from that code. `system_version` only runs read-only `git` queries and never raises; outside a repository it says "unknown".

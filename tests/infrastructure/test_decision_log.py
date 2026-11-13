@@ -160,3 +160,37 @@ class TestWhyNothingHappens:
         with caplog.at_level(logging.INFO, logger=DECISIONS_LOGGER):
             e.svc.tick(e.first_due())
         assert any("Check-in sent: delivered" in r.getMessage() and "answer_by" in r.getMessage() for r in caplog.records)
+
+    def test_an_old_lock_reading_is_labelled_as_old(self, tmp_path, caplog) -> None:
+        # Live, 2026-11-12: a 42-hour-old "not frozen" reading read like the lock's current state.
+        from tests.system.test_release_tick import World
+        w = World(tmp_path, supervised=True)
+        w.tokens()
+        w.fetched_at = w.now - timedelta(hours=42)
+        w.refresh_effective = False
+        with caplog.at_level(logging.INFO, logger=RELEASE_LOGGER):
+            w.task.run(w.now)
+        held = [r.getMessage() for r in caplog.records if "Release tick" in r.getMessage()]
+        assert held and '"lock_reading_age_hours": 42.0' in held[-1] and "stale: the last stored reading" in held[-1]
+
+
+class TestTheVersionIsInEveryLog:
+    # Owner, 2026-11-12: the logs must say which version of the system wrote them.
+    def test_the_start_line_reaches_every_file(self, files, monkeypatch) -> None:
+        monkeypatch.setattr(decision_log, "system_version", lambda repo: {"commit": "abc123def456", "dirty": False})
+        decision_log.log_system_version(".", model="m")
+        for name in ("decisions.log", "release.log", "model.log"):
+            text = _read(files / name)
+            assert "System started." in text and "abc123def456" in text and '"model": "m"' in text
+
+    def test_outside_a_repository_it_says_unknown_and_never_raises(self, tmp_path) -> None:
+        version = decision_log.system_version(tmp_path)
+        assert set(version) == {"commit", "commit_date", "subject", "dirty"}
+
+    def test_this_checkout_has_a_commit(self) -> None:
+        version = decision_log.system_version(".")
+        assert version["commit"] == "unknown" or len(version["commit"]) == 12
+
+    def test_the_bot_writes_it_at_start(self) -> None:
+        from pathlib import Path
+        assert "log_system_version(" in Path("bot/discord_bot.py").read_text(encoding="utf-8")

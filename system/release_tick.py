@@ -119,6 +119,12 @@ class ReleaseEnginePeriodicTask:
             )
             if obs is not None:
                 facts.update(lock_status=obs.status.value, lock_frozen=obs.is_frozen, frozen_since=obs.frozen_at, lock_read_at=obs.fetched_at)
+                # Live, 2026-11-12: a 42-hour-old reading ("not frozen") read like the current state. Decisions refresh it when they need it and
+                # count an old one as unknown; the log now says how old the reading is.
+                age_hours = round((now - obs.fetched_at).total_seconds() / 3600, 1)
+                facts["lock_reading_age_hours"] = age_hours
+                if now - obs.fetched_at > LOCK_DATA_MAX_AGE:
+                    facts["lock_reading"] = "stale: the last stored reading, not the lock now; nothing was decided from it"
         except Exception:
             logger.debug("Could not gather the facts for the decision log.", exc_info=True)
         return facts
