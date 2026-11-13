@@ -34,6 +34,7 @@ from supervision.checkins import CheckInSender, CheckInService, SendOutcome
 from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
 from supervision.models import CHECK_IN_DOMAIN_WINDOW
+from system.owner_lock import OwnerLockResolver, is_auto
 from supervision.repository import SupervisionService
 from system.daily_evaluation import DailyEvaluationTask
 from system.release_notice import ReleaseNotifier
@@ -101,6 +102,7 @@ class RulesExecutionWiring:
     vacation: object | None = None                  # iron_contract.vacation.VacationService (Phase G6, always built)
     penalty_hold: object | None = None              # rules_engine.penalty_hold.PenaltyHold (Phase J2, always built): the redemption hold
     penalty_barrier: object | None = None           # chaster_execution.penalty_barrier.PenaltyBarrierExecutor (Phase J2, owner's system only)
+    owner_lock: object | None = None                # system.owner_lock.OwnerLockResolver when a lock id is `auto` (owner, 2026-11-13)
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -170,7 +172,28 @@ def build_extension_guard(config, core, *, notifications, token_manager, lock_cl
                           account_user_id=account, list_lock_ids=list_lock_ids, notify=notify)
 
 
-def build_exemption_opening(config, core, *, token_manager, lock_client, halt_source=None, clock: Clock | None = None):
+def _owner_lock_resolver(config, core, *, kh_tokens, lock_client, notifications, clock, out):
+    """One OwnerLockResolver when any lock id is `auto`, else None (owner, 2026-11-13)."""
+    wanted = any(is_auto(getattr(config, name, None)) for name in ("release_lock_id", "penalty_freeze_lock_id", "exemption_lock_id"))
+    owner_account = getattr(config, "owner_chaster_account_id", None)
+    keyholder_id = getattr(config, "chaster_execution_keyholder_user_id", None)
+    if not wanted:
+        return None
+    if not owner_account or not keyholder_id or kh_tokens is None or lock_client is None:
+        out.notes.append("A lock id is auto but the owner's lock is NOT recognised: it needs OWNER_CHASTER_ACCOUNT_ID, "
+                         "CHASTER_EXECUTION_KEYHOLDER_USER_ID and the keyholder connection. Nothing acts on a lock.")
+        return None
+    source = clock or SystemClock()
+    owner = getattr(config, "owner_user_id", None)
+    notify = None
+    if notifications is not None and owner:
+        notify = lambda key, text: notifications.enqueue(user_id=owner, kind="owner_lock", dedupe_key=key, text=text, now=source.now())  # noqa: E731
+    out.notes.append("The owner's lock is recognised automatically (a lock id is auto).")
+    return OwnerLockResolver(core, owner_chaster_id=owner_account, keyholder_user_id=keyholder_id, keyholder_tokens=kh_tokens,
+                             lock_client=lock_client, clock=source, notify=notify)
+
+
+def build_exemption_opening(config, core, *, token_manager, lock_client, halt_source=None, clock: Clock | None = None, owner_lock=None):
     """What opens the lock for an approved exemption, or None when no lock is configured. Reached through this wiring layer only."""
     from chaster._http import send_with_ordered_headers
     from chaster.extension_config import LockConfigurationReader
@@ -180,8 +203,11 @@ def build_exemption_opening(config, core, *, token_manager, lock_client, halt_so
     account = getattr(config, "chaster_execution_keyholder_user_id", None)
     if not lock_id or not account or token_manager is None or lock_client is None:
         return None
+    resolver = owner_lock if is_auto(lock_id) else None
+    if is_auto(lock_id) and resolver is None:
+        return None                                       # auto without a resolver: nothing to open (fails closed)
     source = clock or SystemClock()
-    return ExemptionOpening(lock_id=lock_id, account_user_id=account, control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source),
+    return ExemptionOpening(lock_id=None if resolver else lock_id, resolver=resolver, account_user_id=account, control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source),
                             reader=LockConfigurationReader(token_manager=token_manager, lock_client=lock_client),
                             transport=ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=account, clock=source),
                             token_manager=token_manager, lock_client=lock_client, send=send_with_ordered_headers, clock=source)
@@ -245,6 +271,9 @@ def build_rules_and_execution(
     # RELEASE_LOCK_ID (owner's own system only): one keyholder lock read as its keyholder. Its wearer need not have connected Chaster, so the
     # release belongs to the configured wearer, else the check-in user, else the owner.
     release_lock = getattr(config, "release_lock_id", None) if observation_source is None else None
+    # Owner, 2026-11-13: a lock id `auto` means the owner's recognised lock (system/owner_lock.py), one resolver for every consumer.
+    out.owner_lock = _owner_lock_resolver(config, core, kh_tokens=kh_tokens, lock_client=lock_client, notifications=notifications, clock=clock,
+                                          out=out) if observation_source is None else None
     if release_lock and not wearer_id:
         wearer_id = getattr(config, "check_in_user_id", None) or getattr(config, "owner_user_id", None)
     from iron_contract.guard import IronContract
@@ -313,7 +342,8 @@ def build_rules_and_execution(
     if observation_source is None:           # the owner's own system only: a tenant has no penalty barrier
         barrier_on = bool(getattr(config, "enable_penalty_barrier", False))
         barrier_lock = getattr(config, "penalty_freeze_lock_id", None)
-        barrier_ready = bool(barrier_lock and keyholder_id and kh_tokens is not None and lock_client is not None)
+        barrier_auto = is_auto(barrier_lock) and out.owner_lock is not None
+        barrier_ready = bool(barrier_lock and (barrier_auto or not is_auto(barrier_lock)) and keyholder_id and kh_tokens is not None and lock_client is not None)
         if barrier_on and not barrier_ready:
             out.notes.append("ENABLE_PENALTY_BARRIER is true but the penalty barrier is NOT active: it needs PENALTY_FREEZE_LOCK_ID, "
                              "Chaster fully configured and CHASTER_EXECUTION_KEYHOLDER_USER_ID. Intents stay queued.")
@@ -326,7 +356,7 @@ def build_rules_and_execution(
             control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source), transport=barrier_transport,
             read_lock=(lambda lock_id: kh_tokens.call_with_token(keyholder_id, now=barrier_clock.now(), operation=lambda token: lock_client.get_lock(
                 access_token=token, lock_id=lock_id))) if barrier_ready else None,
-            lock_id=barrier_lock)
+            lock_id=None if is_auto(barrier_lock) else barrier_lock, resolver=out.owner_lock if barrier_auto else None)
         if barrier_on and barrier_ready:
             out.notes.append("Penalty barrier enabled: a Penalty Window freezes the configured keyholder lock (subject to the runtime halt).")
 
@@ -344,10 +374,14 @@ def build_rules_and_execution(
         get_obs, refresh_obs = observation_source.get_latest, observation_source.refresh
     elif release_lock and wearer_id and kh_tokens is not None and lock_client is not None and keyholder_id:
         from system.keyholder_lock_source import KeyholderLockObservationSource
-        source = KeyholderLockObservationSource(config.db_path, core=core, lock_id=release_lock, wearer_user_id=wearer_id, keyholder_user_id=keyholder_id,
-                                                keyholder_tokens=kh_tokens, lock_client=lock_client, clock=clock or SystemClock())
+        auto = is_auto(release_lock)
+        if auto and out.owner_lock is None:
+            out.notes.append("RELEASE_LOCK_ID is auto but NOT used: it needs OWNER_CHASTER_ACCOUNT_ID and the keyholder connection.")
+        source = KeyholderLockObservationSource(config.db_path, core=core, lock_id=None if auto else release_lock, wearer_user_id=wearer_id,
+                                                keyholder_user_id=keyholder_id, keyholder_tokens=kh_tokens, lock_client=lock_client,
+                                                clock=clock or SystemClock(), resolver=out.owner_lock if auto else None)
         get_obs, refresh_obs = source.get_latest, source.refresh
-        out.notes.append(f"Release lock {release_lock}: observed as its keyholder.")
+        out.notes.append("Release lock: the owner's recognised lock, observed as its keyholder." if auto else f"Release lock {release_lock}: observed as its keyholder.")
     elif release_lock:
         out.notes.append("RELEASE_LOCK_ID is set but NOT used: it needs Chaster fully configured and CHASTER_EXECUTION_KEYHOLDER_USER_ID.")
     elif connections is not None and oauth_client is not None and lock_client is not None and wearer_id:

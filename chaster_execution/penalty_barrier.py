@@ -49,12 +49,15 @@ _REFUSED = (TransportOutcome.FORBIDDEN, TransportOutcome.NOT_ELIGIBLE, Transport
 
 class PenaltyBarrierExecutor:
     def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, enabled: bool, control, transport: LockActionTransport | None,
-                 read_lock: Callable[[str], dict] | None, lock_id: str | None) -> None:
+                 read_lock: Callable[[str], dict] | None, lock_id: str | None, resolver=None) -> None:
         """`read_lock(lock_id)` returns the raw lock as the connected account sees it (GET /locks/{id}). `enabled` False is the dry run: the
         queue only logs what would happen."""
         self._core = core if core is not None else CoreDatabase(Path(db_path))
-        self._lock_id = lock_id.strip() if lock_id and lock_id.strip() else None
-        self._enabled = bool(enabled and self._lock_id and _LOCK_ID.match(self._lock_id) and transport is not None and read_lock is not None)
+        # `resolver` (system/owner_lock.py, owner 2026-11-13): the owner's recognised lock instead of a fixed id; with none recognised, intents wait.
+        self._fixed_lock_id = lock_id.strip() if lock_id and lock_id.strip() else None
+        self._resolver = resolver
+        self._enabled = bool(enabled and (resolver is not None or (self._fixed_lock_id and _LOCK_ID.match(self._fixed_lock_id)))
+                             and transport is not None and read_lock is not None)
         self._control = control
         self._transport = transport
         self._read_lock = read_lock
@@ -65,6 +68,11 @@ class PenaltyBarrierExecutor:
         except Exception:
             logger.exception("The execution control could not be read; treating it as halted.")
             return True
+
+    @property
+    def _lock_id(self) -> str | None:
+        lock_id = self._resolver.current() if self._resolver is not None else self._fixed_lock_id
+        return lock_id if lock_id and _LOCK_ID.match(lock_id) else None
 
     def run(self, now: datetime) -> list[tuple[str, str]]:
         self._reconcile_orphans(now)
@@ -112,6 +120,9 @@ class PenaltyBarrierExecutor:
             return self._skip(intent_id, now, "the Penalty Window has ended")
         if reason == "window_completed" and (hold is None or not hold["raised_freeze"]):
             return self._skip(intent_id, now, "this window did not raise the barrier")
+        if self._lock_id is None:
+            logger.warning("Penalty barrier: no lock of the owner is recognised; intent stays queued.")
+            return PENDING
         try:
             raw = self._read_lock(self._lock_id)
         except Exception as exc:

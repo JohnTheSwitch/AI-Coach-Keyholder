@@ -61,8 +61,15 @@ class OpeningStatus:
 
 
 class ExemptionOpening:
-    def __init__(self, *, lock_id: str, account_user_id: str, control, reader, transport, token_manager, lock_client, send, clock) -> None:
-        self.lock_id = lock_id
+    @property
+    def lock_id(self) -> str | None:
+        return self._resolver.current() if self._resolver is not None else self._fixed_lock_id
+
+    def __init__(self, *, lock_id: str | None, account_user_id: str, control, reader, transport, token_manager, lock_client, send, clock,
+                 resolver=None) -> None:
+        """`resolver` (system/owner_lock.py, owner 2026-11-13): when given, the lock is the owner's recognised lock instead of `lock_id`."""
+        self._fixed_lock_id = lock_id
+        self._resolver = resolver
         self._account = account_user_id
         self._control = control
         self._reader = reader

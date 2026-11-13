@@ -48,17 +48,25 @@ def check_keyholder_lock(raw: object, *, lock_id: str) -> str:
 
 class KeyholderLockObservationSource:
     def __init__(self, db_path: str | Path, *, core: CoreDatabase, lock_id: str, wearer_user_id: str, keyholder_user_id: str,
-                 keyholder_tokens, lock_client: ChasterLockClient, clock: Clock) -> None:
+                 keyholder_tokens, lock_client: ChasterLockClient, clock: Clock, resolver=None) -> None:
+        """`resolver` (system/owner_lock.py, owner 2026-11-13): when given, the lock is the owner's recognised lock instead of `lock_id`."""
         self.db_path = Path(db_path)
         self._core = core
-        self._lock_id = lock_id
+        self._fixed_lock_id = lock_id
+        self._resolver = resolver
         self._wearer = wearer_user_id
         self._kh_user = keyholder_user_id
         self._tokens = keyholder_tokens
         self._client = lock_client
         self._clock = clock
 
+    @property
+    def _lock_id(self) -> str | None:
+        return self._resolver.cached() if self._resolver is not None else self._fixed_lock_id
+
     def get_latest(self) -> ChasterProviderObservation | None:
+        if self._lock_id is None:
+            return None
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT * FROM managed_lock_observations WHERE lock_id = ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1", (self._lock_id,))
         if row is None or row["outcome"] != LockCheck.OBSERVED:
@@ -72,12 +80,17 @@ class KeyholderLockObservationSource:
 
     def refresh(self, now: datetime) -> str | None:
         """Reads and records the lock once. None when nothing could be read: nothing is recorded and the last state simply goes stale."""
+        if self._resolver is not None:
+            self._resolver.current(now)
+        if self._lock_id is None:
+            return None
+        lock_id = self._lock_id
         try:
-            raw = self._tokens.call_with_token(self._kh_user, now=now, operation=lambda token: self._client.get_lock(access_token=token, lock_id=self._lock_id))
+            raw = self._tokens.call_with_token(self._kh_user, now=now, operation=lambda token: self._client.get_lock(access_token=token, lock_id=lock_id))
         except Exception as exc:
             logger.warning("Reading the release lock as its keyholder failed (%s).", type(exc).__name__, exc_info=True)
             return None
-        outcome = check_keyholder_lock(raw, lock_id=self._lock_id)
+        outcome = check_keyholder_lock(raw, lock_id=lock_id)
         if outcome != LockCheck.OBSERVED:
             logger.warning("Release lock check: %s; nothing will act on this lock.", outcome)
         usable = outcome == LockCheck.OBSERVED
@@ -86,7 +99,7 @@ class KeyholderLockObservationSource:
             tx.execute(
                 "INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, frozen_at, end_date, "
                 "wearer_chaster_id, keyholder_chaster_id, fetched_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), self._lock_id, outcome, SOURCE, "locked" if usable else None, None if frozen is None else int(frozen),
+                (str(uuid.uuid4()), lock_id, outcome, SOURCE, "locked" if usable else None, None if frozen is None else int(frozen),
                  _iso(_time(raw.get("frozenAt"))) if usable and _time(raw.get("frozenAt")) else None,
                  _iso(_time(raw.get("endDate"))) if usable and _time(raw.get("endDate")) else None,
                  _user_id(raw.get("user")) if isinstance(raw, dict) else None, _user_id(raw.get("keyholder")) if isinstance(raw, dict) else None,

@@ -731,8 +731,11 @@ def main() -> None:
     if config.enable_exemptions and config.owner_user_id:
         wearer = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
         exemption_opening = build_exemption_opening(config, core, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
-                                                    halt_source=platform.halt if platform is not None else None, clock=clock)
-        logger.info("Exemptions enabled: %s.", f"an approval opens lock {exemption_opening.lock_id}" if exemption_opening is not None else "no lock configured, an approval opens nothing")
+                                                    halt_source=platform.halt if platform is not None else None, clock=clock,
+                                                    owner_lock=getattr(wiring, "owner_lock", None))
+        logger.info("Exemptions enabled: %s.", ("an approval opens the owner's recognised lock" if getattr(exemption_opening, "_resolver", None) is not None
+                                                else f"an approval opens lock {exemption_opening._fixed_lock_id}") if exemption_opening is not None
+                    else "no lock configured, an approval opens nothing")
         def hygiene_allowance(trust=TrustManager(config.db_path, core=core), domain=config.hygiene_trust_domain or "hygiene"):
             state = trust.get_domain_state(domain)           # no domain yet: the lowest tier, the design's own default
             policy = policy_for(float(state.score) if state is not None else 0.0)
