@@ -164,11 +164,15 @@ class TestACheckInReply:
         reply = w.say(at=FIXED_TIME + timedelta(days=1))
         assert "How did it go?" in reply.text and [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept"]
 
-    def test_a_proposal_and_a_review_share_one_reply(self, core) -> None:  # noqa: F811
+    def test_a_proposal_and_a_review_are_two_messages(self, core) -> None:  # noqa: F811
+        # Owner, 2026-11-14: one row of buttons mixing both cards was confusing, so each card is its own message.
         w = self.world(core, proposal={**COMMIT, "text": "Read twenty pages"})
         w.desk.decide(w.user, w.desk.submit(w.user, {**COMMIT, "when": "today"}, FIXED_TIME).proposal.id, accept=True, now=FIXED_TIME)
         reply = w.say(at=FIXED_TIME + timedelta(days=1))
-        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept", "Accept", "Decline"]      # the earlier one first
+        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept"]                       # the earlier one first
+        [proposal] = reply.followups
+        assert proposal.text.startswith("**Proposed commitment") and [a.label for a in proposal.actions] == ["Accept", "Decline"]
+        assert "Proposed commitment" not in reply.text
 
     def test_someone_reporting_pain_is_not_asked_about_a_commitment(self, core) -> None:  # noqa: F811
         w = self.world(core)

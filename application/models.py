@@ -88,6 +88,7 @@ class OutgoingMessage:
     embed: EmbedSpec | None = None
     actions: tuple[ActionSpec, ...] = ()            # Phase J1: buttons (channel-agnostic), only for flows that register a handler
     from_model: bool = False                         # 2026-11-13: the conversation model wrote this reply (stored, so a restart restores only those)
+    followups: tuple["OutgoingMessage", ...] = ()     # owner, 2026-11-14: further messages sent right after this one, each with its own buttons
 
 
 @dataclass(kw_only=True)

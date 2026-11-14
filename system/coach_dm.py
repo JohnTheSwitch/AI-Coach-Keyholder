@@ -110,8 +110,10 @@ def describe_time_of_day(local: datetime) -> str:
 def review_card(commitment: Commitment, late: bool = False) -> tuple[str, tuple[ActionSpec, ...]]:
     text = f"**Your commitment for {_weekday(commitment.for_date)}:** {commitment.text}\nHow did it go?"
     if late:
-        text += "\n(Its time to report is over, so a Kept no longer counts. Not kept still does.)"
-    return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style=style) for key, label, style, _ in OUTCOME_BUTTONS)
+        # Owner, 2026-11-14: a late card must not look like a Kept still pays (no green button); an honest answer is still welcome.
+        text += "\nIt's past the time to report it, so a Kept earns nothing now. An honest answer still counts."
+    return text, tuple(ActionSpec(action_id=f"coach:{key}:{commitment.id}", label=label, style="secondary" if late else style)
+                       for key, label, style, _ in OUTCOME_BUTTONS)
 
 
 def _fit(reply: str, cards: str) -> str:
@@ -198,9 +200,10 @@ class CoachDm:
             outgoing = replace(outgoing, text=f"{outgoing.text}\n\n{note}".strip())
         if not cards:
             return outgoing
-        block = "\n\n".join(text for text, _ in cards)
-        return replace(outgoing, text=f"{_fit(outgoing.text, block)}\n\n{block}",
-                       actions=outgoing.actions + tuple(action for _, actions in cards for action in actions))
+        # Owner, 2026-11-14: one card per message, so each row of buttons sits under the card it belongs to. The reply carries the first.
+        (first, first_actions), rest = cards[0], cards[1:]
+        return replace(outgoing, text=f"{_fit(outgoing.text, first)}\n\n{first}", actions=outgoing.actions + first_actions,
+                       followups=outgoing.followups + tuple(OutgoingMessage(text=text, actions=actions) for text, actions in rest))
 
     def _remember_check_in(self, user_id: str, text: str, now: datetime) -> None:
         """The user's own words, dated, through every filter of Coaching Memory: nothing about health or distress is stored, and `forget all` erases it."""

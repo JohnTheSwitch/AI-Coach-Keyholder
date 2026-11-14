@@ -414,11 +414,13 @@ class CoachKeyholderBot(discord.Client):
                 reply_text = f"*(You sent this while I was offline: {discord.utils.format_dt(message.created_at, 't')}.)*\n{reply_text}"
             reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
             reply_view = actions_view(outgoing.actions) if outgoing.actions else None      # Phase J1: buttons, if any
+            followups = tuple(getattr(outgoing, "followups", ()))
         except Exception:
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
             reply_text = "Something went wrong handling that. It's been logged."
             reply_embed = reply_view = None
             from_model = False
+            followups = ()
 
         # Whatever state this reply reflects (including any onboarding
         # step transition) was already written by handle_message()
@@ -448,6 +450,15 @@ class CoachKeyholderBot(discord.Client):
 
         # Live, 2026-11-13: this path (the owner's, multi-wearer off) logged no `from_model`, so a restart restored nothing at all.
         self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id, from_model=from_model)
+        # Owner, 2026-11-14: a second card (a proposal after a question about an earlier commitment) is its own message with its own buttons.
+        for followup in followups:
+            try:
+                view = actions_view(followup.actions) if followup.actions else None
+                extra_sent = await message.channel.send(followup.text, **({"view": view} if view is not None else {}))
+            except Exception:
+                logger.exception("Failed to send a follow-up card to user_id=%s.", message.author.id)
+                break
+            self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, followup.text, message.channel.id, extra_sent.id)
 
     async def _on_message_via_gateway(self, message: discord.Message) -> None:
         """Multi-wearer path (Phase E3): the gateway picks the tenant; the exchange is stored only in THAT tenant's database

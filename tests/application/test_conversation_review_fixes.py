@@ -180,8 +180,10 @@ class TestAnEarlierCommitmentIsAskedAboutFirst:
 
     def test_it_comes_before_a_new_proposal(self, core) -> None:  # noqa: F811
         reply = self._yesterday(core, proposal={**COMMIT, "text": "Leg day"}).say("Tomorrow I want leg day.", at=FIXED_TIME + timedelta(days=1))
-        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept", "Accept", "Decline"]
-        assert reply.text.index("How did it go?") < reply.text.index("Proposed commitment")
+        assert [a.label for a in reply.actions] == ["Kept", "Partly", "Not kept"]              # owner, 2026-11-14: one card per message
+        [proposal] = reply.followups
+        assert "How did it go?" in reply.text and proposal.text.startswith("**Proposed commitment")
+        assert [a.label for a in proposal.actions] == ["Accept", "Decline"]
 
     def test_it_comes_up_once_a_day_in_ordinary_chat(self, core) -> None:  # noqa: F811
         w = self._yesterday(core)

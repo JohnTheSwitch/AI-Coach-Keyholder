@@ -143,7 +143,9 @@ class TestCards:
         for _text, buttons in (proposal_card(result.proposal, ("any",)), ask_card(commitment, "evening"), review_card(commitment, late=True)):
             assert all(re.fullmatch(COACH_TEMPLATE, b.action_id) for b in buttons)
         assert ask_card(commitment, "evening")[0] == "**Study**: that was this evening's plan. Done?"
-        assert "no longer counts" in review_card(commitment, late=True)[0]
+        late_text, late_buttons = review_card(commitment, late=True)
+        assert "a Kept earns nothing now" in late_text and all(b.style == "secondary" for b in late_buttons)     # owner, 2026-11-14: no green Kept
+        assert review_card(commitment)[1][0].style == "success"
 
 
 class TestNightCommitments:
