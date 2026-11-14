@@ -146,7 +146,8 @@ def window_config_from(config) -> WindowConfig:
     )
 
 
-def build_extension_guard(config, core, *, notifications, token_manager, lock_client, connections, halt_source=None, clock: Clock | None = None):
+def build_extension_guard(config, core, *, notifications, token_manager, lock_client, connections, halt_source=None, clock: Clock | None = None,
+                          owner_lock_id=None, hygiene_score=None):
     """The extension guard for the owner's own account, or None. A tenant has none: its invitation never disclosed one."""
     account = getattr(config, "chaster_execution_keyholder_user_id", None)
     owner = getattr(config, "owner_user_id", None)
@@ -169,7 +170,8 @@ def build_extension_guard(config, core, *, notifications, token_manager, lock_cl
     return ExtensionGuard(config.db_path, core=core, control=_WithGlobalHalt(ExecutionControl(config.db_path, core=core), halt_source),
                           reader=LockConfigurationReader(token_manager=token_manager, lock_client=lock_client),
                           transport=ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=account, clock=source),
-                          account_user_id=account, list_lock_ids=list_lock_ids, notify=notify)
+                          account_user_id=account, list_lock_ids=list_lock_ids, notify=notify, owner_lock_id=owner_lock_id,
+                          hygiene_score=hygiene_score)
 
 
 def _owner_lock_resolver(config, core, *, kh_tokens, lock_client, notifications, clock, out):

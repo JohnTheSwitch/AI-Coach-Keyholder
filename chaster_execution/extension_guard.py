@@ -48,7 +48,8 @@ def _describe(plan: ReviewPlan) -> str:
 
 class ExtensionGuard:
     def __init__(self, db_path: str | Path | None = None, *, core: CoreDatabase | None = None, control, reader, transport, account_user_id: str,
-                 list_lock_ids: Callable[[datetime], tuple[list[str], list[str]]], notify: Callable[[str, str, datetime], object] | None = None) -> None:
+                 list_lock_ids: Callable[[datetime], tuple[list[str], list[str]]], notify: Callable[[str, str, datetime], object] | None = None,
+                 owner_lock_id: Callable[[datetime], str | None] | None = None, hygiene_score: Callable[[], float | None] | None = None) -> None:
         """`list_lock_ids(now)` -> (locked lock ids, problems). `notify(key, text, now)` queues a line for the keyholder, once per key."""
         self._core = core if core is not None else CoreDatabase(Path(db_path))
         self._control = control
@@ -56,6 +57,8 @@ class ExtensionGuard:
         self._transport = transport
         self._account = account_user_id
         self._list = list_lock_ids
+        self._owner_lock_id = owner_lock_id          # owner, 2026-11-14: owner-only settings apply to this one lock only
+        self._hygiene_score = hygiene_score          # ... and follow hygiene Trust (chaster/extension_plan.py owner_lock_settings)
         self._notify = notify
 
     def run(self, now: datetime) -> list[str]:
@@ -81,7 +84,7 @@ class ExtensionGuard:
     def _check(self, config: LockConfiguration, now: datetime) -> str | None:
         if config.status != "locked" or not config.can_edit_extensions:
             return None
-        plan = plan_extension_policy(config)
+        plan = self._policy(config, now)
         if not plan.has_changes:
             return None
         if plan.refusal is not None:
@@ -121,7 +124,27 @@ class ExtensionGuard:
         report = self._reader.read(user_id=self._account, lock_ids=[lock_id], now=now)
         if not report.configurations:
             return "unverified"
-        return "applied" if not plan_extension_policy(report.configurations[0]).has_changes else "unverified"
+        return "applied" if not self._policy(report.configurations[0], now).has_changes else "unverified"
+
+    def _policy(self, config: LockConfiguration, now: datetime) -> ReviewPlan:
+        owner = self._is_owner_lock(config.lock_id, now)
+        score = None
+        if owner and self._hygiene_score is not None:
+            try:
+                score = self._hygiene_score()
+            except Exception:
+                logger.warning("Could not read hygiene Trust; owner-only settings are left alone.", exc_info=True)
+        return plan_extension_policy(config, owner_lock=owner, hygiene_score=score)
+
+    def _is_owner_lock(self, lock_id: str, now: datetime) -> bool:
+        """True only when the owner's lock is known and is this one; an unknown owner lock applies nothing extra (fails closed)."""
+        if self._owner_lock_id is None:
+            return False
+        try:
+            return bool(lock_id) and self._owner_lock_id(now) == lock_id
+        except Exception:
+            logger.warning("Could not tell whether lock %s is the owner's; owner-only settings are left alone.", lock_id, exc_info=True)
+            return False
 
     def _last_outcome(self, lock_id: str, plan_id: str) -> str | None:
         with self._core.transaction() as tx:

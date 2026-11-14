@@ -36,7 +36,8 @@ from chaster.extension_config import (PRIVATE_VISIBILITY, REVIEW_EXTENSIONS, TAR
                                       _peer_verification)
 
 __all__ = ["EXTENSION_MODES", "PICTURE_EXTENSION", "PICTURE_DEPENDENT_FLAGS", "FieldChange", "ReviewPlan", "plan_review_update",
-           "plan_review_revert", "canonical_digest", "plan_add_tasks", "TASKS_EXTENSION", "TASKS_SLUG"]
+           "plan_review_revert", "canonical_digest", "plan_add_tasks", "TASKS_EXTENSION", "TASKS_SLUG", "owner_lock_settings",
+           "HYGIENE_PICTURE_BELOW"]
 
 EXTENSION_MODES = ("cumulative", "non_cumulative", "turn", "unlimited")      # LockExtensionConfigDto.mode
 PLAN_ID_LENGTH = 16
@@ -156,14 +157,30 @@ def plan_review_revert(config: LockConfiguration) -> ReviewPlan:
 # What must hold on Chaster, by the owner's decision (docs/architecture/chaster_capability_map.md 6). chaster_execution/extension_guard.py keeps it true.
 # Chaster's late-relock penalty stays 0: a relock that is late for a health reason must never cost time, and the bot judges overruns itself.
 REQUIRED_SETTINGS = {"temporary-opening": {"penaltyTime": 0}}
+# Owner, 2026-11-14 ("brat taming"): on the OWNER's own lock only, while hygiene Trust is below HYGIENE_PICTURE_BELOW, every hygiene opening
+# ends with a verification picture (Chaster's code in it, reviewed like any verification picture); at or above it the bot switches that off
+# again. Never on another wearer's lock (they never agreed to it), and only while the lock has the `verification-picture` extension: a consent
+# revocation removes that extension, and then nothing here asks for a photo again. An unknown Trust score changes nothing.
+HYGIENE_PICTURE_BELOW = 0.70            # owner, 2026-11-14: hygiene Trust levels 1-2
+PICTURE_AFTER = "requireVerificationPictureAfter"
 
 
-def plan_extension_policy(config: LockConfiguration) -> ReviewPlan:
-    """Moves each setting in REQUIRED_SETTINGS to its required value and sends every other extension back exactly as read."""
+def owner_lock_settings(hygiene_score: float | None) -> dict:
+    """The owner-only settings for a hygiene Trust score ({} when unknown)."""
+    if hygiene_score is None:
+        return {}
+    return {"temporary-opening": {PICTURE_AFTER: hygiene_score < HYGIENE_PICTURE_BELOW}}
+
+
+def plan_extension_policy(config: LockConfiguration, *, owner_lock: bool = False, hygiene_score: float | None = None) -> ReviewPlan:
+    """Moves each setting in REQUIRED_SETTINGS (and, on the owner's own lock with the verification-picture extension, `owner_lock_settings`)
+    to its required value and sends every other extension back exactly as read."""
+    owner_rules = owner_lock_settings(hygiene_score) if owner_lock and config.extension(PICTURE_EXTENSION) is not None else {}
 
     def enforce(ext, cfg: dict) -> list[FieldChange]:
         changes = []
-        for name, required in REQUIRED_SETTINGS.get(ext.slug, {}).items():
+        wanted = {**REQUIRED_SETTINGS.get(ext.slug, {}), **owner_rules.get(ext.slug, {})}
+        for name, required in wanted.items():
             if cfg.get(name) != required:
                 changes.append(FieldChange(slug=ext.slug, field=name, before=str(cfg.get(name)), after=str(required)))
                 cfg[name] = required

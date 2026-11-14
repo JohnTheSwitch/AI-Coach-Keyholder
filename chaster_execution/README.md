@@ -160,3 +160,9 @@ it never re-freezes a lock the 72-hour backstop released. On by default (`ENABLE
 ## Extension guard
 
 `extension_guard.py` keeps the settings in `chaster/extension_plan.py::REQUIRED_SETTINGS` true on Chaster by itself: it reads, corrects one field, and only a fresh read counts as done. It never acts past the runtime halt. See `docs/architecture/chaster_capability_map.md`, section 6.
+
+**Hygiene relock picture (owner, 2026-11-14, "brat taming").** On the owner's own lock only (the recognised lock, or RELEASE_LOCK_ID), while
+hygiene Trust is below 0.70 (levels 1-2), the guard keeps `temporary-opening.requireVerificationPictureAfter` on, so every hygiene opening ends
+with a verification picture carrying Chaster's code; at 0.70 or above it switches it off again (`owner_lock_settings`). Never on another
+wearer's lock, never with an unknown Trust score or an unknown owner lock, and only while the lock has the `verification-picture` extension (a
+consent revocation removes it). Health access is unaffected: a picture is asked after the opening, never before it.
