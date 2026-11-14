@@ -137,6 +137,7 @@ class ExemptionService:
         self._raise_overrun = raise_overrun
         self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
         self._judge = None                          # exemptions.judge.ExemptionJudge: when set, requests are decided by it and never by a keyholder's button
+        self.lines_open = None                      # (user_id) -> lines still owed (lines/service.py, owner 2026-11-14): planned hygiene waits for them
         # Owner, 2026-11-13: the hygiene Trust domain. A planned opening relocked on time then emits `hygiene_opening.relocked_on_time`, which earns
         # hygiene Trust (it had no way up at all). None: no event.
         self.hygiene_trust_domain: str | None = None
@@ -200,6 +201,10 @@ class ExemptionService:
             return self._running_card(ident)
         health = ActionSpec(action_id=f"exemption:hhealth:{ident}", label="It's a health need", style="success")
         cancel = ActionSpec(action_id=f"exemption:hcancel:{ident}", label="Not now")
+        owed = self._lines_owed(user_id)
+        if owed:
+            decision("exemptions", "Planned hygiene opening held: lines are still owed.", exemption_id=ident, lines_owed=owed)
+            return OutgoingMessage(text=f"Finish your lines first: {owed} to go. A health need never waits for them.", actions=(health, cancel))
         if within:
             return OutgoingMessage(text=f"You can have a {minutes}-minute hygiene opening now. The combination appears in Chaster, not here. A health need never counts against anything.",
                                    actions=(ActionSpec(action_id=f"exemption:hopen:{ident}", label="Open it", style="primary"), health, cancel))
@@ -208,6 +213,16 @@ class ExemptionService:
                                    actions=(ActionSpec(action_id=f"exemption:hask:{ident}", label="Ask for an extra one", style="primary"), health, cancel))
         return OutgoingMessage(text="You've used this week's planned breaks, so another one needs your keyholder. A health need is different: it never counts against anything.",
                                actions=(ActionSpec(action_id=f"exemption:hask:{ident}", label="Ask my keyholder", style="primary"), health, cancel))
+
+    def _lines_owed(self, user_id: str) -> int:
+        """Lines still owed; 0 when lines are not wired or cannot be read (a read failure never blocks hygiene)."""
+        if self.lines_open is None:
+            return 0
+        try:
+            return int(self.lines_open(user_id))
+        except Exception:
+            logger.exception("Could not read the owed lines; hygiene is not held.")
+            return 0
 
     def press_hygiene(self, user_id: str, exemption_id: str, action: str, now: datetime) -> OutgoingMessage:
         with self._core.transaction() as tx:
@@ -221,6 +236,8 @@ class ExemptionService:
             apply_transition(self._core, write=drop)
             decision("exemptions", "Hygiene opening declined by the wearer; nothing was opened.", exemption_id=exemption_id)
             return OutgoingMessage(text="Okay, nothing was opened.")
+        if action in ("hopen", "hask") and self._lines_owed(user_id):
+            return OutgoingMessage(text=f"Finish your lines first: {self._lines_owed(user_id)} to go. A health need never waits for them.")
         if action == "hask" or (action == "hopen" and self._planned_this_week(user_id, now) >= self._allowance()[0]):
             if self._judge is not None:
                 def ask(tx: Transaction, _s: object) -> None:

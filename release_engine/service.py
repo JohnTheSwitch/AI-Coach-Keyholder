@@ -73,12 +73,15 @@ class ReleaseGates:
     lock_barrier_confirmed: bool       # a FRESH observation: locked, keyholder lock, isFrozen is True
     penalty_window_active: bool = False
     supervision_active: bool = False
+    release_debt: bool = False         # owner, 2026-11-14 (roadmap B4): consequences still owed (open lines) are paid before a token is spent
 
     def hard_veto(self) -> str | None:
         if self.penalty_window_active:
             return "penalty_window_active"
         if self.supervision_active:
             return "supervision_active"
+        if self.release_debt:
+            return "release_debt"
         return None
 
 

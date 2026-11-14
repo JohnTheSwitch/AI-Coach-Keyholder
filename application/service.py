@@ -182,6 +182,8 @@ class ApplicationService:
         self.photo_check_ins = None
         # Weekly review (roadmap slice 5): weekly_review.service.WeeklyReview, set by the bot when the coach is active.
         self.weekly_review = None
+        # Brat taming B2 (owner, 2026-11-14): lines.service.LineService; a DM holding the owed sentence is counted before any model.
+        self.lines = None
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
         # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
@@ -301,6 +303,15 @@ class ApplicationService:
                     reason_reply = None
                 if reason_reply is not None:
                     return reason_reply
+
+            if self.lines is not None:
+                try:
+                    lines_reply = self.lines.take(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("Lines could not be counted; the message is handled normally.")
+                    lines_reply = None
+                if lines_reply is not None:
+                    return lines_reply
 
             # Deterministic guardrail, BEFORE any model: a natural-language
             # question about the user's Chaster lock is answered by the

@@ -172,6 +172,7 @@ class CoachKeyholderBot(discord.Client):
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
         self.penalty_notices = None              # system.penalty_notices handlers, registered as outbox consumers
+        self.extra_consumers = None              # {name: {event type: handler}}: further outbox consumers, e.g. lines (owner, 2026-11-14)
         # Owner, 2026-11-10: what was sent while the PC was off is handled on start, BEFORE any deadline is judged.
         self._caught_up: asyncio.Event | None = None
         self._replay_started = False
@@ -195,7 +196,8 @@ class CoachKeyholderBot(discord.Client):
                 periodic_loop(core, str(uuid.uuid4()), self.clock, rules_engine=rules_engine, executor=executor,
                               interval_seconds=interval, supervision=supervision,
                               release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
-                              penalty_barrier=self.penalty_barrier, exemptions=self.exemptions, penalty_notices=self.penalty_notices)
+                              penalty_barrier=self.penalty_barrier, exemptions=self.exemptions, penalty_notices=self.penalty_notices,
+                              extra_consumers=self.extra_consumers)
             ))
         if self.tenant_supervisor is not None:
             self._tenant_task = asyncio.create_task(self.tenant_supervisor.run(), name="tenant-supervisor")
@@ -1019,7 +1021,9 @@ def main() -> None:
             exemption_dm.service.set_overrun_signal(overrun_signal(detectors.signals, trust_domain=domain))
     # The bot keeps the owner's required lock settings true on Chaster by itself, never past a halt.
     extension_guard = build_extension_guard(config, core, notifications=notification_queue, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
-                                            connections=chaster_connections, halt_source=platform.halt if platform is not None else None, clock=clock)
+                                            connections=chaster_connections, halt_source=platform.halt if platform is not None else None, clock=clock,
+                                            owner_lock_id=_owner_lock_id(config, wiring.owner_lock),
+                                            hygiene_score=_hygiene_score(config, core))
     if extension_guard is not None:
         bot.extension_guard = extension_guard_loop(extension_guard, clock, interval_seconds=config.extension_guard_poll_seconds)
         logger.info("Extension guard enabled: every %d s, subject to the runtime halt.", config.extension_guard_poll_seconds)
@@ -1033,6 +1037,18 @@ def main() -> None:
     # One outbound queue for every proactive notice: retries, quiet hours and the channel preference live here.
     notice_user = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
     bot.penalty_notices = penalty_notice_handlers(notice_user) if notice_user else None
+    # Brat taming B2 (owner, 2026-11-14): lines for every confirmed incident, typed in the DM and counted by code; they hold planned hygiene and releases.
+    if notice_user:
+        from lines.service import LineService
+        line_service = LineService(core, user_id=notice_user)
+        bot.extra_consumers = {"lines": line_service.consumers()}
+        application_service.lines = line_service
+        if bot.exemptions is not None:
+            bot.exemptions.lines_open = line_service.open_lines
+        release_task = getattr(wiring, "release_task", None)
+        if release_task is not None and getattr(release_task, "user_id", None) == notice_user:
+            release_task.release_debt = lambda: line_service.open_lines(notice_user)     # roadmap B4: owed lines hold a release
+        logger.info("Lines are active: every confirmed incident gets lines in the DM.")
     try:
         quiet_windows = quiet_config_from(config)
     except ValueError:
@@ -1052,6 +1068,28 @@ def main() -> None:
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, wiring.telemetry)
     bot.run(config.discord_token, log_handler=None)
+
+
+def _hygiene_score(config, core):
+    """Owner, 2026-11-14: the owner's hygiene Trust score for the hygiene relock picture, or None when the domain does not exist."""
+    domain = getattr(config, "hygiene_trust_domain", None) or "hygiene"
+
+    def read():
+        state = TrustManager(config.db_path, core=core).get_domain_state(domain)
+        return None if state is None else float(state.score)
+    return read
+
+
+def _owner_lock_id(config, resolver):
+    """Owner, 2026-11-14: which lock is the owner's own, for owner-only lock settings (the hygiene relock picture). The recognised lock when a
+    lock id is `auto`, else RELEASE_LOCK_ID; None when unknown (then nothing owner-only is applied)."""
+    from system.owner_lock import is_auto
+    fixed = getattr(config, "release_lock_id", None)
+    if resolver is not None:
+        return resolver.current
+    if fixed and not is_auto(fixed):
+        return lambda _now: fixed
+    return None
 
 
 if __name__ == "__main__":

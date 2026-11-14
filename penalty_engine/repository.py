@@ -178,7 +178,7 @@ class PenaltyEngine:
         def events(tx: Transaction, _state: object, result) -> None:
             if result is None:
                 return
-            self._emit_consumption_events(tx, result, now)
+            self._emit_consumption_events(tx, result, now, rule_group_id=rule_group_id)
 
         result = apply_transition(self._core, write=write, events=events)
         if result is None:
@@ -326,7 +326,7 @@ class PenaltyEngine:
         return window, decision, started
 
     def _emit_consumption_events(
-        self, tx: Transaction, result: tuple[PenaltyWindow, ExtensionDecision, bool], now: datetime,
+        self, tx: Transaction, result: tuple[PenaltyWindow, ExtensionDecision, bool], now: datetime, *, rule_group_id: str | None = None,
     ) -> None:
         """Shared by both consume_confirmed_incident() and the
         consumer-handler path (system/startup.py) -- one place defining
@@ -362,6 +362,7 @@ class PenaltyEngine:
                     "eligibility_reason": decision.eligibility_reason.value,
                     "assigned_hours": decision.assigned_hours,
                     "capacity_limited": decision.capacity_limited,
+                    "rule_group_id": rule_group_id,          # owner, 2026-11-14 (lines): which rule the incident broke; None from older callers
                 },
                 occurred_at=now,
             ),

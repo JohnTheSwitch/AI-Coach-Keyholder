@@ -34,7 +34,8 @@ CYCLE_LEASE_DURATION = timedelta(minutes=2)
 
 
 def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor, supervision=None,
-                       release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None) -> bool:
+                       release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None,
+                       extra_consumers=None) -> bool:
     """Returns False when another instance holds the lease (nothing was done)."""
     now = clock.now()
     lease = acquire_system_startup_lease(core, process_id, now, CYCLE_LEASE_DURATION)
@@ -50,7 +51,7 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
             RecoveryPlanManager(core.db_path, core=core), rules_engine, supervision,
             release_engine=None if release_task is None else release_task.engine,
             release_user_id=None if release_task is None else release_task.user_id,
-            conditioning=getattr(release_task, "conditioning", None), penalty_notices=penalty_notices,
+            conditioning=getattr(release_task, "conditioning", None), penalty_notices=penalty_notices, extra_consumers=extra_consumers,
         )
         process_pending_events(core, registry, claimant=process_id, now=now)
         if rules_engine is not None:
@@ -84,13 +85,14 @@ def run_periodic_cycle(core: CoreDatabase, process_id: str, clock: Clock, *, rul
 
 async def periodic_loop(core: CoreDatabase, process_id: str, clock: Clock, *, rules_engine, executor,
                         interval_seconds: int = 60, supervision=None,
-                        release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None) -> None:
+                        release_task=None, check_ins=None, daily=None, telemetry=None, penalty_barrier=None, exemptions=None, penalty_notices=None,
+                        extra_consumers=None) -> None:
     while True:
         try:
             await asyncio.to_thread(
                 run_periodic_cycle, core, process_id, clock, rules_engine=rules_engine, executor=executor,
                 supervision=supervision, release_task=release_task, check_ins=check_ins, daily=daily, telemetry=telemetry,
-                penalty_barrier=penalty_barrier, exemptions=exemptions, penalty_notices=penalty_notices,
+                penalty_barrier=penalty_barrier, exemptions=exemptions, penalty_notices=penalty_notices, extra_consumers=extra_consumers,
             )
         except asyncio.CancelledError:
             raise

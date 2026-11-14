@@ -91,6 +91,7 @@ class ReleaseEnginePeriodicTask:
         self._halted = is_halted
         self._can_execute = can_execute
         self._max_hold = max_hold
+        self.release_debt: Callable[[], object] | None = None    # roadmap B4 (owner, 2026-11-14): () -> what is still owed (lines); truthy holds a release
         self._backstop_refreshed_at: datetime | None = None
         self._first_sight_at: datetime | None = None
         self.first_sight_every: timedelta | None = _FIRST_SIGHT_EVERY        # None: no first-sighting freeze (tests of other rules)
@@ -159,7 +160,7 @@ class ReleaseEnginePeriodicTask:
 
         veto = ReleaseGates(
             lock_barrier_confirmed=True, penalty_window_active=bool(self._penalty_active()),
-            supervision_active=bool(self._supervision_active()),
+            supervision_active=bool(self._supervision_active()), release_debt=self._debt_owed(),
         ).hard_veto()
         if veto is not None:
             if self._engine.cancel_plan(user_id=self._user, reason=veto, now=now):
@@ -359,7 +360,18 @@ class ReleaseEnginePeriodicTask:
         return ReleaseGates(
             lock_barrier_confirmed=self._barrier_confirmed(obs, now),
             penalty_window_active=bool(self._penalty_active()), supervision_active=bool(self._supervision_active()),
+            release_debt=self._debt_owed(),
         )
+
+    def _debt_owed(self) -> bool:
+        """Roadmap B4: True while consequences are still owed. A read failure holds nothing (it never blocks a release by accident)."""
+        if self.release_debt is None:
+            return False
+        try:
+            return bool(self.release_debt())
+        except Exception:
+            logger.exception("Could not read the release debt; the release is not held for it.")
+            return False
 
     @staticmethod
     def _barrier_confirmed(obs: ChasterProviderObservation | None, now: datetime) -> bool:
