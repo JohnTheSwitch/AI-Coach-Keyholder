@@ -36,7 +36,7 @@ from chaster.extension_config import (PRIVATE_VISIBILITY, REVIEW_EXTENSIONS, TAR
                                       _peer_verification)
 
 __all__ = ["EXTENSION_MODES", "PICTURE_EXTENSION", "PICTURE_DEPENDENT_FLAGS", "FieldChange", "ReviewPlan", "plan_review_update",
-           "plan_review_revert", "canonical_digest"]
+           "plan_review_revert", "canonical_digest", "plan_add_tasks", "TASKS_EXTENSION", "TASKS_SLUG"]
 
 EXTENSION_MODES = ("cumulative", "non_cumulative", "turn", "unlimited")      # LockExtensionConfigDto.mode
 PLAN_ID_LENGTH = 16
@@ -224,3 +224,30 @@ def _plan(config: LockConfiguration, transform, *, remove: tuple[str, ...] = (),
     body = {"extensions": entries}
     return ReviewPlan(lock_id=config.lock_id, plan_id=canonical_digest(body), changes=tuple(changes), unchanged=tuple(unchanged),
                       refusal=refusal, body=body)
+
+
+# Roadmap slice 6 (owner, 2026-11-13): `setup tasks` adds Chaster's Tasks extension for the proof spot checks, set up like the one added
+# on the live lock on 2026-11-13 (docs/architecture/chaster_capability_map.md 8): community review on with no Chaster punishments, no points,
+# no votes, the wearer can neither assign, choose nor edit tasks, and nothing happens on an abandoned task. It holds one plain task
+# ("Show your lockbox"); the spot checks assign their own. No time action of any kind.
+TASKS_SLUG = "tasks"
+TASKS_EXTENSION = {
+    "slug": TASKS_SLUG, "mode": "unlimited", "regularity": 3600,
+    "config": {
+        "tasks": [{"task": "Show your lockbox", "points": 0, "verificationRequired": True, "codeRequired": True}],
+        "voteEnabled": False, "voteDuration": 43200, "startVoteAfterLastVote": False, "enablePoints": False, "pointsRequired": 0,
+        "allowWearerToEditTasks": False, "allowWearerToConfigureTasks": False, "preventWearerFromAssigningTasks": True,
+        "allowWearerToChooseTasks": False, "actionsOnAbandonedTask": [],
+        "peerVerification": {"enabled": True, "visibility": TARGET_VISIBILITY, "punishments": []},
+    },
+}
+
+
+def plan_add_tasks(config: LockConfiguration) -> ReviewPlan:
+    """Every extension sent back exactly as read, plus TASKS_EXTENSION at the end. No change when the lock already has `tasks`."""
+    plan = _plan(config, lambda _ext, _cfg: [], require_review_extensions=False)
+    if config.extension(TASKS_SLUG) is not None or plan.refusal is not None:
+        return plan
+    body = {"extensions": [*plan.body["extensions"], copy.deepcopy(TASKS_EXTENSION)]}
+    return ReviewPlan(lock_id=plan.lock_id, plan_id=canonical_digest(body), unchanged=plan.unchanged, refusal=None, body=body,
+                      changes=(FieldChange(slug=TASKS_SLUG, field="extension", before="absent", after="added (community review, no points, no time actions)"),))

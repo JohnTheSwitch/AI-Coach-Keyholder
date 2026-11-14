@@ -289,8 +289,9 @@ def render_review(result, *, lock_id: str, owner_id: str) -> str:
                      "photo requirements and peer verification off; every other extension as read)")
     if plan is not None:
         lines.append(f"Payload: POST /locks/{plan.lock_id}/extensions with ALL {len(plan.body['extensions'])} extensions "
-                     f"({', '.join(e['slug'] for e in plan.body['extensions'])}); none added, "
-                     + (f"removed: {', '.join(sorted(removed))}." if (removed := {ch.slug for ch in plan.changes if ch.field == 'extension'})
+                     f"({', '.join(e['slug'] for e in plan.body['extensions'])}); "
+                     + ("added: tasks, " if result.add_tasks and plan.has_changes else "none added, ")
+                     + (f"removed: {', '.join(sorted(removed))}." if (removed := {ch.slug for ch in plan.changes if ch.field == 'extension' and ch.after == 'removed'})
                         else "none removed."))
         if plan.changes:
             width = max(len(f"{ch.slug} {ch.field}") for ch in plan.changes)
@@ -310,7 +311,8 @@ def render_review(result, *, lock_id: str, owner_id: str) -> str:
         lines += ["The re-read still shows:"] + [f"  - {g}" for g in result.remaining_gaps]
     if result.outcome.value == "planned" and plan is not None and plan.refusal is None:
         flag = " --revert" if result.revert else ""
-        lines.append(f"To apply exactly this plan: python -m cli extension-review {lock_id} --owner-id {owner_id}{flag} --apply --plan {plan.plan_id} --yes")
+        command = "setup tasks" if result.add_tasks else "extension-review"
+        lines.append(f"To apply exactly this plan: python -m cli {command} {lock_id} --owner-id {owner_id}{flag} --apply --plan {plan.plan_id} --yes")
     return "\n".join(lines)
 
 
@@ -392,11 +394,40 @@ def run_economy(*, out, now, factory=None) -> int:
     return 0
 
 
-def run_setup(args, *, out, now, factory, domain_factory) -> int:
+def lock_tasks_reader(config_factory, now):
+    """For `setup check` (roadmap slice 6): () -> [(lock id, "on" | "review off" | "missing")] for the connected account's locked locks,
+    or None when no Chaster account is connected. Read-only."""
+    def read():
+        directory, reader, user_id = config_factory()[:3]
+        if not user_id:
+            return None
+        listing = directory.list_account_locks(user_id=user_id, now=now())
+        ids = [l.lock_id for l in listing.wearer_locks + listing.keyholder_locks if l.status == "locked"]
+        report = reader.read(user_id=user_id, lock_ids=ids, now=now()) if ids else None
+        out = []
+        for c in report.configurations if report else ():
+            tasks = c.extension("tasks")
+            pv = tasks.peer_verification if tasks else None
+            out.append((c.lock_id, "missing" if tasks is None else "on" if pv is not None and pv.enabled is True else "review off"))
+        return out
+    return read
+
+
+def run_setup(args, *, out, now, factory, domain_factory, review_factory=None, lock_tasks=None) -> int:
     from cli.setup import DOMAIN_TEXTS, named_trust_domains, render_report, setup_report
+    if args.setup_command == "tasks":
+        service = (review_factory or build_extension_review_service)()
+        if args.apply:
+            result = service.apply(actor=args.owner_id, lock_id=args.lock_id, plan_id=args.plan, confirmed=args.yes, add_tasks=True)
+        else:
+            result = service.preview(actor=args.owner_id, lock_id=args.lock_id, add_tasks=True)
+        print(render_review(result, lock_id=args.lock_id, owner_id=args.owner_id), file=out)
+        if result.outcome.value in ("planned", "already_on_target", "applied"):
+            return 0
+        return 3 if result.refused else 4
     config, core, model_ready = (factory or build_setup_context)()
     if args.setup_command == "check":
-        print(render_report(setup_report(config, core, model_ready=model_ready)), file=out)
+        print(render_report(setup_report(config, core, model_ready=model_ready, lock_tasks=lock_tasks)), file=out)
         return 0
     admin = (domain_factory or build_trust_domain_admin)()
     refusal = admin.authorize(args.owner_id)
@@ -961,6 +992,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
     si = ssub.add_parser("init", help="Create the missing Trust domains the configuration names (owner only, --yes).")
     si.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     si.add_argument("--yes", action="store_true")
+    st = ssub.add_parser("tasks", help="Roadmap slice 6: add Chaster's Tasks extension for the spot checks (community review on, no points, no "
+                                       "time actions) to a lock: DRY RUN by default; --apply writes (owner only, runtime halt, consent, audited).")
+    st.add_argument("lock_id")
+    st.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    st.add_argument("--apply", action="store_true", help="LIVE: send the plan (needs --plan and --yes, and a cleared runtime halt)")
+    st.add_argument("--plan", default=None, help="the plan id printed by the dry run")
+    st.add_argument("--yes", action="store_true", help="confirm that this really changes a live lock")
     rt = sub.add_parser("release-test-override", help="Owner, 2026-11-13: file ONE test release that spends a token despite supervision or a "
                                                        "penalty window; the running bot carries it out only with a confirmed barrier in free time.")
     rt.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
@@ -1176,7 +1214,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
     if args.command == "economy":
         return run_economy(out=out, now=now)
     if args.command == "setup":
-        return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory)
+        return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory, review_factory=review_factory,
+                         lock_tasks=lock_tasks_reader(config_factory, now) if args.setup_command == "check" else None)
     if args.command == "release-test-override":
         return run_release_test_override(args, out=out, now=now, factory=release_test_factory)
     if args.command == "freeze-lock":

@@ -138,6 +138,14 @@ changed wording needs no re-acceptance.
 
 Only the CLI imports the service; the bot never records consent (guarded in tests). A Discord DM path for tenant wearers is not built yet.
 
+**`setup tasks` (roadmap slice 6, owner 2026-11-13).** `python -m cli setup tasks <lock_id> --owner-id <id>` is the same guarded service in
+an `add_tasks` direction: it adds Chaster's Tasks extension for the proof spot checks (`chaster/extension_plan.py` `plan_add_tasks`, set up
+like the one added to the live lock on 2026-11-13: community review on, no punishments, no points, no votes, the wearer cannot assign, choose
+or edit tasks, nothing on an abandoned task, one plain task "Show your lockbox"). Every other extension is sent back exactly as read; it never
+touches time. A lock that already has `tasks` is left alone (`already_on_target`). Dry run first; `--apply --plan <id> --yes` writes, behind
+the runtime halt, the plan id and the consent to community review, audited in `manual_extension_actions`. `setup check` reads each locked
+lock of the connected account and says whether `tasks` is there with community review.
+
 Revocation (2026-11-03, `docs/architecture/phase_i_proposal.md` section 8): `--revert` and a revoked consent make Chaster stop asking for
 photos: `verification-picture` is removed, `temporary-opening`'s picture requirements and the tasks' `verificationRequired` /
 `codeRequired` and peer verification are switched off; every other extension and field is sent back as read. A decline runs it only when

@@ -30,6 +30,11 @@ off (peer verification, the tasks' `verificationRequired` / `codeRequired`, the 
 must still match), and (owner decision 2026-11-03) it is NOT stopped by the runtime halt: a wearer's revocation takes effect at once.
 Every other check is the same; a fresh read afterwards must show nothing left to switch off.
 
+The ADD-TASKS direction (`add_tasks=True`, roadmap slice 6, owner 2026-11-13; `python -m cli setup tasks`) adds Chaster's Tasks extension
+for the proof spot checks (chaster/extension_plan.py `plan_add_tasks`): community review on, no punishments, no points, no time actions;
+every other extension is sent back exactly as read, and a lock that already has `tasks` is left alone. It exposes photos to the community,
+so every forward check applies: the runtime halt, the plan id from the dry run and the consent to community review.
+
 `decide_consent()` records the OWNER's own decision about a lock the owner wears (the connected account's role on it is `wearer`). A
 lock worn by another account is refused (that consent can only come from that wearer) unless the owner explicitly attests that the
 wearer account is the owner's own second account (`attest_own_account`); the attestation is written into the consent record. A decline
@@ -49,7 +54,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from chaster.extension_config import LockConfiguration, LockConfigurationReader, community_exposed, review_gaps
-from chaster.extension_plan import ReviewPlan, plan_review_revert, plan_review_update
+from chaster.extension_plan import TASKS_SLUG, ReviewPlan, plan_add_tasks, plan_review_revert, plan_review_update
 from chaster_execution.control import ExecutionControl
 from chaster_execution.models import TransportOutcome
 from chaster_execution.review_consent import OWNER_ATTESTATION, ConsentDecision, ReviewConsent, ReviewConsentLedger
@@ -126,6 +131,7 @@ class ExtensionReviewResult:
     remaining_gaps: tuple[str, ...] = field(default=())     # after a write: what the re-read still shows
     consent: ReviewConsent | None = None
     revert: bool = False
+    add_tasks: bool = False                                 # roadmap slice 6: the `setup tasks` direction
 
     @property
     def refused(self) -> bool:
@@ -174,7 +180,7 @@ class ExtensionReviewService:
 
     # ------------------------------------------------------------------ dry run
 
-    def preview(self, *, actor: str, lock_id: str, revert: bool = False) -> ExtensionReviewResult:
+    def preview(self, *, actor: str, lock_id: str, revert: bool = False, add_tasks: bool = False) -> ExtensionReviewResult:
         refusal = self._identity(actor) or (None if isinstance(lock_id, str) and _LOCK_ID.match(lock_id) else ExtensionReviewOutcome.INVALID_INPUT)
         if refusal is None and self._account is None:
             refusal = ExtensionReviewOutcome.ACCOUNT_NOT_CONFIGURED
@@ -183,8 +189,8 @@ class ExtensionReviewService:
         halted = self._control.is_halted()
         config, problem = self._read(lock_id)
         if config is None:
-            return ExtensionReviewResult(outcome=ExtensionReviewOutcome.READ_FAILED, halted=halted, detail=problem, revert=revert)
-        plan = plan_review_revert(config) if revert else plan_review_update(config)
+            return ExtensionReviewResult(outcome=ExtensionReviewOutcome.READ_FAILED, halted=halted, detail=problem, revert=revert, add_tasks=add_tasks)
+        plan = self._plan_for(config, revert=revert, add_tasks=add_tasks)
         consent = self._consents.state(lock_id)
         blockers = [b for b, on in (
             ("runtime halted (python -m scripts.execution_control clear \"reason\")", halted and not revert),
@@ -197,17 +203,18 @@ class ExtensionReviewService:
         outcome = ExtensionReviewOutcome.PLANNED if plan.has_changes else (
             ExtensionReviewOutcome.NOTHING_TO_REVERT if revert else ExtensionReviewOutcome.ALREADY_ON_TARGET)
         return ExtensionReviewResult(outcome=outcome, config=config, plan=plan, halted=halted, blockers=tuple(blockers), consent=consent,
-                                     revert=revert)
+                                     revert=revert, add_tasks=add_tasks)
 
     # ------------------------------------------------------------------ live write
 
-    def apply(self, *, actor: str, lock_id: str, plan_id: str | None, confirmed: bool, revert: bool = False) -> ExtensionReviewResult:
+    def apply(self, *, actor: str, lock_id: str, plan_id: str | None, confirmed: bool, revert: bool = False,
+              add_tasks: bool = False) -> ExtensionReviewResult:
         actor_text, lock_text, plan_text = (actor or "")[:_MAX_ACTOR], (lock_id or "")[:_MAX_ACTOR], (plan_id or "")[:_MAX_ACTOR]
 
         def refuse(outcome, **kw) -> ExtensionReviewResult:
             changes = kw.get("plan").changes if kw.get("plan") else ()
             return ExtensionReviewResult(outcome=outcome, audit_id=self._audit(actor_text, lock_text, plan_text, changes, outcome),
-                                         revert=revert, **kw)
+                                         revert=revert, add_tasks=add_tasks, **kw)
 
         identity = self._identity(actor)
         if identity is not None:
@@ -228,7 +235,7 @@ class ExtensionReviewService:
             return refuse(ExtensionReviewOutcome.NOT_LOCKED, config=config)
         if not config.can_edit_extensions:
             return refuse(ExtensionReviewOutcome.NOT_PERMITTED, config=config)
-        plan = plan_review_revert(config) if revert else plan_review_update(config)
+        plan = self._plan_for(config, revert=revert, add_tasks=add_tasks)
         if plan.refusal is not None:
             return refuse(ExtensionReviewOutcome.PLAN_REFUSED, config=config, plan=plan, detail=plan.refusal)
         if not plan.has_changes:
@@ -249,11 +256,12 @@ class ExtensionReviewService:
             outcome, http_status = ExtensionReviewOutcome.UNKNOWN, None
         gaps: tuple[str, ...] = ()
         if outcome is None:
-            outcome, gaps = self._verify(lock_id, plan, revert=revert)
+            outcome, gaps = self._verify(lock_id, plan, revert=revert, add_tasks=add_tasks)
         self._finish(audit_id, outcome, http_status)
-        logger.info("Extension review %s on lock %s: %s (HTTP %s).", "revert" if revert else "update", lock_id, outcome.value, http_status)
+        logger.info("Extension review %s on lock %s: %s (HTTP %s).", "revert" if revert else "add tasks" if add_tasks else "update", lock_id,
+                    outcome.value, http_status)
         return ExtensionReviewResult(outcome=outcome, audit_id=audit_id, config=config, plan=plan, halted=False,
-                                     http_status=http_status, remaining_gaps=gaps, consent=consent, revert=revert)
+                                     http_status=http_status, remaining_gaps=gaps, consent=consent, revert=revert, add_tasks=add_tasks)
 
     # ------------------------------------------------------------------ consent (Phase I3)
 
@@ -321,7 +329,13 @@ class ExtensionReviewService:
             return report.configurations[0], None
         return None, (report.problems[0].split(": ", 1)[-1] if report.problems else "failed")
 
-    def _verify(self, lock_id: str, sent: ReviewPlan, *, revert: bool) -> tuple[ExtensionReviewOutcome, tuple[str, ...]]:
+    @staticmethod
+    def _plan_for(config: LockConfiguration, *, revert: bool, add_tasks: bool) -> ReviewPlan:
+        if revert:
+            return plan_review_revert(config)
+        return plan_add_tasks(config) if add_tasks else plan_review_update(config)
+
+    def _verify(self, lock_id: str, sent: ReviewPlan, *, revert: bool, add_tasks: bool = False) -> tuple[ExtensionReviewOutcome, tuple[str, ...]]:
         """`applied` only when a fresh read shows the target AND exactly the extensions that were sent (a revert removes
         `verification-picture`; nothing else may appear or disappear)."""
         after, _problem = self._read(lock_id)
@@ -329,6 +343,10 @@ class ExtensionReviewService:
             return ExtensionReviewOutcome.APPLIED_UNVERIFIED, ("re-read failed",)
         if revert:
             gaps = tuple(f"{c.slug} {c.field} still {c.before}" for c in plan_review_revert(after).changes)
+        elif add_tasks:
+            tasks = after.extension(TASKS_SLUG)
+            pv = tasks.peer_verification if tasks else None
+            gaps = () if pv is not None and pv.enabled is True else (("tasks: extension missing",) if tasks is None else ("tasks: peer verification off",))
         else:
             gaps = review_gaps(after)
         same = sorted(e.slug for e in after.extensions) == sorted(e["slug"] for e in sent.body["extensions"])

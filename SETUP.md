@@ -78,6 +78,14 @@ python -m cli setup init --owner-id <your OWNER_USER_ID> --yes
 
 This creates the Trust domains your configuration names (by default `routine` and `hygiene`), each with a consent record.
 
+Proof spot checks need Chaster's Tasks extension on your lock. `python -m cli setup check` says whether it is there; if not:
+
+```bash
+python -m cli setup tasks <lock id> --owner-id <your OWNER_USER_ID>
+```
+
+That is a dry run that shows exactly what would be sent; it prints the command that applies it (after step 8). Nothing about time changes.
+
 ## 8. Let it act on the lock
 
 A new install starts **halted**: nothing touches a lock until you clear it.

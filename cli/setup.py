@@ -32,7 +32,7 @@ class Line:
     detail: str
 
 
-def setup_report(config, core, *, model_ready: Callable[[], object] | None = None) -> list[Line]:
+def setup_report(config, core, *, model_ready: Callable[[], object] | None = None, lock_tasks: Callable[[], object] | None = None) -> list[Line]:
     out: list[Line] = []
 
     def add(ok: bool | None, item: str, detail: str) -> None:
@@ -107,8 +107,7 @@ def setup_report(config, core, *, model_ready: Callable[[], object] | None = Non
         exists = domains.get(name)
         add(bool(exists), f"Trust domain {name}", "exists" if exists else "missing: run `python -m cli setup init --owner-id <id> --yes`")
     if getattr(config, "enable_proof_checks", False):
-        add(None, "Proof spot checks", "on: your lock needs Chaster's Tasks extension with community review, or every check is skipped "
-            "(the bot reads the lock; nothing is added for you)")
+        _tasks_lines(add, lock_tasks)
 
     try:
         ZoneInfo(config.app_timezone)
@@ -120,6 +119,29 @@ def setup_report(config, core, *, model_ready: Callable[[], object] | None = Non
     add(None, "Runtime halt", "HALTED: nothing acts on a lock until you run `python -m scripts.execution_control clear \"why\"`" if halted
         else "clear: lock actions are allowed")
     return out
+
+
+def _tasks_lines(add, lock_tasks) -> None:
+    """Roadmap slice 6: whether each locked lock has Chaster's Tasks extension with community review (read through the connection)."""
+    hint = "`python -m cli setup tasks <lock id> --owner-id <id>` adds it (dry run first)"
+    if lock_tasks is None:
+        add(None, "Proof spot checks", f"on: your lock needs Chaster's Tasks extension with community review, or every check is skipped; {hint}")
+        return
+    try:
+        locks = lock_tasks()
+    except Exception:
+        add(None, "Proof spot checks", "on: your locks could not be read, so whether they have the Tasks extension is unknown")
+        return
+    if locks is None:
+        add(None, "Proof spot checks", "on: no Chaster account is connected, so no lock can be checked for the Tasks extension")
+        return
+    if not locks:
+        add(None, "Proof spot checks", "on: no locked lock to check for the Tasks extension")
+        return
+    for lock_id, state in locks:
+        add(state == "on", f"Tasks on lock {lock_id}", {"on": "present with community review",
+                                                       "review off": "present, but community review is off: `python -m cli extension-review` turns it on",
+                                                       }.get(state, f"missing: every spot check is skipped; {hint}"))
 
 
 def _table(core, name: str) -> bool:
