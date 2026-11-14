@@ -14,4 +14,4 @@ Start-Sleep -Seconds 3
 
 # Start-Process -WindowStyle Hidden (2026-11-14: Win32_Process.Create with a Win32_ProcessStartup object returned 21, invalid parameter).
 $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$bat`"" -WorkingDirectory $repo -WindowStyle Hidden -PassThru
-Write-Output "Bot started without a window (process $($proc.Id)); see logsot.log."
+Write-Output "Bot started without a window (process $($proc.Id)); see logs\bot.log."
