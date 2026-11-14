@@ -15,3 +15,11 @@ Brat taming B2 (owner, 2026-11-14; migration 066). Every confirmed incident gets
 
 Table: `line_assignments` (written only by `service.py`). Events: `lines.assigned`, `lines.completed`. The single wearer only (the owner's
 notice user); tenants are not wired.
+
+**On paper (owner, 2026-11-14; migration 068).** When Chaster tasks work (the spot checks' setup), lines are handwritten: the oldest owed
+sheet becomes a Chaster task "Show: 20 handwritten lines: <sentence>" (photo of the sheet with Chaster's code, community review). Verified ->
+done; rejected (or the task taken off the lock) -> still owed, a new sheet is asked for. A sheet waits for Chaster's one task slot (a spot
+check or recovery task goes first); once the oldest sheet has waited 3 hours without a task, typing the lines in the DM counts too, so owed
+lines never hold hygiene forever. Typed lines otherwise get "Lines go on paper". The community review watch leaves these photos alone.
+Chaster's own "Typing Lines" extension is a partner extension: with it on the lock the bot could no longer rewrite the extension list
+(hygiene openings, the extension guard, the relock picture), so it is not used.

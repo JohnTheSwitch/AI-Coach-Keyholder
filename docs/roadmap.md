@@ -31,6 +31,30 @@ Chosen from the proposal built on the owner's own chat history (edging during a 
 
 Not chosen (2026-11-14): the hygiene debrief question, "answer or freeze", the non-negotiating keyholder.
 
+## Work queue (proposed 2026-11-14, built in this order without asking once the owner approves it)
+
+Every item is built, fully tested, committed, deployed (bot restarted without a visible window) and pushed on its own. The decisions written
+here are part of the approval.
+
+| # | Item | Decisions already in it |
+|---|---|---|
+| Q1 | **Deploy the waiting batch** | Persona fixes (refusal retry + fixed line, no invented rules/signatures/records, never accuse without evidence, exact Iron Contract text) and lines on paper |
+| Q2 | **Windowless restarts** | The bot is started without a console window; closing a window can no longer stop it |
+| Q3 | **Persona check script** | `python -m scripts.persona_check`: fixed scenarios (begging, a confession, an honest report, a question about an unknown rule, a contract question) through the local model for all 15 personas; counts refusals, copied lines, invented facts and accusations. Run before and after every prompt change; never part of the test suite (the suite stays deterministic) |
+| Q4 | **Weekly review shows brat taming** | Adds lines owed / done and recovery tasks verified (hours earned) to the Sunday review; plain facts, no Trust scores |
+| Q5 | **Parity 5: exemptions and hygiene openings for additional wearers** | Same rules as the owner's, in the wearer's own database; an opening acts only on their CONFIRMED paired lock and only after the owner cleared that tenant's execution halt. The relock picture, lines and recovery tasks stay owner-only |
+| Q6 | **Parity 6: detectors and the judge for additional wearers** | Hygiene misuse, missed check-ins and lock claims through their own signals and the same judge; incidents go to their own Penalty Engine |
+| Q7 | **Parity 7: photo check-ins for additional wearers** | Off until the wearer sends `photo check-ins on` themselves |
+| Q8 | **Parity 8: confession handling for additional wearers** | Same deterministic path as the owner's |
+| Q9 | **Roadmap slice 8: Honesty 5 and the coach for additional wearers** | As written in slice 8 above (the invitation discloses the coach and spot checks; `proof checks off`; Honesty domain at acceptance) |
+| Q10 | **Typing Lines: desk research only** | Read Chaster's and the partner's public documentation to find out whether a partner extension can be resent unchanged or driven by API. No write to any lock; the result is a written proposal |
+
+Between items, the standing goal applies: read the logs and the bot chat for bugs; a bug fix that changes no rule is made without asking.
+
+**Still asked every time, whatever this queue says:** anything that touches the owner's live lock in a new way (a new extension setting or
+action), the live trial or anything involving another person, any rule or number not written here, anything touching the philosophy's hard
+limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines on a test lock).
+
 **Standing goal (owner, 2026-11-13): make this system the best version of itself.** Between slices, Claude reads the logs and the bot's chat
 history for bugs and design gaps, and proposes them with a recommendation; approved ones are added here.
 

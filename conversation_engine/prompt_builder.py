@@ -234,7 +234,13 @@ def _render_contract(data: object) -> str:
     # v0.39 Phase G6: a single fixed marker; the behaviour that goes with it is guardrail rule 7.
     if data["state"] != "LOCKED":
         return ""
-    return "[STATE: LOCKED] The user's lock is locked and the Iron Contract is in force (guardrail rule 7)."
+    # Owner, 2026-11-14: with only the marker, the model invented the rest ("you signed it", "orgasm control is part of it", "we have the
+    # records"). It now gets the whole, exact content, so it can explain it truthfully and has nothing to fill in.
+    return ("[STATE: LOCKED] The user's lock is locked and the Iron Contract is in force (guardrail rule 7). The Iron Contract is ONLY this: while "
+            "he is locked he cannot lower the difficulty (back to Standard Mode) or schedule or cancel a vacation, and you do not negotiate deadlines "
+            "or excuses. His health, safety and real emergencies always come first, and halt, leave, conditioning off, research off and forget all "
+            "always work. The rule is real and in force: it comes with this app's settings, not with a signature (nobody signed anything, and there is "
+            "no record of signing). If he asks, explain exactly this and nothing more.")
 
 
 def _quoted(text: object) -> str:
@@ -361,9 +367,10 @@ def persona_voice_text(identity_id: str | None) -> str:
     from ai.persona_voices import voice_for
     voice = voice_for(identity_id)
     name = (identity_id or "alex").capitalize()
-    return (f"PERSONA: you are {name}, a keyholder. {voice.style} Lines in your voice (never repeat them word for word): "
-            f"\"{voice.examples[0]}\" / \"{voice.examples[1]}\". Everything in VOICE above still applies; when they mention pain, health or "
-            "distress, every persona drops the act and is warm and direct.")
+    # Owner, 2026-11-14: the example lines are no longer sent. Live tests showed llama3.1 copying them word for word into unrelated replies
+    # (a cleaned flat answered with "Two of three. Not acceptable"); the style description alone keeps the voices apart.
+    return (f"PERSONA: you are {name}, a keyholder. {voice.style} Answer what he actually said, in your own words. Everything in VOICE above "
+            "still applies; when they mention pain, health or distress, every persona drops the act and is warm and direct.")
 
 
 _COACHING_MEMORY_PREAMBLE = (

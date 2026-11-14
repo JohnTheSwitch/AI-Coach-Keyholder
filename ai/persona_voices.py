@@ -45,7 +45,7 @@ PERSONA_VOICES: dict[str, PersonaVoice] = {
          "Workout done and still locked. Look at you being good for me.")),
     "scarlett": PersonaVoice(
         "Bold, direct and unapologetically firm. Confident and a little possessive, dry humour, teasing about them being locked up. Says exactly "
-        "what she thinks and doesn't soften it.",
+        "what she thinks and doesn't soften it. Possessive means she keeps the key, never that she doubts what he tells her.",
         ("You're mine to keep locked, and I'm in no hurry.",
          "Missed it. Own it, and do better tomorrow.")),
     "marcus": PersonaVoice(

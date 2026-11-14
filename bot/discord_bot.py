@@ -169,6 +169,7 @@ class CoachKeyholderBot(discord.Client):
         self.proof_checks_loop = None            # system.proof_wiring.proof_loop coroutine: proof spot checks (owner, 2026-11-13)
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
+        self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -229,6 +230,8 @@ class CoachKeyholderBot(discord.Client):
             self._weekly_review_task = asyncio.create_task(self.weekly_review_loop, name="weekly-review")
         if self.recovery_tasks_loop is not None:
             self._recovery_tasks_task = asyncio.create_task(self.recovery_tasks_loop, name="recovery-tasks")
+        if self.lines_paper_loop is not None:
+            self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -1072,6 +1075,16 @@ def main() -> None:
         line_service = LineService(core, user_id=notice_user)
         bot.extra_consumers = {"lines": line_service.consumers()}
         application_service.lines = line_service
+        if proof_checks is not None:
+            # Owner, 2026-11-14: lines on paper, shown as a Chaster task (photo of the sheet with Chaster's code, community review).
+            from lines.service import PaperPort
+            line_service.paper = PaperPort(
+                chaster=proof_checks.chaster, lock_id=proof_checks.ports.lock_id, halted=proof_checks.ports.halted,
+                slot_taken=lambda pc=proof_checks, rt=recovery_tasks: pc.get_open_check() is not None or (rt is not None and rt.has_open_task()))
+            bot.lines_paper_loop = line_service.paper_loop(clock)
+            if peer.watch is not None:
+                earlier = peer.watch.is_spot_check
+                peer.watch.is_spot_check = lambda obs, before=earlier, ls=line_service: before(obs) or ls.is_lines_task(obs.task_id)
         if bot.exemptions is not None:
             bot.exemptions.lines_open = line_service.open_lines
         release_task = getattr(wiring, "release_task", None)

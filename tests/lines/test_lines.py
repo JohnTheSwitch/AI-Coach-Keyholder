@@ -3,7 +3,7 @@ a release. A health need never waits."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from infrastructure.database import Database as CoreDatabase
@@ -141,3 +141,54 @@ def test_the_dm_counts_lines_before_any_model(tmp_path) -> None:
     reply = service.handle_message(_incoming("I use hygiene breaks only for hygiene.\nI use hygiene breaks only for hygiene.", now=FIXED_TIME))
     assert reply.text == "2 counted, 18 to go."
     assert WEARER  # the hygiene world's wearer id is imported for the helpers above
+
+
+class TestOnPaper:
+    """Owner, 2026-11-14: lines are handwritten and shown as a Chaster task; typing counts only after the slot stayed taken for 3 hours."""
+
+    def _paper(self, db, chaster, slot=False):
+        from lines.service import PaperPort
+        s = LineService(db, user_id=U)
+        s.paper = PaperPort(chaster=chaster, lock_id=lambda now: "lock", halted=lambda: False, slot_taken=lambda: slot)
+        return s
+
+    def test_a_sheet_is_assigned_verified_and_done(self, tmp_path) -> None:
+        from tests.recovery_tasks.test_recovery_tasks import FakeChaster
+        db, chaster = core(tmp_path), FakeChaster()
+        s = self._paper(db, chaster)
+        assign(s, db, "penalty_warning.recorded")
+        assert "by hand on paper" in rows(db, "SELECT text FROM notifications WHERE kind = 'lines'")[0]["text"]
+        s.paper_tick(NOW)
+        assert chaster.assigned == ["Show: 20 handwritten lines: I use hygiene breaks only for hygiene."]
+        assert s.is_lines_task("t1") and s.has_open_task()
+        s.paper_tick(NOW)                                                   # nothing submitted yet: still open
+        assert s.open_lines(U) == 20
+        chaster.entries["t1"] = {"createdAt": NOW.isoformat(), "peerVerification": {"status": "verified"}}
+        s.paper_tick(NOW)
+        assert s.open_lines(U) == 0 and len(rows(db, "SELECT 1 FROM domain_events WHERE event_type = 'lines.completed'")) == 1
+
+    def test_a_rejected_sheet_is_written_again(self, tmp_path) -> None:
+        from tests.recovery_tasks.test_recovery_tasks import FakeChaster
+        db, chaster = core(tmp_path), FakeChaster()
+        s = self._paper(db, chaster)
+        assign(s, db, "penalty_warning.recorded")
+        s.paper_tick(NOW)
+        chaster.entries["t1"] = {"createdAt": NOW.isoformat(), "peerVerification": {"status": "rejected"}}
+        chaster.current = None
+        s.paper_tick(NOW)
+        assert s.open_lines(U) == 20 and not s.has_open_task()
+        assert any("rejected" in r["text"] for r in rows(db, "SELECT text FROM notifications WHERE kind = 'lines'"))
+        s.paper_tick(NOW)
+        assert len(chaster.assigned) == 2
+
+    def test_typing_counts_only_after_the_slot_stayed_taken(self, tmp_path) -> None:
+        from tests.recovery_tasks.test_recovery_tasks import FakeChaster
+        db, chaster = core(tmp_path), FakeChaster()
+        s = self._paper(db, chaster, slot=True)
+        assign(s, db, "penalty_warning.recorded")
+        s.paper_tick(NOW)
+        assert chaster.assigned == []                                       # a spot check holds the slot
+        line = "I use hygiene breaks only for hygiene."
+        assert "Lines go on paper" in s.take(U, line, NOW).text and s.open_lines(U) == 20
+        assert s.take(U, "How are you?", NOW) is None
+        assert s.take(U, line, NOW + timedelta(hours=3)).text == "1 counted, 19 to go."

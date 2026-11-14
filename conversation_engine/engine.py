@@ -213,6 +213,7 @@ class ConversationEngine:
                         request, subject_key=subject_key, now=now, allow_side_data=allow_side_data, user_message=current_user_message)
                 else:
                     raw_text = self._model.generate(request=request)
+                raw_text = self._unrefused(raw_text, request)
             except LLMGenerationError as exc:
                 logger.warning(
                     "Conversation Engine generation failed",
@@ -252,6 +253,26 @@ class ConversationEngine:
                 self._commit_exchange(subject_key, current_user_message, response.text)
             self._observe(subject_key, now, started, path, "ok", structured_status, allow_side_data)
             return response
+
+    def _unrefused(self, raw_text: str, request: ModelGenerationRequest) -> str:
+        """Owner, 2026-11-14: a model refusal ("I can't engage in this conversation...") is never shown. One retry with a reinforced
+        instruction; refused again (or the retry fails), a fixed in-character line instead."""
+        from conversation_engine.refusals import CONTRACT_TRUTH, REFUSAL_FALLBACK, REFUSAL_RETRY, claims_fabricated_record, is_model_refusal
+        if claims_fabricated_record(raw_text):
+            logger.warning("The model claimed a signature or records that do not exist; replaced with the truth.", extra={"error_code": "fabricated_record"})
+            return CONTRACT_TRUTH
+        if not is_model_refusal(raw_text):
+            return raw_text
+        logger.warning("The model refused in character; retrying once with a reinforced instruction.", extra={"error_code": "model_refusal"})
+        try:
+            retry = self._model.generate(request=ModelGenerationRequest(messages=self._with_tool_guidance(request.messages, REFUSAL_RETRY),
+                                                                        max_output_characters=request.max_output_characters))
+        except LLMGenerationError:
+            retry = None
+        if retry and not is_model_refusal(retry):
+            return retry
+        logger.warning("The model refused again; the fixed in-character line is used.", extra={"error_code": "model_refusal_fallback"})
+        return REFUSAL_FALLBACK
 
     def _started(self) -> float | None:
         if self._runtime_sink is None:
