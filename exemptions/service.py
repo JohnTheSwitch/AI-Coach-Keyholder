@@ -548,6 +548,13 @@ class ExemptionService:
             except Exception:
                 logger.exception("An exemption could not be applied; retrying on the next pass.")
 
+    def wear_exemption_in_force(self, user_id: str) -> bool:
+        """A real wear exemption (not a hygiene opening) is in force. Owner, 2026-11-14: no obedience tasks during one; a hygiene opening
+        must not cancel a task, or asking for one would be a way out of it."""
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND status = 'approved' AND kind = 'exemption'",
+                                (user_id,)) is not None
+
     def in_force(self, user_id: str) -> str | None:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT id FROM wear_exemptions WHERE user_id = ? AND status = 'approved'", (user_id,))

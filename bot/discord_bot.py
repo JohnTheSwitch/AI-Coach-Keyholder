@@ -170,6 +170,7 @@ class CoachKeyholderBot(discord.Client):
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
         self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
+        self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -232,6 +233,8 @@ class CoachKeyholderBot(discord.Client):
             self._recovery_tasks_task = asyncio.create_task(self.recovery_tasks_loop, name="recovery-tasks")
         if self.lines_paper_loop is not None:
             self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
+        if self.obedience_loop is not None:
+            self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -1018,6 +1021,20 @@ def main() -> None:
         if peer.watch is not None:
             peer.watch.is_spot_check = (lambda obs, checks=proof_checks, rec=recovery_tasks:
                                         checks.is_check_task(obs.task_id) or rec.is_recovery_task(obs.task_id))
+    # Daily obedience tasks (owner, 2026-11-14; work queue Q4b): one erotic / BDSM or workout task a day in free time, shown in Chaster.
+    from system.obedience_wiring import build_obedience
+    obedience_notes: list[str] = []
+    obedience = build_obedience(config, core, proof_checks=proof_checks, signals=detectors.signals, window_cfg=window_config_from(config), exemptions=bot.exemptions,
+                                notes=obedience_notes)
+    for note in obedience_notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if obedience is not None:
+        from system.dm_actions import ObedienceDm
+        bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
+        bot.obedience_loop = obedience.loop(clock)
+        if peer.watch is not None:
+            before_obedience = peer.watch.is_spot_check
+            peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)
     # Weekly review (owner, 2026-11-13; roadmap slice 5): Sunday 19:00 local, the week in plain facts, written by code.
     from system.weekly_review_wiring import build_weekly_review
     weekly_notes: list[str] = []
@@ -1085,7 +1102,9 @@ def main() -> None:
             from lines.service import PaperPort
             line_service.paper = PaperPort(
                 chaster=proof_checks.chaster, lock_id=proof_checks.ports.lock_id, halted=proof_checks.ports.halted,
-                slot_taken=lambda pc=proof_checks, rt=recovery_tasks: pc.get_open_check() is not None or (rt is not None and rt.has_open_task()))
+                slot_taken=lambda pc=proof_checks, rt=recovery_tasks, ob=obedience: (
+                    pc.get_open_check() is not None or (rt is not None and rt.has_open_task())
+                    or (ob is not None and (ob.has_open_task() or ob.due_now(clock.now())))))
             bot.lines_paper_loop = line_service.paper_loop(clock)
             if peer.watch is not None:
                 earlier = peer.watch.is_spot_check
