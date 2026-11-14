@@ -228,3 +228,32 @@ class TestVariety:
                        "VALUES ('b', ?, '2026-10-05', 'plug:bijou_large', 't', ?, 'cancelled', ?, 'health_or_safety', '2026-10-05T10:00:00Z')",
                        (U, MORNING.isoformat(), MORNING.isoformat()))
         assert w.tasks.ladder_task().key == "plug:deep_diver"
+
+
+class TestNotAlone:
+    """Owner, 2026-11-14: he does not live alone. One postponement of up to 2 hours, then the task is done or it fails."""
+
+    def test_one_postponement_then_no_more(self, tmp_path) -> None:
+        from obedience.service import POSTPONE
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        w.tasks.tick(due)
+        with w.core.transaction() as tx:
+            note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE kind = 'obedience_task'")
+        assert "door closed" in note["text"] and "Not alone right now" in note["actions_json"]
+        at = due + timedelta(minutes=10)
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=at).startswith("Postponed once.")
+        assert w.row()["deadline"].startswith((at + POSTPONE).isoformat()[:16].replace("+00:00", ""))
+        assert "already postponed" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=at)
+        w.tasks.tick(due + PHOTO_DEADLINE + timedelta(minutes=5))           # the old deadline passes: still open
+        assert w.row()["status"] == "assigned" and w.failures == []
+        w.tasks.tick(at + POSTPONE + timedelta(minutes=5))
+        assert (w.row()["status"], w.failures) == ("failed", ["missed"])
+
+    def test_no_postponement_past_free_time(self, tmp_path) -> None:
+        w = World(tmp_path, free=lambda at: 8 <= at.hour < 21)
+        w.tasks.tick(MORNING)
+        w.tasks.tick(w.due())
+        late = w.due().replace(hour=20, minute=0)
+        assert "past your free time" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=late)

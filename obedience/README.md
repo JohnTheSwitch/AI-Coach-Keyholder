@@ -38,3 +38,8 @@ from his home gym; heavy lifts never with a plug.
 **Plug-training rules from research (2026-11-14):** warm up on the size below; short sessions that grow slowly (20 -> 60 minutes);
 water-based lube on silicone (Deep Diver) and PVC (Plug & Joy, Rimfire); never numbing lube; never overnight (tasks only run in free time);
 stop at pain or bleeding, and a plug task cancelled for health sends the next one a rung back down.
+
+**He does not live alone (owner, 2026-11-14; migration 070).** Every task message says: in your room with the door closed, quiet, nothing
+left lying around or visible afterwards. "Not alone right now (+2 h, once)" moves the photo deadline to 2 hours from the press, once per
+task and never past free time; after that the task is done or it fails. No gag task, no loud toy; the collar (when he has one) only inside
+a task.

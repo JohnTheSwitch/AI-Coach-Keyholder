@@ -53,6 +53,8 @@ VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
 WORKOUT_SHARE = 0.25                     # about one day in four is a workout task (owner, 2026-11-14)
 PLAN_STEP = timedelta(minutes=15)
+POSTPONE = timedelta(hours=2)            # "Not alone right now": once per task (owner, 2026-11-14: he does not live alone)
+DISCRETION = "Do it in your room with the door closed, keep it quiet, and leave nothing lying around or visible afterwards."
 SAFETY = ("Stop at once if anything hurts, bleeds, goes numb or feels wrong; that never counts against you. Never numbing lube, never "
           "overnight.")
 
@@ -307,8 +309,9 @@ class ObedienceTasks:
                                             payload={"obedience_task_id": row["id"], "catalog_key": row["catalog_key"]}))
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}", now=now, immediate=True,
                                        text=(f"Your task for today is in Chaster now:\n{row['text']}\nPhoto with Chaster's code by "
-                                             f"{self._ports.local_clock(deadline)}. {SAFETY}"),
-                                       actions=(ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"),))
+                                             f"{self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}"),
+                                       actions=(ActionSpec(action_id=f"obedience:later:{row['id']}", label="Not alone right now (+2 h, once)"),
+                                                ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)")))
             return bool(done)
 
         if apply_transition(self._core, write=write):
@@ -370,10 +373,12 @@ class ObedienceTasks:
         row = self._row(row_id)
         if row is None or row["user_id"] != user_id:
             return "That isn't yours to decide."
-        if action != "cannot":
+        if action not in ("cannot", "later"):
             return "That isn't one of the options."
         if row["status"] not in ("planned", "assigned", "submitted"):
             return "That task is already decided."
+        if action == "later":
+            return self._postpone(row, now)
         try:
             if row["task_id"] and not self._ports.halted():
                 current = self._chaster.current_task(row["lock_id"])
@@ -384,6 +389,29 @@ class ObedienceTasks:
         self._close(row, "cancelled", "health_or_safety", now)
         decision("obedience", "An obedience task was cancelled for health or safety; no consequence.", task=row["catalog_key"])
         return "Cancelled, no consequence. Look after yourself first."
+
+    def _postpone(self, row: dict, now: datetime) -> str:
+        """Once per task: the photo deadline moves to POSTPONE from now. A second press, or one after a photo was sent, changes nothing."""
+        if row["postponed_at"]:
+            return "You already postponed this one. Do it now, or it counts as missed."
+        if row["status"] != "assigned" or not row["deadline"]:
+            return "This task can't be postponed now."
+        deadline = now + POSTPONE
+        if not self._ports.free_time(deadline):
+            return "Postponing would push it past your free time. Do it now, or it counts as missed."
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET deadline = ?, postponed_at = ? WHERE id = ? AND status = 'assigned' AND postponed_at IS NULL",
+                              (_iso(deadline), _iso(now), row["id"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.task_postponed", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"], "deadline": _iso(deadline)}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return "You already postponed this one. Do it now, or it counts as missed."
+        decision("obedience", "An obedience task was postponed once (not alone).", task=row["catalog_key"], deadline=_iso(deadline))
+        return f"Postponed once. The photo is now due by {self._ports.local_clock(deadline)}, and there's no second postponement."
 
     # ------------------------------------------------------------------ reads
 
