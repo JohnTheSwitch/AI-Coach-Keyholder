@@ -132,6 +132,7 @@ class TenantLoopSupervisor:
             except Exception:
                 logger.exception("A cycle of tenant %s failed; will retry next interval.", runtime.tenant_id)
             await self._poll_chat(runtime)
+            await self._deliver_notifications(runtime)
             await asyncio.sleep(self._interval)
 
     async def _poll_chat(self, runtime: TenantRuntime) -> None:
@@ -150,6 +151,19 @@ class TenantLoopSupervisor:
             raise
         except Exception:
             logger.exception("Chaster chat polling of tenant %s failed.", runtime.tenant_id)
+
+    async def _deliver_notifications(self, runtime: TenantRuntime) -> None:
+        """Parity 3: the tenant's own notification queue, delivered once per cycle (so it inherits the stagger). Nothing goes out for a tenant
+        that is no longer managed, and a failure stays in this tenant."""
+        dispatcher = getattr(runtime, "notifications", None)
+        if dispatcher is None or not self._registry.is_managed(runtime.tenant_id):
+            return
+        try:
+            await dispatcher.run_once(runtime.clock.now())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Delivering the notices of tenant %s failed.", runtime.tenant_id)
 
     async def _stop(self, tenant_id: str) -> None:
         task = self._tasks.pop(tenant_id, None)

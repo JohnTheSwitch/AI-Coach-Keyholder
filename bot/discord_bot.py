@@ -833,7 +833,10 @@ def main() -> None:
             keyholder_connections=chaster_connections, keyholder_token_manager=essential_tokens or chaster_token_manager,
             platform_halt=platform.halt, keyholder_background_tokens=background_tokens,
             chat_enabled=config.enable_chaster_messaging, conversation_client=chat_client,
-            check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete)
+            check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete,
+            notification_delivery_factory=lambda wearer_id, discord_id: NotificationDelivery(
+                discord=discord_adapter, discord_id_for=lambda user_id, w=wearer_id, d=discord_id: d if user_id == w else None,
+                embed_for=_build_discord_embed, view_for=actions_view))
         bot.tenant_supervisor = TenantLoopSupervisor(
             registry=platform.registry, factory=TenantFactory(registry=platform.registry, shared=shared, tenant_dir=platform.tenant_dir),
             interval_seconds=config.chaster_execution_interval_seconds,

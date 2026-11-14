@@ -81,6 +81,10 @@ class SharedServices:
     keyholder_background_tokens: object | None = None
     chat_enabled: bool = False
     conversation_client: object | None = None
+    # Multi-wearer parity 3 (owner, 2026-11-13): (wearer user id, Discord id) -> an async `deliver(notification)` that reaches ONLY that wearer's
+    # Discord DM. With it each tenant gets its own notification queue (its own database) and its notices go through it: penalty notices, check-in
+    # warnings and release notices, with retries and the wearer's own quiet hours.
+    notification_delivery_factory: Callable[[str, str], Callable] | None = None
 
 
 @dataclass
@@ -96,6 +100,8 @@ class TenantRuntime:
     notes: list[str] = field(default_factory=list)
     chat_poller: object | None = None                 # messaging.chaster_poller.ChasterConversationPoller over THIS tenant's database
     chat_adapter: object | None = None
+    notifications: object | None = None               # notifications.dispatcher.NotificationDispatcher over THIS tenant's queue (parity 3)
+    penalty_notices: dict | None = None               # system.penalty_notices handlers for THIS tenant's wearer (parity 3)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
         """The tenant's own application entry (the Discord routing of E3 calls it). It never sees another tenant's data."""
@@ -106,7 +112,7 @@ class TenantRuntime:
         w = self.wiring
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
-            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry)
+            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry, penalty_notices=self.penalty_notices)
 
 
 def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
@@ -228,11 +234,14 @@ class TenantFactory:
             keyholder_connections=s.keyholder_connections, lock_client=s.lock_client, clock=s.clock,
             wearer_tokens=tokens, wearer_connections=connections)
         sender = s.check_in_sender_factory(path, core) if s.check_in_sender_factory is not None else None
+        queue = dispatcher = None
+        if s.notification_delivery_factory is not None:
+            queue, dispatcher = self._notifications(path, core, cfg, wearer.id, tenant.discord_id)
         wiring = build_rules_and_execution(
             cfg, core, connections=connections, oauth_client=s.oauth_client, lock_client=s.lock_client, token_manager=tokens,
             clock=s.clock, check_in_sender=sender, check_in_complete=s.check_in_complete,
             keyholder_connections=s.keyholder_connections, keyholder_token_manager=s.keyholder_token_manager, halt_source=s.platform_halt,
-            observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET, telemetry_tenant_id=tenant.id)
+            observation_source=source, telemetry_consent_target=TENANT_CONSENT_TARGET, telemetry_tenant_id=tenant.id, notifications=queue)
         if wiring.release_engine is not None:
             providers = providers + (ReleasePhaseContextProvider(get_phase=wiring.release_phase),)
         providers = providers + (IronContractContextProvider(is_locked=wiring.iron_contract.locked_for_context),)
@@ -256,11 +265,37 @@ class TenantFactory:
             telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
+        if dispatcher is not None:
+            from system.penalty_notices import penalty_notice_handlers
+            runtime.notifications, runtime.penalty_notices = dispatcher, penalty_notice_handlers(wearer.id)
         if chat:
             chat[3]["service"] = service
             runtime.chat_adapter, runtime.chat_poller = chat[1], chat[2]
         logger.info("Tenant %s is ready (%d note(s)).", tenant.id, len(runtime.notes))
         return runtime
+
+    # ------------------------------------------------------------------ parity 3: the tenant's own notification queue
+
+    def _notifications(self, path: Path, core: CoreDatabase, cfg, wearer_id: str, discord_id: str):
+        """(queue, dispatcher) over THIS tenant's database. Delivery reaches only this tenant's wearer (any other user id is undeliverable), and
+        routine notices wait for the end of the wearer's own quiet hours (an unreadable layout holds them, like the owner's)."""
+        from notifications.dispatcher import NotificationDispatcher
+        from notifications.queue import NotificationQueue
+        from schedule_windows.windows import WindowKind, classify
+        from system.composition import window_config_from
+
+        try:
+            windows = window_config_from(cfg)
+        except ValueError:
+            windows = None
+
+        def is_quiet(now) -> bool:
+            if windows is None:
+                raise ValueError("no valid quiet hours")
+            return classify(windows, now) is WindowKind.QUIET
+
+        queue = NotificationQueue(path, core=core)
+        return queue, NotificationDispatcher(queue, deliver=self._shared.notification_delivery_factory(wearer_id, discord_id), is_quiet=is_quiet)
 
     # ------------------------------------------------------------------ Phase E5: per-tenant Chaster chat
 

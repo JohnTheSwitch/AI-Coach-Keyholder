@@ -214,7 +214,7 @@ def build_exemption_opening(config, core, *, token_manager, lock_client, halt_so
 
 
 def _warning_notifier(notifications, sender, user_id: str, clock: Clock | None):
-    """`notify(text) -> accepted`. With the queue, "accepted" means durably queued, and the queue owns the retries; a tenant has no queue and sends directly."""
+    """`notify(text) -> accepted`. With the queue, "accepted" means durably queued, and the queue owns the retries; without one (a tenant before parity 3) it sends directly."""
     if notifications is None:
         return lambda text: sender.send(user_id=user_id, text=text) is SendOutcome.DELIVERED
     source = clock or SystemClock()

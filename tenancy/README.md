@@ -52,4 +52,10 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
    `wearer_locale`). `tenant_config` applies them over the owner's APP_TIMEZONE / HOLIDAY_COUNTRY, so quiet hours, the workday, check-in slots,
    the evaluated day and the release windows follow the wearer's clock; a change drops the runtime and the next reconcile rebuilds it. A setting
    never made falls back to the owner's. The welcome text after `accept` asks the wearer to set both first.
-3. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the notification queue, the confession handling.
+3. **The notification queue (done 2026-11-14).** Each additional wearer gets the owner's outbound queue over their OWN database
+   (`TenantFactory._notifications`): retries, the wearer's own quiet hours (an unreadable layout holds routine notices), and delivery that
+   reaches only that wearer's Discord DM (any other user id is undeliverable). The tenant loop delivers once per cycle, so it inherits the
+   stagger and stops the moment the tenant is no longer managed. Through it the wearer now gets what they never got before: penalty notices
+   (warning, window started / extended / resumed / ended), check-in warnings and release notices (immediate). Built first because the next
+   slices (exemptions, detector questions, photo check-ins) all speak through it.
+4. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the confession handling.
