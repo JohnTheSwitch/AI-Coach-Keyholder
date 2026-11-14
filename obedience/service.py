@@ -178,6 +178,8 @@ class Ports:
     slot_taken: Callable[[], bool]                         # an open spot check holds Chaster's one task slot
     raise_failure: Callable[[dict, str, datetime], None]   # (row, reason, now): the infractions path
     in_exemption: Callable[[], bool] = lambda: False       # a wear exemption is in force: no tasks (owner, 2026-11-14)
+    training: Callable[[date], object] | None = None       # Q4c: training.service.TrainingPlan.day_task (the plan's session, or None)
+    training_tick: Callable[[datetime], None] | None = None  # Q4c: the Monday question about the short session
 
 
 class ObedienceTasks:
@@ -194,6 +196,11 @@ class ObedienceTasks:
         if self._ports.in_exemption():
             self._cancel_open(now, "exemption")
             return
+        if self._ports.training_tick is not None:
+            try:
+                self._ports.training_tick(now)
+            except Exception:
+                logger.exception("The training plan's pass failed; tasks go on.")
         self._plan(now)
         self._start_due(now)
         self.poll(now)
@@ -209,13 +216,18 @@ class ObedienceTasks:
             at += PLAN_STEP
         if not moments:
             return
-        planned = self._rng.choice(moments)
-        task = self._pick(day)
+        training = self._ports.training(day) if self._ports.training is not None else None
+        if training is not None:
+            # Work queue Q4c: a training day's task is the plan's session, given at the start of free time so the whole evening is his.
+            planned, task, details = moments[0], Task(training.key, training.text, "workout"), training.details
+        else:
+            planned, task, details = self._rng.choice(moments), self._pick(day), None
         row_id = str(uuid.uuid4())
 
         def write(tx: Transaction, _s: object) -> None:
-            tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?, 'planned', ?)", (row_id, self.user_id, day.isoformat(), task.key, task.text, _iso(planned), _iso(now)))
+            tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, details) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?)",
+                       (row_id, self.user_id, day.isoformat(), task.key, task.text, _iso(planned), _iso(now), details))
 
         apply_transition(self._core, write=write)
         decision("obedience", "Today's obedience task was planned.", day=day.isoformat(), task=task.key, planned_at=_iso(planned))
@@ -300,6 +312,20 @@ class ObedienceTasks:
             return                                                      # tried again next pass
         task_id = self._chaster.assign(lock_id, row["text"][:200])
         deadline = now + PHOTO_DEADLINE
+        if row.get("details"):                                          # a training session: the log photo is due by the end of free time
+            at = now + PHOTO_DEADLINE
+            while self._ports.today(at + PLAN_STEP).isoformat() == row["local_date"] and self._ports.free_time(at + PLAN_STEP):
+                at += PLAN_STEP
+            deadline = at
+        if row.get("details"):
+            message = (f"Today's training:\n{row['details']}\nWhen you're done, in Chaster: {row['text']}\nDue by {self._ports.local_clock(deadline)}. "
+                       f"{SAFETY}")
+            actions = (ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"),)
+        else:
+            message = (f"Your task for today is in Chaster now:\n{row['text']}\nPhoto with Chaster's code by "
+                       f"{self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}")
+            actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Not alone right now (+2 h, once)"),
+                       ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE obedience_tasks SET status = 'assigned', lock_id = ?, task_id = ?, deadline = ? WHERE id = ? AND status = 'planned'",
@@ -308,10 +334,7 @@ class ObedienceTasks:
                 write_event(tx, DomainEvent(event_type="obedience.task_assigned", source_module="obedience", occurred_at=now,
                                             payload={"obedience_task_id": row["id"], "catalog_key": row["catalog_key"]}))
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}", now=now, immediate=True,
-                                       text=(f"Your task for today is in Chaster now:\n{row['text']}\nPhoto with Chaster's code by "
-                                             f"{self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}"),
-                                       actions=(ActionSpec(action_id=f"obedience:later:{row['id']}", label="Not alone right now (+2 h, once)"),
-                                                ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)")))
+                                       text=message, actions=actions)
             return bool(done)
 
         if apply_transition(self._core, write=write):
@@ -362,6 +385,10 @@ class ObedienceTasks:
         return 0
 
     def _fail(self, row: dict, reason: str, now: datetime) -> int:
+        if row["catalog_key"].startswith("training:short:"):             # Q4c: the short session is optional, missing it costs nothing
+            if self._close(row, "skipped", reason, now):
+                decision("obedience", "The optional short training session was skipped; no consequence.", task=row["catalog_key"])
+            return 1
         if self._close(row, "failed", reason, now):
             self._ports.raise_failure(row, reason, now)
             decision("obedience", "An obedience task failed; the wearer is asked to explain.", task=row["catalog_key"], reason=reason)

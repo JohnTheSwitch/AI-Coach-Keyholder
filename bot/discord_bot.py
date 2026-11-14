@@ -1032,6 +1032,11 @@ def main() -> None:
         from system.dm_actions import ObedienceDm
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
+        training_plan = getattr(obedience, "training", None)
+        if training_plan is not None:
+            from system.dm_actions import TrainingDm
+            bot.dm_actions["training"] = TrainingDm(training_plan, resolve_user=resolve_user, now=clock.now)
+            application_service.training_log = training_plan.log
         if peer.watch is not None:
             before_obedience = peer.watch.is_spot_check
             peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)

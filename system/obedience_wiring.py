@@ -39,10 +39,14 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                              facts=f"Task: {row['text']} Assigned; {reason}.",
                              window=(datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")), now))
 
+    from training.service import TrainingPlan
+    plan = TrainingPlan(core, user_id=user_id, free_time=free_time, today=p.today)
     tasks = ObedienceTasks(core, user_id=user_id, chaster=proof_checks.chaster,
                            ports=Ports(lock_id=p.lock_id, halted=p.halted, paused=p.paused, free_time=free_time, today=p.today,
                                        local_clock=p.local_clock, slot_taken=lambda: proof_checks.get_open_check() is not None,
                                        raise_failure=raise_failure,
-                                       in_exemption=(lambda: False) if exemptions is None else (lambda: exemptions.wear_exemption_in_force(user_id))))
+                                       in_exemption=(lambda: False) if exemptions is None else (lambda: exemptions.wear_exemption_in_force(user_id)),
+                                       training=plan.day_task, training_tick=plan.tick))
+    tasks.training = plan                                     # work queue Q4c: the bot wires its `log` and its Monday buttons
     notes.append("Daily obedience tasks are active: one a day at a random moment in free time, shown in Chaster.")
     return tasks

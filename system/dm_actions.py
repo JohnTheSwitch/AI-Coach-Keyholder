@@ -99,6 +99,21 @@ class HygieneDm:
         return OutgoingMessage(text="Noted. Take care of yourself; this never counts against anything." if action == "health" else "Noted, thank you.")
 
 
+class TrainingDm:
+    """The Monday buttons for the short training session (owner, 2026-11-15; Q4c): "Today" / "Thursday"."""
+
+    def __init__(self, plan, *, resolve_user: Callable[[str], str | None], now: Callable[[], datetime]) -> None:
+        self._plan = plan
+        self._resolve = resolve_user
+        self._now = now
+
+    def press(self, *, discord_user_id: str, action: str, ident: str) -> OutgoingMessage:
+        user = self._resolve(discord_user_id)
+        if user is None:
+            return _NOT_YOURS
+        return OutgoingMessage(text=self._plan.press(user_id=user, row_id=ident, action=action, now=self._now()))
+
+
 class ObedienceDm:
     """The wearer's one button on a daily obedience task (owner, 2026-11-14; Q4b): "I can't now (health or safety)"."""
 
