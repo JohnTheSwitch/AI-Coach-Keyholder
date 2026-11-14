@@ -183,7 +183,7 @@ def _render_task_text_field(value: object) -> str:
 
 def _render_active_task(data: object) -> str:
     if not data["has_active_task"]:
-        return "Active task: none."
+        return "Active task: none. He has no task right now; never tell him to finish or focus on one."
     title = _render_task_text_field(data.get("title"))
     instructions = _render_task_text_field(data.get("instructions"))
     return (

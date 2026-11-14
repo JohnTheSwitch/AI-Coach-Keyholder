@@ -120,6 +120,12 @@ class LineService:
             row = tx.fetch_one("SELECT COALESCE(SUM(required - done), 0) AS n FROM line_assignments WHERE user_id = ? AND status = 'open'", (user_id,))
         return int(row["n"])
 
+    def get_lines_between(self, start, end) -> list[dict]:
+        """Work queue Q4 (weekly review): assignments created on local dates start..end (UTC dates are close enough for a weekly count)."""
+        with self._core.transaction() as tx:
+            return [dict(r) for r in tx.fetch_all("SELECT required, done, status FROM line_assignments WHERE user_id = ? AND substr(created_at, 1, 10) "
+                                                  "BETWEEN ? AND ?", (self.user_id, start.isoformat(), end.isoformat()))]
+
     def get_open_assignments(self, user_id: str) -> list[dict]:
         with self._core.transaction() as tx:
             return [dict(r) for r in tx.fetch_all("SELECT id, sentence, required, done FROM line_assignments WHERE user_id = ? AND status = 'open' "

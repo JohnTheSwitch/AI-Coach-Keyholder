@@ -135,3 +135,19 @@ class TestCommands:
         assert self.say(service, "Weekly review off") == "The weekly review is off. `weekly review on` starts it again."
         assert "is off" in self.say(service, "weekly review")
         assert self.say(service, "weekly review on").startswith("The weekly review is on")
+
+
+def test_lines_and_recovery_tasks_in_the_week(tmp_path) -> None:
+    """Work queue Q4 (owner, 2026-11-14): the Sunday review shows lines and verified recovery tasks."""
+    from recovery_tasks.service import CREDIT_HOURS
+    from weekly_review.service import RECOVERY_HOURS
+    assert RECOVERY_HOURS == CREDIT_HOURS
+    w = World(tmp_path)
+    review = _review(w)
+    review.lines_between = lambda s, e: [{"required": 20, "done": 20}, {"required": 40, "done": 12}]
+    review.lines_owed = lambda: 28
+    review.recovery_between = lambda s, e: [{"status": "passed"}, {"status": "failed"}, {"status": "passed"}]
+    text = render_week(review.facts(MONDAY))
+    assert "Lines: 60 assigned, 32 done. 28 still owed." in text
+    assert "Recovery tasks verified: 2 (4 hours off your Penalty Window)." in text
+    assert "Lines:" not in render_week(_review(w).facts(MONDAY))

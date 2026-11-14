@@ -44,5 +44,16 @@ CONTRACT_TRUTH = ("Nobody signed anything. The Iron Contract comes with this app
                   "schedule or cancel a vacation, and I don't negotiate deadlines or excuses. Your health and safety always come first.")
 
 
+_NEGATION = re.compile(r"\b(?:not|no|never|nothing|nobody|don't|didn't|isn't|wasn't|haven't|hasn't|without|any)\b", re.IGNORECASE)
+
+
 def claims_fabricated_record(text: str | None) -> bool:
-    return bool(text) and _FABRICATED.search(text.replace("’", "'")) is not None
+    """A claim, not a denial: "you signed it" counts, "not something you signed" / "no record of a signed contract" does not."""
+    if not text:
+        return False
+    clean = text.replace("’", "'")
+    for match in _FABRICATED.finditer(clean):
+        before = clean[max(0, match.start() - 40):match.start()]
+        if not _NEGATION.search(before):
+            return True
+    return False

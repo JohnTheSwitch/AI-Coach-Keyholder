@@ -31,6 +31,7 @@ logger = logging.getLogger("ai_coach_keyholder.weekly_review")
 
 __all__ = ["WeeklyReview", "Ports", "WeekFacts", "render_week", "SEND_AT"]
 
+RECOVERY_HOURS = 2.0                                      # = recovery_tasks.service.CREDIT_HOURS (a test keeps them equal)
 SEND_AT = time(19, 0)                                     # owner, 2026-11-13 (roadmap slice 5): Sunday at 19:00 local
 OFF_HINT = "`weekly review off` stops this message."
 _STATUS_KEYS = {"kept": "kept", "partly": "partly", "not_kept": "not_kept", "lapsed": "unanswered", "open": "open"}
@@ -67,6 +68,11 @@ class WeekFacts:
     check_ins_ok: int = 0
     check_ins_due: int = 0
     tokens: int = 0
+    lines_assigned: int | None = None                     # work queue Q4 (owner, 2026-11-14): None when lines are not wired
+    lines_done: int = 0
+    lines_owed: int = 0
+    recovery_verified: int | None = None                  # None when recovery tasks are not wired
+    recovery_hours: float = 0.0
 
     @property
     def commitments(self) -> int:
@@ -118,6 +124,13 @@ def render_week(f: WeekFacts) -> str:
         lines.append(tokens)
     else:
         lines.append("Check-ins and tokens: no finished days to count yet.")
+    if f.lines_assigned is not None:
+        line = f"Lines: {f.lines_assigned} assigned, {f.lines_done} done."
+        if f.lines_owed:
+            line += f" {f.lines_owed} still owed."
+        lines.append(line)
+    if f.recovery_verified:
+        lines.append(f"Recovery tasks verified: {f.recovery_verified} ({f.recovery_hours:g} hours off your Penalty Window).")
     lines.append(f"Today is counted after midnight. {OFF_HINT}")
     return "\n".join(lines)
 
@@ -127,6 +140,9 @@ class WeeklyReview:
         self._core = core
         self.user_id = user_id
         self._ports = ports
+        self.lines_between: Callable[[date, date], list[dict]] | None = None       # Q4: lines.service.LineService.get_lines_between
+        self.lines_owed: Callable[[], int] | None = None
+        self.recovery_between: Callable[[date, date], list[dict]] | None = None    # Q4: recovery_tasks.service.RecoveryTasks.get_tasks_between
 
     # ------------------------------------------------------------------ the switch
 
@@ -179,6 +195,15 @@ class WeeklyReview:
         counts["check_ins_ok"] = sum(int(r.get("check_ins_ok") or 0) for r in active)
         counts["check_ins_due"] = sum(int(r.get("check_ins_due") or 0) for r in active)
         counts["tokens"] = sum(int(r.get("tokens_earned") or 0) for r in evaluations)
+        if self.lines_between is not None:
+            rows = self.lines_between(week_start, end)
+            counts["lines_assigned"] = sum(int(r.get("required") or 0) for r in rows)
+            counts["lines_done"] = sum(int(r.get("done") or 0) for r in rows)
+            counts["lines_owed"] = int(self.lines_owed()) if self.lines_owed is not None else 0
+        if self.recovery_between is not None:
+            passed = [r for r in self.recovery_between(week_start, end) if r.get("status") == "passed"]
+            counts["recovery_verified"] = len(passed)
+            counts["recovery_hours"] = float(len(passed) * RECOVERY_HOURS)
         return WeekFacts(start=week_start, end=end, **counts)
 
     # ------------------------------------------------------------------ Sunday evening

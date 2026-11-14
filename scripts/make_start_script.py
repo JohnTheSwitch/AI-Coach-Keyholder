@@ -9,7 +9,7 @@ purpose: in PowerShell it can hit the Windows App Execution Alias stub and exit 
     python -m scripts.make_start_script --python C:\\path\\to\\python.exe
 
 The generated launcher
-  - appends everything the bot prints (its log lines already carry timestamps) to `logsot.log`, plus its own timestamped
+  - appends everything the bot prints (its log lines already carry timestamps) to `logs\bot.log`, plus its own timestamped
     start / exit / restart lines;
   - restarts the bot after a crash (any non-zero exit code, e.g. a network drop at logon): it waits 10 seconds and tries again, at most
     MAX_RESTARTS times in total, then exits with the last exit code. A clean exit (code 0) is never restarted.

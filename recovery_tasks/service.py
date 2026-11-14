@@ -244,6 +244,12 @@ class RecoveryTasks:
         with self._core.transaction() as tx:
             return tx.fetch_one("SELECT 1 FROM recovery_chaster_tasks WHERE task_id = ?", (task_id,)) is not None
 
+    def get_tasks_between(self, start, end) -> list[dict]:
+        """Work queue Q4 (weekly review): tasks decided on dates start..end."""
+        with self._core.transaction() as tx:
+            return [dict(r) for r in tx.fetch_all("SELECT status, outcome FROM recovery_chaster_tasks WHERE user_id = ? AND decided_at IS NOT NULL "
+                                                  "AND substr(decided_at, 1, 10) BETWEEN ? AND ?", (self.user_id, start.isoformat(), end.isoformat()))]
+
     def has_open_task(self) -> bool:
         with self._core.transaction() as tx:
             return tx.fetch_one("SELECT 1 FROM recovery_chaster_tasks WHERE user_id = ? AND status IN ('assigned', 'submitted')",

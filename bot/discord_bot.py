@@ -1028,6 +1028,8 @@ def main() -> None:
     if weekly_review is not None:
         application_service.weekly_review = weekly_review
         bot.weekly_review_loop = weekly_review.loop(clock)
+        if recovery_tasks is not None:
+            weekly_review.recovery_between = recovery_tasks.get_tasks_between      # work queue Q4
     # Photo check-ins (owner, 2026-11-13): the submission times of the verification pictures on the connected account's locked locks.
     photo_account = config.chaster_execution_keyholder_user_id
     photo_tokens = background_tokens or chaster_token_manager
@@ -1075,6 +1077,9 @@ def main() -> None:
         line_service = LineService(core, user_id=notice_user)
         bot.extra_consumers = {"lines": line_service.consumers()}
         application_service.lines = line_service
+        if weekly_review is not None:
+            weekly_review.lines_between = line_service.get_lines_between           # work queue Q4
+            weekly_review.lines_owed = lambda u=notice_user: line_service.open_lines(u)
         if proof_checks is not None:
             # Owner, 2026-11-14: lines on paper, shown as a Chaster task (photo of the sheet with Chaster's code, community review).
             from lines.service import PaperPort

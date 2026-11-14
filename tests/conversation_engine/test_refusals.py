@@ -92,3 +92,14 @@ def test_a_claimed_signature_or_record_is_replaced(text) -> None:
 def test_ordinary_replies_pass(text) -> None:
     from conversation_engine.refusals import claims_fabricated_record
     assert not claims_fabricated_record(text) or text.startswith("Nobody")
+
+
+@pytest.mark.parametrize("text", ["The Iron Contract is part of this app's settings, not something you signed.",
+                                  "I don't have any record of a contract that you signed.", "I don't have any records of a signed contract."])
+def test_a_denial_is_not_a_fabrication(text) -> None:
+    from conversation_engine.refusals import claims_fabricated_record
+    assert not claims_fabricated_record(text)
+
+
+def test_no_task_unless_the_data_names_one() -> None:
+    assert 'never tell him to\n  finish, focus on or get back to "your task"' in build_guardrails()

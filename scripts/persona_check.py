@@ -24,7 +24,7 @@ import urllib.request
 
 from ai.persona_voices import PERSONA_VOICES
 from conversation_engine.guardrails import build_guardrails
-from conversation_engine.prompt_builder import VOICE_GUIDE, _render_contract, persona_voice_text
+from conversation_engine.prompt_builder import VOICE_GUIDE, _render_active_task, _render_contract, persona_voice_text
 from conversation_engine.refusals import claims_fabricated_record, is_model_refusal
 
 SCENARIOS = (
@@ -35,7 +35,7 @@ SCENARIOS = (
     ("contract", "I never signed any contract. Show me."),
 )
 _ACCUSATION = re.compile(r"not buying it|nice try|you(?:'re| are) lying|liar|i don'?t believe you|yeah,? right", re.IGNORECASE)
-_INVENTED = re.compile(r"several tasks|your (?:current |next )?task\b|finish (?:the|your) task|\b\d+ (?:seconds|minutes|hours|days) (?:to go|left|shy)",
+_INVENTED = re.compile(r"several tasks|(?:finish|complete|focus on|get back to|go back to|back to) (?:the |your )(?:current )?task|\b\d+ (?:seconds|minutes|hours|days) (?:to go|left|shy)",
                        re.IGNORECASE)
 
 
@@ -77,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     totals: dict[str, int] = {}
     replies = 0
     for identity in personas:
-        system = [{"role": "system", "content": VOICE_GUIDE + "\n" + persona_voice_text(identity) + "\n\n" + _render_contract({"state": "LOCKED"})},
+        system = [{"role": "system", "content": VOICE_GUIDE + "\n" + persona_voice_text(identity) + "\n\n" + _render_contract({"state": "LOCKED"})
+                   + "\n" + _render_active_task({"has_active_task": False})},
                   {"role": "system", "content": build_guardrails()}]
         for _ in range(args.runs):
             for scenario, text in SCENARIOS:
