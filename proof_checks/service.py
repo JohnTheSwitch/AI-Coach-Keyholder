@@ -293,6 +293,13 @@ class ProofChecks:
             row = tx.fetch_one(f"SELECT * FROM proof_checks WHERE user_id = ? AND status IN {_OPEN}", (self.user_id,))
         return None if row is None else dict(row)
 
+    def get_checks_between(self, start: date, end: date) -> list[dict]:
+        """Roadmap slice 5 (weekly review): the status of each spot check for `start`..`end` (local dates, inclusive). No commitment text."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT local_date, status, outcome FROM proof_checks WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+                                (self.user_id, start.isoformat(), end.isoformat()))
+        return [dict(r) for r in rows]
+
     def forget_all(self, user_id: str) -> int:
         def write(tx: Transaction, _s: object) -> int:
             return tx.execute("UPDATE proof_checks SET commitment_text = '' WHERE user_id = ?", (user_id,)).rowcount

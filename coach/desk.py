@@ -602,6 +602,13 @@ class CoachDesk:
                                 "AND report_timing IN ('timely', 'proven', 'checking') AND for_date >= ?", (self.user_id, since.isoformat()))
         return [dict(r) for r in rows if is_night_commitment(r["text"])]
 
+    def get_commitments_between(self, start: date, end: date) -> list[dict]:
+        """Roadmap slice 5 (weekly review): status and report timing of each commitment for `start`..`end` (inclusive). No text."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT for_date, status, report_timing FROM daily_commitments WHERE user_id = ? AND for_date BETWEEN ? AND ?",
+                                (self.user_id, start.isoformat(), end.isoformat()))
+        return [dict(r) for r in rows]
+
     def next_waking_start(self, day: date) -> datetime | None:
         """When quiet hours end on the morning after `day` (None without a time zone)."""
         waking = self._waking(day + timedelta(days=1))

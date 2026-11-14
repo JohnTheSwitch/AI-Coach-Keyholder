@@ -167,6 +167,7 @@ class CoachKeyholderBot(discord.Client):
         self.update_check = None                 # system.update_check.update_check_loop coroutine (owner, 2026-11-13)
         self.commitment_asks = None              # system.coach_dm.CoachDm.ask_loop coroutine: "Done?" when a commitment's time ends (owner, 2026-11-13)
         self.proof_checks_loop = None            # system.proof_wiring.proof_loop coroutine: proof spot checks (owner, 2026-11-13)
+        self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -221,6 +222,8 @@ class CoachKeyholderBot(discord.Client):
             self._commitment_ask_task = asyncio.create_task(self.commitment_asks, name="commitment-asks")
         if self.proof_checks_loop is not None:
             self._proof_task = asyncio.create_task(self.proof_checks_loop, name="proof-checks")
+        if self.weekly_review_loop is not None:
+            self._weekly_review_task = asyncio.create_task(self.weekly_review_loop, name="weekly-review")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -967,6 +970,16 @@ def main() -> None:
         bot.proof_checks_loop = proof_loop(proof_checks, clock)
         if peer.watch is not None:
             peer.watch.is_spot_check = lambda obs, checks=proof_checks: checks.is_check_task(obs.task_id)
+    # Weekly review (owner, 2026-11-13; roadmap slice 5): Sunday 19:00 local, the week in plain facts, written by code.
+    from system.weekly_review_wiring import build_weekly_review
+    weekly_notes: list[str] = []
+    weekly_review = build_weekly_review(core, coach_dm=coach_dm, proof_checks=proof_checks, vacation=wiring.vacation,
+                                        window_cfg=window_config_from(config), notes=weekly_notes)
+    for note in weekly_notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if weekly_review is not None:
+        application_service.weekly_review = weekly_review
+        bot.weekly_review_loop = weekly_review.loop(clock)
     # Photo check-ins (owner, 2026-11-13): the submission times of the verification pictures on the connected account's locked locks.
     photo_account = config.chaster_execution_keyholder_user_id
     photo_tokens = background_tokens or chaster_token_manager

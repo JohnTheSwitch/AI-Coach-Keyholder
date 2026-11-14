@@ -44,7 +44,7 @@ from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.system.daily_evaluation")
 
-__all__ = ["DailyEvaluationTask", "DayFacts", "MAX_CATCH_UP_DAYS"]
+__all__ = ["DailyEvaluationTask", "DayFacts", "MAX_CATCH_UP_DAYS", "get_daily_evaluations"]
 
 MAX_CATCH_UP_DAYS = 7
 _CHECK_IN_CONCLUDED = ("answered", "answered_uncertain", "insufficient", "missed")
@@ -60,6 +60,14 @@ class DayFacts:
     check_ins_ok: int
     violations: int
     any_violations: int = 0     # confirmed incidents of the day in ANY domain (still without the repeated-misses one): no pool progress
+
+
+def get_daily_evaluations(core: CoreDatabase, user_id: str, start: date, end: date) -> list[dict]:
+    """Roadmap slice 5 (weekly review): the stored evaluations of `start`..`end` (local dates, inclusive), oldest first. Read-only."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT local_date, check_ins_due, check_ins_ok, tokens_earned, progress, paused FROM daily_evaluations "
+                            "WHERE user_id = ? AND local_date BETWEEN ? AND ? ORDER BY local_date", (user_id, start.isoformat(), end.isoformat()))
+    return [dict(r) for r in rows]
 
 
 class DailyEvaluationTask:

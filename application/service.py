@@ -117,6 +117,7 @@ CHECK_IN_RECEIVED_WITHOUT_MODEL = "Got your check-in answer, it's recorded. I ca
 # saved to memory the wrong way round ("without edging"). On a turn that reads as owning up, the model gets this note as the last thing before the
 # message, the turn is plain (no goal proposal, nothing saved to memory) and the card under the reply is what records it.
 PHOTO_UNAVAILABLE = "Photo check-ins are not available on this bot."
+WEEKLY_UNAVAILABLE = "The weekly review is not available on this bot."
 PHOTO_ON = ("Photo check-ins are on. Now and then, at a random moment in your free time, I'll ask for a verification picture in Chaster, "
             "with 2 hours to take it. The picture stays on Chaster and its community review; I only see that it arrived. No picture by the "
             "deadline counts as a missed check-in. How often depends on how reliably you keep to things: fewer as you do. `photo check-ins off` stops them any time.")
@@ -179,6 +180,8 @@ class ApplicationService:
         self.self_reports = None
         # Photo check-ins (owner, 2026-11-13): supervision.photo_check_ins.PhotoCheckInSwitch, set by the bot when they can work at all.
         self.photo_check_ins = None
+        # Weekly review (roadmap slice 5): weekly_review.service.WeeklyReview, set by the bot when the coach is active.
+        self.weekly_review = None
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
         # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
@@ -514,6 +517,9 @@ class ApplicationService:
         self.router.register("photo check-ins on", "Agree to photo check-ins: now and then a verification picture in Chaster", self._handle_photo_on)
         self.router.register("photo check-ins off", "Stop photo check-ins (an open one never counts as missed)", self._handle_photo_off)
         self.router.register_family("conditioning", invalid_handler=self._handle_conditioning_status)
+        self.router.register("weekly review", "Show whether the Sunday evening review of your week is on", self._handle_weekly_status)
+        self.router.register("weekly review on", "Get the review of your week on Sunday evening", self._handle_weekly_on)
+        self.router.register("weekly review off", "Stop the Sunday evening review of your week", self._handle_weekly_off)
 
         self.router.register("channel status", "Show where the bot sends its messages (Discord or Chaster chat)", self._handle_channel_status)
         self.router.register("channel discord", "Send the bot's messages to Discord (the default)", self._handle_channel_discord)
@@ -1309,6 +1315,32 @@ class ApplicationService:
             return OutgoingMessage(text=PHOTO_UNAVAILABLE)
         switch.consent.set(ctx.user.id, False, now=ctx.now)
         return OutgoingMessage(text="Photo check-ins are off. An open one is closed and never counts as missed.")
+
+    def _weekly(self, ctx: RequestContext):
+        review = self.weekly_review
+        return review if review is not None and review.user_id == ctx.user.id else None
+
+    def _handle_weekly_status(self, ctx: RequestContext) -> OutgoingMessage:
+        review = self._weekly(ctx)
+        if review is None:
+            return OutgoingMessage(text=WEEKLY_UNAVAILABLE)
+        if review.is_on(ctx.user.id):
+            return OutgoingMessage(text="The weekly review is on: Sunday at 19:00, your week in plain numbers. `weekly review off` stops it.")
+        return OutgoingMessage(text="The weekly review is off. `weekly review on` starts it again.")
+
+    def _handle_weekly_on(self, ctx: RequestContext) -> OutgoingMessage:
+        review = self._weekly(ctx)
+        if review is None:
+            return OutgoingMessage(text=WEEKLY_UNAVAILABLE)
+        review.set(ctx.user.id, True, now=ctx.now)
+        return OutgoingMessage(text="The weekly review is on: Sunday at 19:00, your week in plain numbers.")
+
+    def _handle_weekly_off(self, ctx: RequestContext) -> OutgoingMessage:
+        review = self._weekly(ctx)
+        if review is None:
+            return OutgoingMessage(text=WEEKLY_UNAVAILABLE)
+        review.set(ctx.user.id, False, now=ctx.now)
+        return OutgoingMessage(text="The weekly review is off. `weekly review on` starts it again.")
 
     def _handle_conditioning_on(self, ctx: RequestContext) -> OutgoingMessage:
         if self._conditioning is None:
