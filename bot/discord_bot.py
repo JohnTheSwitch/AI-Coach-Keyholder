@@ -1096,6 +1096,11 @@ def main() -> None:
                                    bot.exemptions, detectors.signals)):
         bot.periodic = (core, wiring.rules_engine, wiring.executor, config.chaster_execution_interval_seconds,
                         wiring.supervision, wiring.release_task, wiring.check_ins, wiring.daily, wiring.telemetry)
+    if platform is not None and bot.tenant_supervisor is not None:
+        # Owner, 2026-11-14: a DM button pressed by an additional wearer goes to THAT wearer's runtime, never to the owner's facade.
+        from system.tenant_dm_actions import TenantAwareActions
+        from tenancy.router import TenantRouter
+        bot.dm_actions = TenantAwareActions(bot.dm_actions, router=TenantRouter(platform.registry), supervisor=bot.tenant_supervisor)
     bot.run(config.discord_token, log_handler=None)
 
 

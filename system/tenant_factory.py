@@ -102,6 +102,7 @@ class TenantRuntime:
     chat_adapter: object | None = None
     notifications: object | None = None               # notifications.dispatcher.NotificationDispatcher over THIS tenant's queue (parity 3)
     penalty_notices: dict | None = None               # system.penalty_notices handlers for THIS tenant's wearer (parity 3)
+    dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
         """The tenant's own application entry (the Discord routing of E3 calls it). It never sees another tenant's data."""

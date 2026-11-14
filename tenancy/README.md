@@ -58,4 +58,7 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
    stagger and stops the moment the tenant is no longer managed. Through it the wearer now gets what they never got before: penalty notices
    (warning, window started / extended / resumed / ended), check-in warnings and release notices (immediate). Built first because the next
    slices (exemptions, detector questions, photo check-ins) all speak through it.
-4. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the confession handling.
+4. **Buttons for additional wearers (done 2026-11-14).** The gateway now carries a reply's buttons and follow-up cards (before, with
+   multi-wearer on, every button was dropped, the owner's too), and a DM button pressed by an additional wearer goes to the facade of the
+   same scope in that wearer's runtime (`system/tenant_dm_actions.py`, `TenantRuntime.dm_actions`), never to the owner's.
+5. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the confession handling.
