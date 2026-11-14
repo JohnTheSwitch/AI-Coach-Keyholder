@@ -70,11 +70,12 @@ def active_hours_elapsed(window: PenaltyWindow, now: datetime) -> float:
 
 
 def is_complete(window: PenaltyWindow, now: datetime) -> bool:
-    """ACTIVE -> COMPLETED guard (2.2): is_complete(now) == True."""
-    return active_hours_elapsed(window, now) >= target_active_hours(window)
+    """ACTIVE -> COMPLETED guard (2.2): is_complete(now) == True. Recovery Credits count against the assigned active duration
+    (philosophy 3.4; owner, 2026-11-14: until then they were recorded but never shortened a window)."""
+    return active_hours_elapsed(window, now) + window.recovery_credits_earned_hours >= target_active_hours(window)
 
 
 def remaining_active_hours(window: PenaltyWindow, now: datetime) -> float:
     """Never negative -- a window that has already reached its target
-    reports zero remaining, not a negative number."""
-    return max(0.0, target_active_hours(window) - active_hours_elapsed(window, now))
+    reports zero remaining, not a negative number. Earned Recovery Credits count against it (3.4)."""
+    return max(0.0, target_active_hours(window) - active_hours_elapsed(window, now) - window.recovery_credits_earned_hours)

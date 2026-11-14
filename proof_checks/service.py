@@ -111,6 +111,15 @@ class ProofChecks:
         self._rng = rng
         self.contradictions = None          # proof_checks.contradictions.BedtimeContradictions, set by the wiring (slice 4)
 
+    @property
+    def chaster(self):
+        """The Chaster tasks port, shared with the verified recovery tasks (brat taming B3): one lock, one task slot."""
+        return self._chaster
+
+    @property
+    def ports(self) -> Ports:
+        return self._ports
+
     # ------------------------------------------------------------------ select (from the coach desk)
 
     def select(self, commitment_id: str, text: str, now: datetime) -> bool:

@@ -99,6 +99,23 @@ class HygieneDm:
         return OutgoingMessage(text="Noted. Take care of yourself; this never counts against anything." if action == "health" else "Noted, thank you.")
 
 
+class RecoveryDm:
+    """The wearer's two buttons on a recovery task offer (owner, 2026-11-14; brat taming B3): "Take it" and "Not now"."""
+
+    def __init__(self, tasks, *, resolve_user: Callable[[str], str | None], now: Callable[[], datetime]) -> None:
+        self._tasks = tasks
+        self._resolve = resolve_user
+        self._now = now
+
+    def press(self, *, discord_user_id: str, action: str, ident: str) -> OutgoingMessage:
+        user = self._resolve(discord_user_id)
+        if user is None:
+            return _NOT_YOURS
+        if action not in ("take", "skip"):
+            return OutgoingMessage(text="That isn't one of the options.")
+        return OutgoingMessage(text=self._tasks.press(user_id=user, row_id=ident, action=action, now=self._now()))
+
+
 class ProofDm:
     """The wearer's two buttons on a spot check (owner, 2026-11-13): "I can't show it now" and "I didn't actually do it"."""
 

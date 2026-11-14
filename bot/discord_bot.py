@@ -168,6 +168,7 @@ class CoachKeyholderBot(discord.Client):
         self.commitment_asks = None              # system.coach_dm.CoachDm.ask_loop coroutine: "Done?" when a commitment's time ends (owner, 2026-11-13)
         self.proof_checks_loop = None            # system.proof_wiring.proof_loop coroutine: proof spot checks (owner, 2026-11-13)
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
+        self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
         self.exemptions = None                   # exemptions.service.ExemptionService, ticked by the periodic cycle
@@ -226,6 +227,8 @@ class CoachKeyholderBot(discord.Client):
             self._proof_task = asyncio.create_task(self.proof_checks_loop, name="proof-checks")
         if self.weekly_review_loop is not None:
             self._weekly_review_task = asyncio.create_task(self.weekly_review_loop, name="weekly-review")
+        if self.recovery_tasks_loop is not None:
+            self._recovery_tasks_task = asyncio.create_task(self.recovery_tasks_loop, name="recovery-tasks")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -986,6 +989,19 @@ def main() -> None:
         bot.proof_checks_loop = proof_loop(proof_checks, clock)
         if peer.watch is not None:
             peer.watch.is_spot_check = lambda obs, checks=proof_checks: checks.is_check_task(obs.task_id)
+    # Verified recovery tasks (owner, 2026-11-14; brat taming B3): a chore shown in Chaster earns 2 hours off a Penalty Window.
+    from system.recovery_wiring import build_recovery_tasks, recovery_loop
+    recovery_notes: list[str] = []
+    recovery_tasks = build_recovery_tasks(core, proof_checks=proof_checks, window_cfg=window_config_from(config), notes=recovery_notes)
+    for note in recovery_notes:
+        (logger.warning if "NOT active" in note else logger.info)(note)
+    if recovery_tasks is not None:
+        from system.dm_actions import RecoveryDm
+        bot.dm_actions["recovery"] = RecoveryDm(recovery_tasks, resolve_user=resolve_user, now=clock.now)
+        bot.recovery_tasks_loop = recovery_loop(recovery_tasks, clock)
+        if peer.watch is not None:
+            peer.watch.is_spot_check = (lambda obs, checks=proof_checks, rec=recovery_tasks:
+                                        checks.is_check_task(obs.task_id) or rec.is_recovery_task(obs.task_id))
     # Weekly review (owner, 2026-11-13; roadmap slice 5): Sunday 19:00 local, the week in plain facts, written by code.
     from system.weekly_review_wiring import build_weekly_review
     weekly_notes: list[str] = []

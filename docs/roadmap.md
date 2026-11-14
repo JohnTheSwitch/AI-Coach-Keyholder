@@ -26,8 +26,8 @@ Chosen from the proposal built on the owner's own chat history (edging during a 
 |---|---|---|
 | B1 | **Hygiene relock picture** (done 2026-11-14) | On the owner's lock only, while hygiene Trust is below 0.70 every hygiene opening ends with a verification picture; at 0.70 or above it switches off by itself. Never on another wearer's lock |
 | B2 | **Lines** (done 2026-11-14) | Every confirmed incident: 20 lines for a Warning-level incident, 40 for one that opens or extends a Penalty Window; the sentence matches the rule broken; typed in the bot DM and counted exactly by code (no model). While lines are open, the next planned hygiene break waits; health access is never blocked |
-| B3 | **Verified recovery tasks** | During a Penalty Window, a Chaster task with photo and code, community-checked like a spot check; each passed task takes 2 hours off the window (Recovery Credit, philosophy 3.4); one at a time (a spot check goes first) |
-| B4 | **Release debt** (open lines done 2026-11-14; recovery tasks join with B3) (from the core-mcp README, `Downloads/README2.md`, owner 2026-11-14) | Consequences still owed (open lines, later open recovery tasks) must be paid before a token can be spent on a release; the release waits, nothing is lost. Not chosen from the same README: "loosening is hard", the random rule check, capped time-adding |
+| B3 | **Verified recovery tasks** (done 2026-11-14) | During a Penalty Window, a Chaster task with photo and code, community-checked like a spot check; each passed task takes 2 hours off the window (Recovery Credit, philosophy 3.4); one at a time (a spot check goes first) |
+| B4 | **Release debt** (done 2026-11-14: open lines; recovery tasks stay voluntary, so they are not debt) (from the core-mcp README, `Downloads/README2.md`, owner 2026-11-14) | Consequences still owed (open lines, later open recovery tasks) must be paid before a token can be spent on a release; the release waits, nothing is lost. Not chosen from the same README: "loosening is hard", the random rule check, capped time-adding |
 
 Not chosen (2026-11-14): the hygiene debrief question, "answer or freeze", the non-negotiating keyholder.
 
