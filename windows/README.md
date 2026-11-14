@@ -214,3 +214,8 @@ For Task Scheduler setups that prefer a `.bat`, or a shortcut in the `shell:star
 generates `scripts/start_bot.bat` with ABSOLUTE paths (`cd /d` into the repository, then the interpreter that ran the generator with
 `-m bot.discord_bot`). Regenerate it after moving the repository or changing the Python installation. Use either this or the scheduled
 task from `install_task.ps1`, never both at once.
+
+## Restarting without a window
+
+`powershell -ExecutionPolicy Bypass -File windows\restart_bot_hidden.ps1` stops the running bot and starts `scripts\start_bot.bat` with no console
+window at all (owner, 2026-11-14: closing the visible "AI Coach Keyholder bot" window stopped the bot). Output still goes to `logs\bot.log`.
