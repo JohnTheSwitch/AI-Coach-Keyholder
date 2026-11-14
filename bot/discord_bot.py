@@ -481,14 +481,27 @@ class CoachKeyholderBot(discord.Client):
         log_db = reply.log_db if reply is not None else None
         if log_db is not None:
             self._log_message_best_effort(now, MessageRole.USER, message.content, message.channel.id, message.id, db=log_db)
+        actions = tuple(getattr(reply, "actions", ()) or ()) if reply is not None else ()
+        view = actions_view(actions) if actions else None
+        extra = {"view": view} if view is not None else {}
         try:
-            sent = await (message.channel.send(embed=embed) if embed is not None else message.channel.send(text))
+            sent = await (message.channel.send(embed=embed, **extra) if embed is not None else message.channel.send(text, **extra))
         except Exception:
             logger.exception("Failed to send a reply through the tenant gateway.")
             return
         if log_db is not None:
             self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, text, message.channel.id, sent.id, db=log_db,
                                           from_model=bool(getattr(reply, "from_model", False)))
+        # Owner, 2026-11-14: each further card is its own message with its own buttons, as on the single-wearer path.
+        for followup in (tuple(getattr(reply, "followups", ()) or ()) if reply is not None else ()):
+            try:
+                follow_view = actions_view(followup.actions) if followup.actions else None
+                extra_sent = await message.channel.send(followup.text, **({"view": follow_view} if follow_view is not None else {}))
+            except Exception:
+                logger.exception("Failed to send a follow-up card through the tenant gateway.")
+                break
+            if log_db is not None:
+                self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, followup.text, message.channel.id, extra_sent.id, db=log_db)
 
     def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id, *, db=None,
                                  from_model: bool | None = None) -> None:

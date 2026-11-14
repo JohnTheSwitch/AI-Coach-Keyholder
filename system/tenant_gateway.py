@@ -112,6 +112,14 @@ class GatewayReply:
     embed: EmbedSpec | None = None
     log_db: Database | None = None          # where this exchange may be stored (None: not stored at all)
     from_model: bool = False                # the conversation model wrote it (memory_seed restores only those)
+    # Owner, 2026-11-14: with multi-wearer on, every DM (the owner's too) comes through here, and buttons and follow-up cards were dropped.
+    actions: tuple = ()
+    followups: tuple = ()
+
+
+def _reply(outgoing: OutgoingMessage, log_db) -> GatewayReply:
+    return GatewayReply(outgoing.text, outgoing.embed, log_db, getattr(outgoing, "from_model", False),
+                        tuple(getattr(outgoing, "actions", ()) or ()), tuple(getattr(outgoing, "followups", ()) or ()))
 
 
 class TenantGateway:
@@ -157,7 +165,7 @@ class TenantGateway:
             if owner is not None:
                 return GatewayReply(owner, log_db=log_db)
             outgoing = await asyncio.to_thread(self._zero_handler, incoming)
-            return GatewayReply(outgoing.text, outgoing.embed, log_db, getattr(outgoing, "from_model", False))
+            return _reply(outgoing, log_db)
 
         runtime = await self._supervisor.get_or_build(tenant.id)
         if runtime is None:
@@ -166,7 +174,7 @@ class TenantGateway:
             logger.error("Runtime mismatch for a routed message; refused.")
             return GatewayReply(TEXTS["unavailable"])
         outgoing = await asyncio.to_thread(runtime.handle_message, incoming)
-        return GatewayReply(outgoing.text, outgoing.embed, log_db, getattr(outgoing, "from_model", False))
+        return _reply(outgoing, log_db)
 
     # ------------------------------------------------------------------ invited
 
