@@ -62,8 +62,11 @@ ALONE, DISCREET = "alone", "discreet"
 SURPRISE_SHARE = 0.2                     # owner, 2026-11-15 (research a): about 1 in 5 verified tasks...
 SURPRISE_REWARD = "0.05"                 # ...adds this to the token pool, unannounced until it happens
 PREP_AHEAD = timedelta(minutes=30)      # owner, 2026-11-15: the clean-up heads-up comes this long before an erotic task
-PREP_TEXT = ("Heads-up: your task comes in about 30 minutes, and it may use a plug or a dildo. Use the toilet now and clean up in the "
+# Owner, 2026-11-16 (queue A0): the heads-up goes out only when the task (chosen at the heads-up) goes in your ass; "may" when only one of
+# its two versions (alone / not alone) does.
+PREP_TEXT = ("Heads-up: your task comes in about 30 minutes, and it {certainty} a plug. Use the toilet now and clean up in the "
              "shower: lukewarm plain water, no soap. Without a douche, a thorough rinse is enough.")
+RESTRAINT_SHORT = "Key and shears within reach."   # owner, 2026-11-16: after the stuck cuff, the one line that stays on every restraint task
 ASK_KEY = "ask"                          # a planned task not chosen yet: chosen when he answers the alone question
 BOTH = frozenset({ALONE, DISCREET})
 ALONE_ONLY = frozenset({ALONE})
@@ -301,6 +304,45 @@ def gear_of(key: str) -> set[str]:
     return {key.split("_")[0]}
 
 
+_SHORT_NAMES = {"gray Satisfyer Deep Diver": "Deep Diver", "clear Crushious Bijou": "Bijou", "glass Gildo No. 27": "Gildo",
+                "Plug & Joy medium": "Plug & Joy", "Wolf Rimfire S": "Rimfire"}
+
+
+def chaster_brief(text: str) -> str:
+    """Owner, 2026-11-15 ("who doesn't use lube?"): what the voters in Chaster see is only what he does and what the photo shows. The DM keeps
+    the full task (lube, warm-up, how long); Chaster drops those sentences and uses the plugs' short names."""
+    import re
+    for long, short in _SHORT_NAMES.items():
+        text = text.replace(long, short)
+    text = re.sub(r",? with [^.]*lube", "", text)
+    kept = [s for s in re.split(r"(?<=\.)\s+", text.strip())
+            if s and not re.match(r"(then )?(keep it|warm up|\d+ minutes)", s, re.I)]
+    return " ".join(kept) or text
+
+
+_ANAL = ("plug", "deep diver", "bijou", "gildo", "rimfire", "riding")
+
+
+def uses_anal(text: str) -> bool:
+    """Owner, 2026-11-16 (A0): the task puts something in his ass (a plug or the Deep Diver, or riding a dildo)."""
+    t = text.lower()
+    return any(w in t for w in _ANAL)
+
+
+def task_minutes(text: str) -> int:
+    """Owner, 2026-11-16 (A0): the task's own time (warm-up, holding and wearing times added up), for the photo deadline."""
+    import re
+    total = 0
+    for n, unit in re.findall(r"(\d+)\s*(minutes?|hours?)", text):
+        total += int(n) * (60 if unit.startswith("hour") else 1)
+    return total
+
+
+def is_restraint(text: str) -> bool:
+    t = text.lower()
+    return any(w in t for w in ("rope", "cuff", "tied", "clipped"))
+
+
 def safety_notes(text: str) -> str:
     """Safety lines for the DM, from what the task names (owner, 2026-11-15: in both modes)."""
     t = text.lower()
@@ -371,6 +413,27 @@ def get_training_verified_since(core: CoreDatabase, user_id: str, since: str) ->
     with core.transaction() as tx:
         return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
                             "AND catalog_key LIKE 'training:%' AND decided_at >= ?", (user_id, since)) is not None
+
+
+_STATE_WORDS = {"planned": "planned for later today", "asking": "asked whether he is alone", "assigned": "in Chaster, photo not sent yet",
+                "submitted": "photo sent, the community vote is running", "passed": "verified", "failed": "not done or rejected",
+                "cancelled": "cancelled, no consequence", "skipped": "skipped, no consequence"}
+
+
+def get_obedience_today(core: CoreDatabase, user_id: str, local_date: str) -> list[dict]:
+    """Read-only (bug fix 2026-11-15): today's tasks and where each stands, in plain words, for the conversation context."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT catalog_key, text, status, outcome FROM obedience_tasks WHERE user_id = ? AND local_date = ? ORDER BY slot",
+                            (user_id, local_date))
+    out = []
+    for r in rows:
+        kind = "training session" if r["catalog_key"].startswith("training:") else (
+            "task-board task" if r["catalog_key"].startswith("board:") else "obedience task")
+        state = _STATE_WORDS.get(r["status"], r["status"])
+        if r["status"] == "passed" and r["outcome"] != "verified":
+            state = "closed without a verdict, no consequence"
+        out.append({"kind": kind, "task": chaster_brief(r["text"] or "") or "not chosen yet", "state": state})
+    return out
 
 
 def get_surprise_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str):
@@ -617,14 +680,27 @@ class ObedienceTasks:
                 decision("obedience", "A training session ran out during a wear exemption: cancelled quietly, no consequence.", task=row["catalog_key"])
 
     def _prep_notice(self, now: datetime) -> None:
-        """Owner, 2026-11-15: PREP_AHEAD before an erotic task (one not chosen yet: it may use a plug), a heads-up to clean up. Once per task
-        (the notification's dedupe key); a training session gets none. Never a consequence."""
+        """PREP_AHEAD before an erotic task its two versions are chosen (owner, 2026-11-16, A0), and the clean-up heads-up goes out only when
+        one of them goes in his ass. Once per task; a training session gets none. Never a consequence."""
+        import json
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT id FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
-                                                  "AND planned_at <= ? AND planned_at > ?", (self.user_id, ASK_KEY, _iso(now + PREP_AHEAD), _iso(now)))]
+            rows = [dict(r) for r in tx.fetch_all("SELECT id, local_date FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
+                                                  "AND prepared IS NULL AND planned_at <= ? AND planned_at > ?",
+                                                  (self.user_id, ASK_KEY, _iso(now + PREP_AHEAD), _iso(now)))]
         for row in rows:
-            apply_transition(self._core, write=lambda tx, _s, r=row: enqueue_in_transaction(
-                tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:prep:{r['id']}", now=now, text=PREP_TEXT))
+            day = date.fromisoformat(row["local_date"])
+            picks = {m: self._pick(day, m) for m in (ALONE, DISCREET)}
+            anal = [m for m, t in picks.items() if uses_anal(t.text)]
+            stored = json.dumps({m: {"key": t.key, "text": t.text, "note": t.dm_note} for m, t in picks.items()})
+
+            def write(tx: Transaction, _s: object, r=row) -> None:
+                if tx.execute("UPDATE obedience_tasks SET prepared = ? WHERE id = ? AND prepared IS NULL", (stored, r["id"])).rowcount and anal:
+                    enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:prep:{r['id']}", now=now,
+                                           text=PREP_TEXT.format(certainty="uses" if len(anal) == 2 else "may use"))
+
+            apply_transition(self._core, write=write)
+            decision("obedience", "Today's task versions chosen at the heads-up.", alone=picks[ALONE].key, discreet=picks[DISCREET].key,
+                     heads_up=bool(anal))
 
     def _start_due(self, now: datetime) -> None:
         with self._core.transaction() as tx:
@@ -656,15 +732,17 @@ class ObedienceTasks:
                 if now < asked + ASK_WAIT:
                     return False
                 mode = DISCREET                                         # no answer: the discreet version (still mandatory)
-            task = self._pick(self._ports.today(now), mode)
+            prepared = self._prepared(row, mode)
+            task = prepared or self._pick(self._ports.today(now), mode)
             key, text, note = task.key, task.text, task.dm_note
-        task_id = self._chaster.assign(lock_id, text[:200])
-        deadline = now + PHOTO_DEADLINE
+        task_id = self._chaster.assign(lock_id, (text if row.get("details") else chaster_brief(text))[:200])   # training texts are brief already
+        deadline = now + PHOTO_DEADLINE + timedelta(minutes=task_minutes(text))   # owner, 2026-11-16 (A0): the task's own time + 1 hour
         if row.get("details"):                                          # a training session: the log photo is due by the end of free time
             at = now + PHOTO_DEADLINE
             while self._ports.today(at + PLAN_STEP).isoformat() == row["local_date"] and self._ports.free_time(at + PLAN_STEP):
                 at += PLAN_STEP
             deadline = at
+        full = False
         if row.get("details"):
             message = (f"Today's training:\n{row['details']}\nWhen you're done, in Chaster: {text}\nDue by {self._ports.local_clock(deadline)}. "
                        f"{SAFETY}")
@@ -672,9 +750,12 @@ class ObedienceTasks:
         else:
             version = {ALONE: "the full version, you're alone", DISCREET: "a discreet version"}.get(mode, "")
             head = f"Your task for today is in Chaster now ({version}):" if version else "Your task for today is in Chaster now:"
-            extra = safety_notes(text)
+            # Owner, 2026-11-16 (A0b): the standing reminders in full at most once a week; a restraint task always keeps one short line.
+            full = self._reminder_due(now)
+            extra = safety_notes(text) if full else (RESTRAINT_SHORT if is_restraint(text) else "")
             message = (f"{head}\n{text}\n" + (f"Only between us: {note}\n" if note else "")
-                       + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}" + (f" {extra}" if extra else ""))
+                       + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}." + (f" {DISCRETION} {SAFETY}" if full else "")
+                       + (f" {extra}" if extra else ""))
             actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Someone's around (+2 h, once)"),
                        ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
 
@@ -685,6 +766,9 @@ class ObedienceTasks:
             if done:
                 write_event(tx, DomainEvent(event_type="obedience.task_assigned", source_module="obedience", occurred_at=now,
                                             payload={"obedience_task_id": row["id"], "catalog_key": key, "mode": mode}))
+                if not row.get("details") and full:
+                    from reminders.service import mark_in_transaction
+                    mark_in_transaction(tx, self.user_id, "obedience_safety", now)
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}", now=now, immediate=True,
                                        text=message, actions=actions)
             return bool(done)
@@ -693,6 +777,25 @@ class ObedienceTasks:
             decision("obedience", "Today's obedience task was assigned in Chaster.", task=key, mode=mode, deadline=_iso(deadline))
             return True
         return False
+
+    def _reminder_due(self, now: datetime) -> bool:
+        from reminders.service import due_in_transaction
+        try:
+            with self._core.transaction() as tx:
+                return due_in_transaction(tx, self.user_id, "obedience_safety", now)
+        except Exception:
+            logger.exception("Could not read when the safety reminder was last shown; it is shown.")
+            return True
+
+    @staticmethod
+    def _prepared(row: dict, mode: str) -> Task | None:
+        """The version chosen at the heads-up for this answer (A0), or None (chosen now, as before)."""
+        import json
+        try:
+            got = json.loads(row["prepared"]).get(mode) if row.get("prepared") else None
+        except (ValueError, TypeError):
+            return None
+        return Task(got["key"], got["text"], "erotic", dm_note=got.get("note") or "") if got else None
 
     def _ask(self, row: dict, now: datetime) -> None:
         """Owner, 2026-11-15: before the task, "Are you alone right now?". Alone = the full version, not alone = a discreet one; both mandatory."""
@@ -872,7 +975,7 @@ class ObedienceTasks:
             return "You already postponed this one. Do it now, or it counts as missed."
         if row["status"] != "assigned" or not row["deadline"]:
             return "This task can't be postponed now."
-        deadline = now + POSTPONE
+        deadline = now + POSTPONE + timedelta(minutes=task_minutes(row["text"] or ""))   # A0: the task still needs its own time
         if not self._ports.free_time(deadline):
             return "Postponing would push it past your free time. Do it now, or it counts as missed."
 

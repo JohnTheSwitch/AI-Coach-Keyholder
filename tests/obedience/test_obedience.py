@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from infractions.signals import EVIDENCE, RULE_GROUPS, SignalKind
 from lines.service import sentence_for
-from obedience.service import CATALOG, PHOTO_DEADLINE, Ports, ObedienceTasks
+from obedience.service import CATALOG, PHOTO_DEADLINE, Ports, ObedienceTasks, chaster_brief
 from penalty_engine.repository import WARNING_ONLY_RULE_GROUPS
 from penalty_engine.violations_catalog import CATALOG as VIOLATIONS
 from tests.lines.test_lines import core
@@ -94,7 +94,7 @@ def test_planned_once_a_day_in_free_time_then_assigned_and_verified(tmp_path) ->
     assert w.row()["status"] == "asking" and w.chaster.assigned == []
     assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due) == "Alone: the full version. It's in Chaster now."
     row = w.row()
-    assert row["status"] == "assigned" and row["mode"] == "alone" and w.chaster.assigned == [row["text"]]
+    assert row["status"] == "assigned" and row["mode"] == "alone" and w.chaster.assigned == [chaster_brief(row["text"])]
     with w.core.transaction() as tx:
         note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
     assert "Your task for today is in Chaster now (the full version" in note["text"] and "health or safety" in note["actions_json"]
@@ -108,7 +108,7 @@ def test_missed_or_rejected_asks_for_an_explanation(tmp_path) -> None:
     w.tasks.tick(MORNING)
     due = w.due()
     w.start(due)
-    w.tasks.tick(due + PHOTO_DEADLINE + timedelta(minutes=5))
+    w.tasks.tick(datetime.fromisoformat(w.row()["deadline"].replace("Z", "+00:00")) + timedelta(minutes=5))
     assert (w.row()["status"], w.row()["outcome"]) == ("failed", "missed") and w.failures == ["missed"] and w.chaster.unassigned == 1
 
 
@@ -262,11 +262,11 @@ class TestNotAlone:
         assert "door closed" in note["text"] and "Someone's around" in note["actions_json"]
         at = due + timedelta(minutes=10)
         assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=at).startswith("Postponed once.")
-        assert w.row()["deadline"].startswith((at + POSTPONE).isoformat()[:16].replace("+00:00", ""))
+        assert w.row()["deadline"] >= (at + POSTPONE).isoformat()[:16].replace("+00:00", "")
         assert "already postponed" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=at)
         w.tasks.tick(due + PHOTO_DEADLINE + timedelta(minutes=5))           # the old deadline passes: still open
         assert w.row()["status"] == "assigned" and w.failures == []
-        w.tasks.tick(at + POSTPONE + timedelta(minutes=5))
+        w.tasks.tick(datetime.fromisoformat(w.row()["deadline"].replace("Z", "+00:00")) + timedelta(minutes=5))
         assert (w.row()["status"], w.failures) == ("failed", ["missed"])
 
     def test_no_postponement_past_free_time(self, tmp_path) -> None:
@@ -459,7 +459,7 @@ class TestExtraTask:
         w.tasks.tick(evening + timedelta(minutes=2))
         assert extra()["status"] == "asking"
         w.tasks.press(user_id=U, row_id=extra()["id"], action="alone", now=evening + timedelta(minutes=3))
-        assert extra()["status"] == "assigned" and extra()["text"] in w.chaster.assigned
+        assert extra()["status"] == "assigned" and chaster_brief(extra()["text"]) in w.chaster.assigned
 
 
 class TestTrainingAndExemptions:
@@ -540,9 +540,41 @@ class TestCleanUpHeadsUp:
         due = w.due()
         w.tasks.tick(due - PREP_AHEAD - timedelta(minutes=5))
         assert self._notes(w) == []
+        from obedience.service import Task
+        w.tasks._pick = lambda day, mode="alone", owned=None: Task("plug:deep_diver", "The Deep Diver in. Photo of the plug base only. "
+                                                                   "Keep it in 20 minutes.", "erotic")
         w.tasks.tick(due - PREP_AHEAD + timedelta(minutes=1))
         w.tasks.tick(due - timedelta(minutes=5))
-        assert self._notes(w) == [PREP_TEXT] and "clean up" in PREP_TEXT
+        assert self._notes(w) == [PREP_TEXT.format(certainty="uses")] and "clean up" in PREP_TEXT
+
+    def test_none_when_the_task_does_not_go_in_and_the_chosen_version_is_given(self, tmp_path) -> None:
+        """Owner, 2026-11-16 (A0): the versions are chosen at the heads-up; no clean-up message for a task without a plug."""
+        from obedience.service import PREP_AHEAD, Task
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        picks = {"alone": Task("pose:kneel+blind", "Kneeling upright, eyes closed. Photo from behind, waist down only. 20 minutes.", "erotic"),
+                 "discreet": Task("pose:fours", "On all fours. Photo from behind, waist down only. 10 minutes.", "erotic")}
+        w.tasks._pick = lambda day, mode="alone", owned=None: picks[mode]
+        w.tasks.tick(due - PREP_AHEAD + timedelta(minutes=1))
+        assert self._notes(w) == [] and w.row()["prepared"]
+        w.tasks._pick = lambda *a, **k: (_ for _ in ()).throw(AssertionError("chosen again"))
+        w.start(due)
+        row = w.row()
+        assert row["catalog_key"] == "pose:kneel+blind"
+        deadline = datetime.fromisoformat(row["deadline"].replace("Z", "+00:00"))
+        assert deadline - due == timedelta(minutes=80)                      # the task's own 20 minutes + 1 hour
+
+    def test_may_when_only_one_version_goes_in(self, tmp_path) -> None:
+        from obedience.service import PREP_AHEAD, PREP_TEXT, Task
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        picks = {"alone": Task("plug:bijou_large", "The Bijou in. Photo of the plug base only. Keep it in 30 minutes.", "erotic"),
+                 "discreet": Task("pose:fours", "On all fours. Photo from behind, waist down only. 10 minutes.", "erotic")}
+        w.tasks._pick = lambda day, mode="alone", owned=None: picks[mode]
+        w.tasks.tick(due - PREP_AHEAD + timedelta(minutes=1))
+        assert self._notes(w) == [PREP_TEXT.format(certainty="may use")]
 
     def test_none_before_a_training_session(self, tmp_path) -> None:
         from obedience.service import PREP_AHEAD
@@ -596,3 +628,58 @@ def test_no_surprise_when_the_roll_misses(tmp_path) -> None:
     w.chaster.entries[row["task_id"]] = {"createdAt": (due + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "verified"}}
     w.tasks.tick(due + timedelta(minutes=25))
     assert w.row()["status"] == "passed" and w.row()["surprise"] is None
+
+
+def test_chaster_sees_a_brief_text_and_the_dm_the_full_one(tmp_path) -> None:
+    """Owner, 2026-11-15: no lube, warm-up or wearing time in Chaster; the DM keeps them."""
+    from obedience.service import chaster_brief
+    full = ("Your gray Satisfyer Deep Diver in, with water-based lube. Warm up with the clear Crushious Bijou for 10 minutes first. "
+            "Photo of the plug base only. Keep it in 20 minutes.")
+    assert chaster_brief(full) == "Your Deep Diver in. Photo of the plug base only."
+    assert chaster_brief("Clamps on your nipples, kneeling upright. Photo of your chest only, no face. 10 minutes, then off slowly.") == (
+        "Clamps on your nipples, kneeling upright. Photo of your chest only, no face.")
+    for task in _all_texts():
+        brief = chaster_brief(task.text).lower()
+        assert ("only" in brief or "no face" in brief) and "lube" not in brief and "minutes" not in brief, (task.key, brief)
+
+
+
+def test_the_conversation_sees_todays_tasks_and_where_they_stand(tmp_path) -> None:
+    """Bug fix 2026-11-15: "The task is done" got praise for a workout; the model now sees today's tasks (read-only)."""
+    from conversation_engine.context_providers.obedience_today_provider import ObedienceTodayContextProvider
+    from conversation_engine.prompt_builder import _render_todays_tasks
+    from obedience.service import get_obedience_today
+    w = World(tmp_path)
+    w.tasks.tick(MORNING)
+    assert get_obedience_today(w.core, U, "2026-11-15") == [{"kind": "obedience task", "task": "not chosen yet", "state": "planned for later today"}]
+    due = w.due()
+    w.start(due)
+    row = w.row()
+    w.chaster.entries[row["task_id"]] = {"createdAt": (due + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "pending"}}
+    w.tasks.tick(due + timedelta(minutes=25))
+    [task] = get_obedience_today(w.core, U, "2026-11-15")
+    assert task["state"] == "photo sent, the community vote is running" and "lube" not in task["task"]
+    fragment = ObedienceTodayContextProvider(read=lambda u, now: get_obedience_today(w.core, u, "2026-11-15")).provide_context(subject_key=U, now=due)
+    assert "the community vote is running" in _render_todays_tasks(fragment.data)
+    assert ObedienceTodayContextProvider(read=lambda u, now: []).provide_context(subject_key=U, now=due) is None
+
+
+def test_standing_reminders_come_once_a_week_but_the_restraint_line_stays(tmp_path) -> None:
+    """Owner, 2026-11-16 (A0b): safety and discretion in full at most once a week; a restraint task always says "Key and shears within reach."."""
+    from obedience.service import DISCRETION, RESTRAINT_SHORT, Task
+    w = World(tmp_path)
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:fours+cuffs", "On all fours, wrists cuffed in front, key within reach. "
+                                                               "Photo from behind, waist down only. 15 minutes.", "erotic")
+    texts = []
+    for day in range(3):
+        start = MORNING + timedelta(days=day)
+        w.tasks.tick(start)
+        w.start(w.due())
+        row_id = w.row()["id"]
+        with w.core.transaction() as tx:
+            texts.append(tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key = ?", (f"obedience:task:{row_id}",))["text"])
+        with w.core.transaction() as tx:
+            tx.execute("UPDATE obedience_tasks SET status = 'passed', outcome = 'verified'")
+        w.chaster.current = None
+    assert DISCRETION in texts[0] and DISCRETION not in texts[1] and DISCRETION not in texts[2]
+    assert all(RESTRAINT_SHORT in t or "within reach the whole time" in t for t in texts)

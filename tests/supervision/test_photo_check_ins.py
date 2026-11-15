@@ -178,3 +178,36 @@ class TestTheWearersCommands:
     def test_the_commands_are_registered(self, command) -> None:
         from pathlib import Path
         assert f'self.router.register("{command}",' in Path("application/service.py").read_text(encoding="utf-8")
+
+
+
+class TestDuringAWearExemption:
+    """Bug fix 2026-11-15: a photo check-in sent while the cage was off for a wear exemption was counted as missed."""
+
+    def test_none_is_sent_while_an_exemption_is_in_force(self, tmp_path) -> None:
+        e = photo_env(tmp_path)
+        e.svc.photo_suspended = lambda now: True
+        e.svc.tick(local(MON, 9))
+        e.svc.tick(due(e))
+        assert photos(e)[0]["status"] == "skipped" and e.sender.sent == []
+
+    def test_an_open_one_is_skipped_not_missed(self, tmp_path) -> None:
+        e = photo_env(tmp_path)
+        e.svc.tick(local(MON, 9))
+        at = due(e)
+        e.svc.tick(at)
+        e.svc.photo_suspended = lambda now: True
+        e.svc.tick(at + PHOTO_RESPONSE_TIMEOUT + timedelta(minutes=5))
+        assert photos(e)[0]["status"] == "skipped"
+
+    def test_an_unreadable_state_never_makes_a_miss(self, tmp_path) -> None:
+        e = photo_env(tmp_path)
+        e.svc.tick(local(MON, 9))
+        at = due(e)
+        e.svc.tick(at)
+
+        def broken(now):
+            raise RuntimeError("db")
+        e.svc.photo_suspended = broken
+        e.svc.tick(at + PHOTO_RESPONSE_TIMEOUT + timedelta(minutes=5))
+        assert photos(e)[0]["status"] == "skipped"

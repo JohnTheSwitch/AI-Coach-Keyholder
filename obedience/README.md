@@ -90,3 +90,16 @@ task and never past free time; after that the task is done or it fails. No gag t
 About 1 in 5 verified obedience tasks (`SURPRISE_SHARE`) carries a surprise +0.05 (`SURPRISE_REWARD`), announced only in the "verified"
 message. It is stored in `obedience_tasks.surprise` in the same transaction as the verdict and read by `get_surprise_rewards`; the daily
 evaluation adds it to the day's bonus. Training and board tasks never draw one: they pay their own rewards.
+
+## Brief Chaster texts, full DM (owner, 2026-11-15: "who doesn't use lube?")
+
+`chaster_brief(text)` is what Chaster shows the voters: only what he does and what the photo shows, with short plug names. Lube, warm-up
+and wearing-time sentences stay in the DM only. Training texts are brief already and go as they are.
+
+## Heads-up only before anal tasks; deadline = task time + 1 hour (owner, 2026-11-16; queue A0, A0b; migration 081)
+
+At the clean-up heads-up (PREP_AHEAD before the task) both versions are chosen and kept in `obedience_tasks.prepared`; the answer to "Are you
+alone?" picks one of them. The heads-up goes out only when a version goes in his ass (`uses_anal`: a plug, the Deep Diver, riding a dildo);
+"may use" when only one does. The photo deadline is the task's own time (`task_minutes`: warm-up, holding and wearing times) + PHOTO_DEADLINE;
+"Someone's around" adds the same. Discretion, safety and gear notes appear in full at most once a week (`reminders/`); a restraint task
+always keeps "Key and shears within reach."

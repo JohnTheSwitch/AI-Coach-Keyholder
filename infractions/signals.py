@@ -107,6 +107,16 @@ _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIE
 
 ASK_TEXT = ("Press **Explain** and tell me what happened in your next message; you have twelve hours. If it was a health or safety need, press that button "
             "instead and that's the end of it.")
+ASK_TEXT_SHORT = "Press **Explain** and tell me what happened in your next message; you have twelve hours."   # owner, 2026-11-16 (A0b)
+
+
+def _ask_text(tx, user_id: str, now) -> str:
+    """The health sentence in full at most once a week; the health button itself is on every question."""
+    from reminders.service import due_in_transaction, mark_in_transaction
+    if due_in_transaction(tx, user_id, "health_option", now):
+        mark_in_transaction(tx, user_id, "health_option", now)
+        return ASK_TEXT
+    return ASK_TEXT_SHORT
 CLAIM_ASK_TEXT = ("Press **Explain** and tell me in your next message what the health or safety need was and why it took that long; you have "
                   "twelve hours. A genuine need is never held against you.")
 _EXPLAINED = "Thank you, that explains it. It doesn't count."
@@ -216,7 +226,7 @@ class InfractionSignals:
                  answer_by=_iso(now + GRACE))
         claim = kind is SignalKind.HEALTH_CLAIM
         enqueue_in_transaction(tx, user_id=user_id, kind="infraction_wearer", dedupe_key=f"infraction:wearer:{signal_id}",
-                               text=f"{wearer_text}\n\n{CLAIM_ASK_TEXT if claim else ASK_TEXT}", now=now,
+                               text=f"{wearer_text}\n\n{CLAIM_ASK_TEXT if claim else _ask_text(tx, user_id, now)}", now=now,
                                actions=_explain_buttons(signal_id)[:1] if claim else _explain_buttons(signal_id))
         return True
 
@@ -576,7 +586,7 @@ class InfractionSignals:
                 if tx.execute("UPDATE infraction_signals SET status = 'waiting', review_after = ? WHERE id = ? AND status = 'open'",
                               (_iso(now + GRACE), r["id"])).rowcount == 1:
                     enqueue_in_transaction(tx, user_id=r["user_id"], kind="infraction_wearer", dedupe_key=f"infraction:reask:{r['id']}", now=now,
-                                           text=f"{r['detail']}\n\n{ASK_TEXT}", actions=_explain_buttons(r["id"]))
+                                           text=f"{r['detail']}\n\n{_ask_text(tx, r['user_id'], now)}", actions=_explain_buttons(r["id"]))
 
             apply_transition(self._core, write=write)
         if not orphans or self._wearer is None:

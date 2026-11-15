@@ -483,7 +483,7 @@ class ExemptionService:
                     f"incident you disclosed yourself (it counts against you and gives a warning, nothing more). {SAFETY_LINE}",
                     (ActionSpec(action_id=f"exemption:anyway:{exemption_id}", label="Take it anyway", style="danger"),))
         self.tick(now)
-        return f"{said} {self._approval_text(row)}", self._back_button(exemption_id)
+        return f"{said} {self._approval_text(row, now)}", self._back_button(exemption_id)
 
     def take_anyway(self, user_id: str, exemption_id: str, now: datetime) -> OutgoingMessage:
         """Owner, 2026-11-13: a request declined after its appeal, taken anyway. It opens as an approved one would, and in the same transaction it is
@@ -521,7 +521,7 @@ class ExemptionService:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT * FROM wear_exemptions WHERE id = ?", (exemption_id,))
         self.tick(now)
-        return OutgoingMessage(text=f"Taken anyway, and recorded as you disclosing it yourself. {self._approval_text(row)}", actions=self._back_button(exemption_id))
+        return OutgoingMessage(text=f"Taken anyway, and recorded as you disclosing it yourself. {self._approval_text(row, now)}", actions=self._back_button(exemption_id))
 
     def _rule_pending(self, now: datetime) -> None:
         """Requests the judge could not decide when they came in: retried each pass; after UNJUDGED_LIMIT closed, never as a decline."""
@@ -587,7 +587,7 @@ class ExemptionService:
             if approve:
                 enqueue_in_transaction(
                     tx, user_id=row["user_id"], kind="exemption_decision", dedupe_key=f"exemption:decision:{exemption_id}", now=now, immediate=True,
-                    text=self._approval_text(row),
+                    text=self._approval_text(row, now, tx),
                     actions=self._back_button(exemption_id))
             else:
                 enqueue_in_transaction(tx, user_id=row["user_id"], kind="exemption_decision", dedupe_key=f"exemption:decision:{exemption_id}", now=now, immediate=True,
@@ -700,10 +700,20 @@ class ExemptionService:
         decision("exemptions", "Hygiene opening past the allowance sent to the keyholder.", exemption_id=row["id"], minutes=row["minutes"])
         return OutgoingMessage(text=f"Sent to your keyholder. I'll tell you as soon as they answer. {SAFETY_LINE}")
 
-    def _approval_text(self, row) -> str:
+    def _approval_text(self, row, now: datetime, tx: Transaction | None = None) -> str:
         length = _length(row)
         if row["kind"] != "exemption":
-            return f"Approved: a {length} hygiene opening. I'm opening your lock now, and the combination appears in Chaster. When you're done, relock there and press the button below."
+            from reminders.service import due_in_transaction, mark_in_transaction, take
+            if tx is not None:
+                show = due_in_transaction(tx, row["user_id"], "skin_check", now)
+                if show:
+                    mark_in_transaction(tx, row["user_id"], "skin_check", now)
+            else:
+                show = take(self._core, row["user_id"], "skin_check", now)
+            skin = (" Check your skin: redness, numbness or broken skin means you stay unlocked to heal, no consequence. Tell me if so."
+                    if show else "")    # owner, 2026-11-16 (6f, A0b): once a week
+            return (f"Approved: a {length} hygiene opening. I'm opening your lock now, and the combination appears in Chaster. When you're done, "
+                    f"relock there and press the button below.{skin}")
         if self._opening is None:
             return (f"Your exemption is approved for {length}. A Penalty Window, if there is one, is paused for that time and continues where it left off. Any penalty freeze on your lock is "
                     "lifted as soon as the system is allowed to act. Tell me when you're back, or it simply ends on time.")

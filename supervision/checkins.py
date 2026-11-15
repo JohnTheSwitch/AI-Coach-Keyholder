@@ -159,6 +159,9 @@ class CheckInService:
         # a wear exemption or the runtime halt (a vacation pauses everything anyway). `online_since`: when this process started.
         self.morning_on = False
         self.morning_suspended: Callable[[datetime], bool] = lambda now: False
+        # Bug fix 2026-11-15: a photo check-in was sent while the cage was off for a wear exemption and then counted as missed. While
+        # `photo_suspended(now)` (a wear exemption in force) none is sent, and an open one is skipped instead of missed.
+        self.photo_suspended: Callable[[datetime], bool] = lambda now: False
         self.online_since: datetime | None = None
 
     # ------------------------------------------------------------------ driver
@@ -355,7 +358,7 @@ class CheckInService:
             too_late = now - _parse_iso(row["due_at"]) > MAX_LATE and row["id"] != late_ok
             photo = row["kind"] == "photo"
             if too_late or classify(self._cfg, now) is not WindowKind.DISCRETIONARY or (recently_answered and not photo) \
-                    or (photo and not self._photos_on()):
+                    or (photo and (not self._photos_on() or self._photo_held(now))):
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
             if photo:
@@ -387,6 +390,13 @@ class CheckInService:
                 self._cas(row["id"], ("sending",), "needs_review", now)
 
     # ------------------------------------------------------------------ the morning report (owner, 2026-11-15)
+
+    def _photo_held(self, now: datetime) -> bool:
+        try:
+            return bool(self.photo_suspended(now))
+        except Exception:
+            logger.exception("Could not read whether photo check-ins are suspended; they are (never a miss by accident).")
+            return True
 
     def _morning_held(self, now: datetime) -> bool:
         try:
@@ -574,6 +584,11 @@ class CheckInService:
             if times is None:
                 if now - deadline > PHOTO_UNKNOWN_LIMIT and self._cas(row["id"], ("sent",), "skipped", now):
                     decision("check_ins", "Photo check-in skipped: the pictures could not be read, so it is never a miss.", check_in_id=row["id"])
+                    self._photo_checked.pop(row["id"], None)
+                continue
+            if self._photo_held(now):
+                if self._cas(row["id"], ("sent",), "skipped", now):
+                    decision("check_ins", "Photo check-in skipped: a wear exemption was in force, so it is never a miss.", check_in_id=row["id"])
                     self._photo_checked.pop(row["id"], None)
                 continue
             streak = self._miss_streak(row["id"], row["due_at"])

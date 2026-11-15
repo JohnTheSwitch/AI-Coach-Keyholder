@@ -762,6 +762,11 @@ def main() -> None:
     from infractions.signals import get_recent_questions
     context_providers = context_providers + (DetectorQuestionsContextProvider(
         read=lambda user_id, now, cfg=window_config_from(config): get_recent_questions(core, user_id, now, local=cfg.local)),)
+    # Bug fix 2026-11-15: "The task is done" got praise for a workout; the model now sees today's tasks and where each stands (read-only).
+    from conversation_engine.context_providers.obedience_today_provider import ObedienceTodayContextProvider
+    from obedience.service import get_obedience_today
+    context_providers = context_providers + (ObedienceTodayContextProvider(
+        read=lambda user_id, now, cfg=window_config_from(config): get_obedience_today(core, user_id, cfg.local(now).date().isoformat())),)
     if coach_dm is not None:
         context_providers = context_providers + (CoachContextProvider(read=coach_dm.context),)
         if wiring.check_ins is not None:
@@ -1143,6 +1148,8 @@ def main() -> None:
         wiring.check_ins.online_since = clock.now()
         wiring.check_ins.morning_suspended = (lambda now, ex=bot.exemptions, u=wiring.check_ins.user_id, halted=_morning_halted(core):
                                               (ex is not None and ex.wear_exemption_in_force(u)) or halted())
+        wiring.check_ins.photo_suspended = (lambda now, ex=bot.exemptions, u=wiring.check_ins.user_id:
+                                            ex is not None and ex.wear_exemption_in_force(u))
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:

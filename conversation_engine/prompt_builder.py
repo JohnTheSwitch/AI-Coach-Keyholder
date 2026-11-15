@@ -221,6 +221,14 @@ _QUESTION_STAGES = {
 }
 
 
+def _render_todays_tasks(data: object) -> str:
+    """Bug fix 2026-11-15: today's obedience / training / board tasks and where each stands, so "the task is done" is understood."""
+    lines = ["Today's tasks the system gave the user, and where each stands (authoritative; the system decides them, never you):"]
+    for t in data["tasks"]:
+        lines.append(f"- {t['kind']}: {_quoted(t['task'])}: {t['state']}.")
+    return "\n".join(lines)
+
+
 def _render_detector_questions(data: object) -> str:
     """Owner, 2026-11-12: the detector questions the system asked the user, so the model never claims there is none."""
     lines = ["Questions the system asked the user about something it detected (these are all of them; never invent others):"]
@@ -284,8 +292,9 @@ _FRAGMENT_RENDERERS = {
     "contract": _render_contract,
     "coach": _render_coach,
     "detector_questions": _render_detector_questions,
+    "todays_tasks": _render_todays_tasks,
 }
-_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "release", "detector_questions", "coach")
+_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "todays_tasks", "release", "detector_questions", "coach")
 
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:
