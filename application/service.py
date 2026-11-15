@@ -186,6 +186,7 @@ class ApplicationService:
         self.lines = None
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
+        self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
         # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
@@ -305,6 +306,15 @@ class ApplicationService:
                     reason_reply = None
                 if reason_reply is not None:
                     return reason_reply
+
+            if self.gear_command is not None and (incoming.text or "").strip().lower().split()[:1] == ["gear"]:
+                try:
+                    gear_reply = self.gear_command(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The gear list could not be changed; the message is handled normally.")
+                    gear_reply = None
+                if gear_reply is not None:
+                    return OutgoingMessage(text=gear_reply) if isinstance(gear_reply, str) else gear_reply
 
             if self.training_log is not None and (incoming.text or "").strip().lower().startswith("log "):
                 try:

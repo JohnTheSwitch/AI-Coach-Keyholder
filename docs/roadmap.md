@@ -44,6 +44,7 @@ here are part of the approval.
 | Q4 | **Weekly review shows brat taming** (done 2026-11-14) | Adds lines owed / done and recovery tasks verified (hours earned) to the Sunday review; plain facts, no Trust scores |
 | Q4b | **Daily obedience tasks (erotic / BDSM)** (done 2026-11-14) (owner, 2026-11-14: "a strict keyholder that would make me an obedient slave") | One task a day at a random moment in free time (never quiet hours or work hours), from a closed catalogue that uses only what he owns: **butt plugs, restraints, a collar** (nipple clamps once he has them). Shown as a Chaster task: a photo with Chaster's code, judged by the community. **Mandatory:** not done in time or the photo rejected = a Warning-level incident (Trust and 20 lines). **Limits, never crossed:** nothing public or outdoors; no photo shows his face or anything he could be recognised by (the task text says what the photo shows and only that); no strong pain (no ballbusting); restraints only ones he can free himself from; wearing times capped. Chaster's one task slot: a spot check goes first, then the daily task, then a sheet of lines, then a recovery offer. Health, safety and a stated need always cancel a task without consequence |
 | Q4c | **His training plan in the bot** (done 2026-11-15) (owner, 2026-11-15: "I built it to help me workout") | The plan from the workout chat (2026-11-14): Saturday full leg day (A and B alternate), Sunday full upper (supersets), one short session on Monday or Thursday (odd ISO week legs, even week upper; no legs Friday or Sunday). The session is that day's obedience task (it replaces the erotic one): exercises, sets and his current weights in the DM, proof = a Chaster photo of the day's training log with the code. **Full sessions are mandatory** (missed = asked to explain, unexplained = Warning and 20 lines); **the short session is optional** (the plan: "skip it and continue at the weekend"). **Short day:** the bot asks on Monday morning (Monday or Thursday); Thursday if he doesn't answer. **Progression tracked:** he sends top sets in the DM (`log squat 105 4x9`); every set at the top of the range = +2.5 kg next time (incline press to 22.5 kg); a deload week (half the sets) every 7 weeks; the return-from-break rule (squat 95 kg, -10 %, one set fewer) for the first two leg days |
+| Q4d | **Gear tags and "Are you alone?"** (done 2026-11-15) | Every obedience task names the gear it needs, also gear not owned yet (blindfold, collar, clamps, leather cuffs, padlocks, Gildo, Plug & Joy); variations when a piece is missing (eyes closed instead of the blindfold, fluffy cuffs instead of leather); only owned gear is used; he keeps the list in the DM (`gear`, `gear add blindfold`, `gear remove blindfold`). Before an erotic task the bot asks "Are you alone right now?": alone = the full version (up to 30 minutes, two add-ons, self-bondage with locked cuffs), not alone = a discreet one (one add-on, 15 minutes at most, quiet); both mandatory; no answer in 15 minutes = discreet. Safety in both: never blindfolded while restrained, nothing around the neck but a collar that is never tied or locked to anything, key and shears within reach, clamps 10 minutes at most |
 | G1 | **Relock picture checked** (done 2026-11-15) | 30 minutes after a planned hygiene relock, while the picture is required: none = asked to explain, unexplained = HYGIENE_PICTURE_MISSING (Warning, 20 lines) |
 | G2 | **Health openings and the task's health button** (owner, 2026-11-15) | The relock picture is checked after health openings too (it restricts nothing). Health openings and the obedience task's "health or safety" button are counted; from the 3rd in a rolling week the keyholder asks about the pattern, and the weekly review shows the counts. Never a penalty by itself |
 | G3 | **Consent switches ask again after 24 h** (owner, 2026-11-15) | While locked, switching photo check-ins (and similar opt-outs) off is not done at once: after 24 hours the bot asks "Do you still want it off?" and only a yes switches it off. Halt, leave, health and emergency stay immediate |
@@ -64,14 +65,11 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
 
 ## Approved, not built yet (in order)
 
-1. **Gear tags** (owner, 2026-11-15): every obedience task tagged with the gear it needs (also gear not owned yet), variations when a
-   piece is missing, and an owned-gear list kept in the DM (`gear`, `gear add blindfold`); tasks use only owned gear. The blindfold is
-   broken: off the list, its tasks kept.
-2. **G2-G5** above (health openings and the task's health button counted, consent switches ask again after 24 h, settings changes
+1. **G2-G5** above (health openings and the task's health button counted, consent switches ask again after 24 h, settings changes
    visible, false health / emergency claims).
-3. **Judge on long emergencies** (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
-   without a contradicting fact. The limit is to be proposed (about 60 minutes) and confirmed by the owner.
-4. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
+2. **Judge on long emergencies** (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
+   without a contradicting fact. Limit: **3 hours** (owner, 2026-11-15).
+3. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
 
 ## Ideas (not approved; each needs the owner's yes)
 
@@ -79,9 +77,22 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
   dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
-- **Collar tasks** once he has one (chin-down photos; only inside a task, never visible at home).
-- **Clamp and leather-cuff tasks** once he has them (timed, photo of the chest / wrists only).
 - **Typing Lines** extension: only after desk research shows the bot could keep rewriting the lock's extensions with it on.
+
+## Shopping list (most important first; only gear the bot can use)
+
+Tasks for each piece are already in the catalogue; after buying, send `gear add <piece>` and they start coming.
+
+1. **Safety shears** (rope and cuff safety; until then, scissors within reach).
+2. **New blindfold** (Ouch!, about 139 Kč): `gear add blindfold`.
+3. **Collar** (Ouch! Deluxe, about 499 Kč; no lock needed, it is never locked to anything): `gear add collar`.
+4. **Adjustable nipple clamps** (Taboom, about 389 Kč): `gear add clamps`.
+5. **Leather cuffs** (Ouch!, about 389 Kč) and **two small padlocks** (for locked self-bondage, keys within reach): `gear add leather cuffs`,
+   `gear add padlocks`.
+6. **Gildo No. 27** (about 589 Kč, plug ladder 4.5 cm): `gear add gildo`.
+7. **Plug & Joy medium** (about 255 Kč, plug ladder 5.5 cm): `gear add plug joy`.
+8. **CSR Bluetooth dongle**: only if the Deep Diver control idea is approved.
+9. **Satisfyer Top Secret** (about 1,299 Kč): only after the Deep Diver test works.
 
 ## Declined (2026-11-14; not to be proposed again without new reasons)
 

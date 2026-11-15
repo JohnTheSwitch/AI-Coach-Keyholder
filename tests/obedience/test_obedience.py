@@ -34,16 +34,23 @@ class World:
     def due(self):
         return datetime.fromisoformat(self.row()["planned_at"].replace("Z", "+00:00"))
 
+    def start(self, at=None, answer="alone"):
+        """The task's moment comes, he is asked whether he is alone, and he answers (owner, 2026-11-15)."""
+        at = at or self.due()
+        self.tasks.tick(at)
+        return self.tasks.press(user_id=U, row_id=self.row()["id"], action=answer, now=at)
+
 
 def _all_texts():
     from obedience.service import compose
-    composed = {compose(random.Random(seed), set(), set()) for seed in range(300)}
+    composed = {compose(random.Random(seed), set(), set(), mode=mode) for seed in range(300) for mode in ("alone", "discreet")}
     return list(CATALOG) + [t for t in composed if t is not None]
 
 
 def test_the_catalogue_respects_the_limits() -> None:
-    owned = ("plug", "deep diver", "dildo", "rope", "cuffed", "corner", "cage", "rack", "push-ups", "plank", "pull-ups", "workout", "thigh",
-             "kneel", "bike", "treadmill", "calf", "cable", "wall", "fours", "face down", "blindfolded", "forehead")
+    owned = ("plug", "deep diver", "dildo", "rope", "cuff", "corner", "cage", "rack", "push-ups", "plank", "pull-ups", "workout", "thigh",
+             "kneel", "bike", "treadmill", "calf", "cable", "wall", "fours", "face down", "blindfolded", "forehead", "collar", "clamps", "bijou",
+             "eyes closed")
     for task in _all_texts():
         text = task.text.lower()
         assert len(task.text) <= 200 and "code beside it" in text and task.text.startswith("Show: "), task.key
@@ -53,7 +60,9 @@ def test_the_catalogue_respects_the_limits() -> None:
         if "rope" in text:
             assert "shears within reach" in text and "minutes" in text
         if "cuff" in text:
-            assert "key within reach" in text
+            assert "key within reach" in text or "buckled" in text
+        if "clamps" in text:
+            assert "10 minutes" in text
         if "blindfolded" in text:
             assert "rope" not in text and "cuff" not in text                    # never blindfolded in restraints
     assert {t.kind for t in CATALOG} == {"erotic", "workout"}
@@ -77,11 +86,13 @@ def test_planned_once_a_day_in_free_time_then_assigned_and_verified(tmp_path) ->
     assert MORNING < due and 8 <= due.hour < 22 and due + PHOTO_DEADLINE <= MORNING.replace(hour=22)
     assert w.chaster.assigned == []
     w.tasks.tick(due)
+    assert w.row()["status"] == "asking" and w.chaster.assigned == []
+    assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due) == "Alone: the full version. It's in Chaster now."
     row = w.row()
-    assert row["status"] == "assigned" and w.chaster.assigned == [row["text"]]
+    assert row["status"] == "assigned" and row["mode"] == "alone" and w.chaster.assigned == [row["text"]]
     with w.core.transaction() as tx:
-        note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE kind = 'obedience_task'")
-    assert "Your task for today is in Chaster now" in note["text"] and "health or safety" in note["actions_json"]
+        note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
+    assert "Your task for today is in Chaster now (the full version" in note["text"] and "health or safety" in note["actions_json"]
     w.chaster.entries[row["task_id"]] = {"createdAt": (due + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "verified"}}
     w.tasks.tick(due + timedelta(minutes=25))
     assert w.row()["status"] == "passed" and w.failures == []
@@ -91,7 +102,7 @@ def test_missed_or_rejected_asks_for_an_explanation(tmp_path) -> None:
     w = World(tmp_path)
     w.tasks.tick(MORNING)
     due = w.due()
-    w.tasks.tick(due)
+    w.start(due)
     w.tasks.tick(due + PHOTO_DEADLINE + timedelta(minutes=5))
     assert (w.row()["status"], w.row()["outcome"]) == ("failed", "missed") and w.failures == ["missed"] and w.chaster.unassigned == 1
 
@@ -99,7 +110,7 @@ def test_missed_or_rejected_asks_for_an_explanation(tmp_path) -> None:
 def test_a_health_or_safety_need_cancels_without_consequence(tmp_path) -> None:
     w = World(tmp_path)
     w.tasks.tick(MORNING)
-    w.tasks.tick(w.due())
+    w.start()
     reply = w.tasks.press(user_id=U, row_id=w.row()["id"], action="cannot", now=w.due() + timedelta(minutes=3))
     assert reply == "Cancelled, no consequence. Look after yourself first."
     assert w.row()["status"] == "cancelled" and w.failures == [] and w.chaster.unassigned == 1
@@ -174,7 +185,7 @@ class TestWearExemption:
     def test_no_task_during_a_wear_exemption_and_an_open_one_is_cancelled(self, tmp_path) -> None:
         w = World(tmp_path)
         w.tasks.tick(MORNING)
-        w.tasks.tick(w.due())
+        w.start()
         exempt = {"on": True}
         w.tasks._ports = __import__("dataclasses").replace(w.tasks._ports, in_exemption=lambda: exempt["on"])
         w.tasks.tick(w.due() + timedelta(minutes=5))
@@ -208,11 +219,13 @@ class TestVariety:
         for d in range(REPEAT_DAYS):
             day = start + timedelta(days=d)
             w.tasks.tick(day)
+            w.start()
             row = w.row()
             keys.append(row["catalog_key"])
             with w.core.transaction() as tx:                                  # close it so the next day can plan
                 tx.execute("UPDATE obedience_tasks SET status = 'passed', outcome = 'verified', decided_at = ? WHERE id = ?",
                            (day.isoformat(), row["id"]))
+            w.chaster.current = None
         assert len(keys) == REPEAT_DAYS and len(set(k for k in keys if not k.startswith("plug:"))) == len([k for k in keys if not k.startswith("plug:")])
         for a, b in zip(keys, keys[1:]):
             assert not (gear_of(a) & gear_of(b)), (a, b)
@@ -238,10 +251,10 @@ class TestNotAlone:
         w = World(tmp_path)
         w.tasks.tick(MORNING)
         due = w.due()
-        w.tasks.tick(due)
+        w.start(due)
         with w.core.transaction() as tx:
-            note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE kind = 'obedience_task'")
-        assert "door closed" in note["text"] and "Not alone right now" in note["actions_json"]
+            note = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
+        assert "door closed" in note["text"] and "Someone's around" in note["actions_json"]
         at = due + timedelta(minutes=10)
         assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=at).startswith("Postponed once.")
         assert w.row()["deadline"].startswith((at + POSTPONE).isoformat()[:16].replace("+00:00", ""))
@@ -254,6 +267,116 @@ class TestNotAlone:
     def test_no_postponement_past_free_time(self, tmp_path) -> None:
         w = World(tmp_path, free=lambda at: 8 <= at.hour < 21)
         w.tasks.tick(MORNING)
-        w.tasks.tick(w.due())
+        w.start()
         late = w.due().replace(hour=20, minute=0)
         assert "past your free time" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="later", now=late)
+
+
+class TestGearTags:
+    """Owner, 2026-11-15: every task names the gear it needs, with variations when a piece is missing; only gear he owns is used."""
+
+    def test_only_owned_gear_and_variations_when_a_piece_is_missing(self, tmp_path) -> None:
+        from obedience.service import DEFAULT_OWNED, EXTRAS, GEAR
+        w = World(tmp_path)
+        assert w.tasks.owned_gear() == DEFAULT_OWNED and "blindfold" not in DEFAULT_OWNED
+        assert all(t.needs <= set(GEAR) for t in EXTRAS)
+        texts = []
+        for _ in range(400):
+            for mode in ("alone", "discreet"):
+                task = w.tasks._pick(MORNING.date(), mode)
+                assert task.needs <= DEFAULT_OWNED, task.key
+                texts.append(task.text.lower())
+        assert not any(w_ in t for t in texts for w_ in ("blindfolded", "collar", "clamps", "leather cuffs", "gildo", "plug & joy"))
+        assert any("eyes closed" in t for t in texts)                   # the blindfold's variation keeps those tasks alive
+
+    def test_new_gear_unlocks_its_tasks(self, tmp_path) -> None:
+        w = World(tmp_path)
+        assert w.tasks.gear_command(U, "gear add blindfold", MORNING) == "Added: blindfold. Tasks that need it can come now."
+        assert w.tasks.gear_command(U, "gear add nipple clamps", MORNING).startswith("Added: nipple clamps")
+        assert w.tasks.gear_command(U, "gear add gildo", MORNING).startswith("Added: glass Gildo")
+        owned = w.tasks.owned_gear()
+        assert {"blindfold", "clamps", "gildo_27"} <= owned
+        keys = {w.tasks._pick(MORNING.date(), "alone").key for _ in range(600)}
+        assert {"blind_plug", "clamps_chest", "clamps_vibe"} & keys
+        listing = w.tasks.gear_command(U, "gear", MORNING)
+        assert "Your gear:" in listing and "Tasks waiting for:" in listing and "collar" in listing.split("Tasks waiting for:")[1]
+        assert w.tasks.gear_command(U, "gear remove blindfold", MORNING).startswith("Removed: blindfold")
+        assert "blindfold" not in w.tasks.owned_gear()
+
+    def test_the_ladder_uses_plugs_from_his_gear_list(self, tmp_path) -> None:
+        w = World(tmp_path)
+        TestPlugLadder()._verify(w, "plug:deep_diver", 3)
+        TestPlugLadder()._verify(w, "plug:bijou_large", 3)
+        assert w.tasks.ladder_task().key == "plug:rimfire_s"
+        w.tasks.gear_command(U, "gear add gildo", MORNING)
+        assert w.tasks.ladder_task().key == "plug:gildo_27"
+
+    def test_the_command_is_his_and_only_for_gear(self, tmp_path) -> None:
+        w = World(tmp_path)
+        assert w.tasks.gear_command("someone", "gear add collar", MORNING) is None
+        assert w.tasks.gear_command(U, "gearbox", MORNING) is None and w.tasks.gear_command(U, "hello", MORNING) is None
+        assert w.tasks.gear_command(U, "gear add spaceship", MORNING).startswith("I don't know that piece.")
+        assert w.tasks.gear_command(U, "gear buy collar", MORNING).startswith("Use `gear`")
+
+    def test_safety_notes_follow_the_gear(self) -> None:
+        from obedience.service import safety_notes
+        assert "never tied, clipped or locked to anything" in safety_notes("Show: kneeling in your collar")
+        assert "never blindfolded while restrained" in safety_notes("Show: wrists in the leather cuffs")
+        assert "10 minutes at most" in safety_notes("Show: clamps on your nipples")
+        assert safety_notes("Show: on all fours") == ""
+
+
+class TestAloneQuestion:
+    """Owner, 2026-11-15: before the task the bot asks whether he is alone; alone = full version, not alone = discreet; both mandatory."""
+
+    def test_discreet_tasks_are_quiet_short_and_single(self, tmp_path) -> None:
+        import re
+        from obedience.service import ALONE_ONLY
+        w = World(tmp_path)
+        w.tasks.gear_command(U, "gear add blindfold", MORNING)
+        w.tasks.gear_command(U, "gear add leather cuffs", MORNING)
+        w.tasks.gear_command(U, "gear add padlocks", MORNING)
+        for _ in range(400):
+            task = w.tasks._pick(MORNING.date(), "discreet")
+            assert task.modes != ALONE_ONLY, task.key
+            if task.key.startswith("pose:"):
+                assert task.key.count("+") == 1 and int(re.search(r"(\d+) minutes", task.text).group(1)) <= 15, task.text
+                assert "deep diver in and vibrating" not in task.text.lower()
+
+    def test_no_answer_means_the_discreet_version(self, tmp_path) -> None:
+        from obedience.service import ASK_WAIT
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        w.tasks.tick(due)
+        with w.core.transaction() as tx:
+            ask = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:ask:%'")
+        assert "Are you alone right now?" in ask["text"] and "I'm alone" in ask["actions_json"] and "Not alone" in ask["actions_json"]
+        w.tasks.tick(due + ASK_WAIT - timedelta(minutes=1))
+        assert w.row()["status"] == "asking"
+        w.tasks.tick(due + ASK_WAIT)
+        assert (w.row()["status"], w.row()["mode"]) == ("assigned", "discreet") and w.row()["catalog_key"] != "ask"
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due + ASK_WAIT) == "Already answered."
+
+    def test_not_alone_answer_and_a_second_answer(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        assert w.start(answer="discreet") == "Not alone: a discreet version. It's in Chaster now."
+        assert w.row()["mode"] == "discreet"
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=w.due()) == "Already answered."
+
+    def test_cannot_while_being_asked_and_an_exemption_cancels_the_question(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        w.tasks.tick(w.due())
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="cannot", now=w.due()).startswith("Cancelled, no consequence.")
+        assert w.row()["status"] == "cancelled" and w.chaster.assigned == []
+
+    def test_the_question_waits_for_a_free_slot(self, tmp_path) -> None:
+        w = World(tmp_path, slot=True)
+        w.tasks.tick(MORNING)
+        w.tasks.tick(w.due())
+        assert w.row()["status"] == "planned"                               # no question while a spot check holds the slot
+        w.slot = False
+        w.tasks.tick(w.due() + timedelta(minutes=10))
+        assert w.row()["status"] == "asking" and w.tasks.has_open_task()

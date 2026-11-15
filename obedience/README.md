@@ -39,7 +39,21 @@ from his home gym; heavy lifts never with a plug.
 water-based lube on silicone (Deep Diver) and PVC (Plug & Joy, Rimfire); never numbing lube; never overnight (tasks only run in free time);
 stop at pain or bleeding, and a plug task cancelled for health sends the next one a rung back down.
 
+**Gear tags (owner, 2026-11-15; migration 073).** Every task names the gear it needs (`Task.needs`, keys of `GEAR`), also gear he does
+not own yet (blindfold, collar, clamps, leather cuffs, padlocks, Gildo No. 27, Plug & Joy medium). A task is given only when he owns all of
+it. Composed add-ons have variations in order of preference (`ADDONS`): eyes closed when there is no blindfold, the fluffy cuffs when there
+are no leather ones. He keeps the list in the DM: `gear` shows it, `gear add <piece>` / `gear remove <piece>` change it (table
+`obedience_gear`; a piece with no row keeps `DEFAULT_OWNED`, his inventory of 2026-11-14 minus the broken blindfold). The plug ladder counts
+only plugs on the list. Event: `obedience.gear_changed`.
+
+**"Are you alone right now?" (owner, 2026-11-15; migration 073).** An erotic day is planned without a task (`ASK_KEY`). When its moment
+comes and Chaster's slot is free, the bot asks (status `asking`): "I'm alone" gives the full version (up to 30 minutes, two add-ons,
+self-bondage with locked leather cuffs, louder toys), "Not alone" a discreet one (one add-on, 15 minutes at most, the Deep Diver on its
+lowest setting, nothing long to set up). Both are mandatory; no answer in 15 minutes = the discreet version. "I can't now (health or
+safety)" works while being asked too. A training day is not asked. Safety lines in the DM follow the gear (`safety_notes`): key and shears
+within reach and never blindfolded while restrained; the collar loose enough for two fingers and never tied, clipped or locked to anything;
+clamps off after 10 minutes at most. Events: `obedience.alone_asked`, `obedience.alone_answered`.
+
 **He does not live alone (owner, 2026-11-14; migration 070).** Every task message says: in your room with the door closed, quiet, nothing
-left lying around or visible afterwards. "Not alone right now (+2 h, once)" moves the photo deadline to 2 hours from the press, once per
-task and never past free time; after that the task is done or it fails. No gag task, no loud toy; the collar (when he has one) only inside
-a task.
+left lying around or visible afterwards. "Someone's around (+2 h, once)" (was "Not alone right now") moves the photo deadline to 2 hours from the press, once per
+task and never past free time; after that the task is done or it fails. No gag task; loud toys only in the alone version; the collar only inside a task.

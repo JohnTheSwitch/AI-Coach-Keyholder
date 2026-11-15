@@ -46,17 +46,50 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE"]
+__all__ = ["ObedienceTasks", "Ports", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
 WORKOUT_SHARE = 0.25                     # about one day in four is a workout task (owner, 2026-11-14)
 PLAN_STEP = timedelta(minutes=15)
-POSTPONE = timedelta(hours=2)            # "Not alone right now": once per task (owner, 2026-11-14: he does not live alone)
+POSTPONE = timedelta(hours=2)            # "Someone's around": once per task (owner, 2026-11-14: he does not live alone)
+ASK_WAIT = timedelta(minutes=15)         # "Are you alone right now?" unanswered this long = the discreet version (owner, 2026-11-15)
 DISCRETION = "Do it in your room with the door closed, keep it quiet, and leave nothing lying around or visible afterwards."
 SAFETY = ("Stop at once if anything hurts, bleeds, goes numb or feels wrong; that never counts against you. Never numbing lube, never "
           "overnight.")
+ALONE, DISCREET = "alone", "discreet"
+ASK_KEY = "ask"                          # a planned task not chosen yet: chosen when he answers the alone question
+BOTH = frozenset({ALONE, DISCREET})
+ALONE_ONLY = frozenset({ALONE})
+DISCREET_ONLY = frozenset({DISCREET})
+
+# Owner, 2026-11-15: "build a set of tasks even for a gear I don't have yet and for each do some tag of what gear I need for it, some
+# variations if I don't have certain gear and then a list of my gear and it would only use those I have things for." Every gear piece a task
+# can need; he keeps the owned list in the DM (`gear`, `gear add blindfold`). DEFAULT_OWNED is his inventory of 2026-11-14 (the blindfold
+# broke on 2026-11-15, so it is not owned until he adds it back).
+GEAR: dict[str, str] = {
+    "deep_diver": "gray Satisfyer Deep Diver (vibrating plug)",
+    "bijou_large": "clear Crushious Bijou (metal plug)",
+    "gildo_27": "glass Gildo No. 27 plug",
+    "plug_joy_medium": "Plug & Joy medium plug",
+    "rimfire_s": "Wolf Rimfire S plug",
+    "dildo_purple": "purple RealRock dildo",
+    "dildo_big": "big Lovetoy dildo",
+    "rope_cotton": "red cotton rope",
+    "rope_hemp": "natural hemp rope",
+    "toy_cuffs": "fluffy cuffs",
+    "leather_cuffs": "leather cuffs",
+    "padlocks": "small padlocks with keys",
+    "blindfold": "blindfold",
+    "collar": "collar",
+    "clamps": "nipple clamps",
+}
+DEFAULT_OWNED = frozenset({"deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs"})
+ALL_GEAR = frozenset(GEAR)
+GEAR_ALIASES = {"gildo": "gildo_27", "plug_joy": "plug_joy_medium", "plug_and_joy": "plug_joy_medium", "rimfire": "rimfire_s",
+                "bijou": "bijou_large", "diver": "deep_diver", "cuffs": "leather_cuffs", "padlock": "padlocks", "locks": "padlocks",
+                "nipple_clamps": "clamps", "clamp": "clamps", "mask": "blindfold"}
 
 
 @dataclass(frozen=True)
@@ -64,43 +97,78 @@ class Task:
     key: str
     text: str                           # the Chaster task: what to do and exactly what the photo shows (plain, like "Show your lockbox")
     kind: str                           # erotic | workout
+    needs: frozenset = frozenset()      # gear (GEAR keys) the task needs; given only when he owns all of it
+    modes: frozenset = BOTH             # alone | discreet: which answers to "Are you alone right now?" it suits
+    uses: frozenset = frozenset()       # main gear for "never two days in a row" (empty: the key's first word)
 
 
 PHOTO_BEHIND = "Photo from behind, waist down only, code beside it."
 
-# Owner, 2026-11-14: "make the tasks so that it's not repetitive". Most erotic days are COMPOSED from a pose and one or two pieces of his gear,
-# so there are dozens of combinations; a combination used in the last REPEAT_DAYS days is not used again, and the main gear never repeats
-# two days in a row. The photo is always from behind, waist down: never his face.
-POSES: tuple[tuple[str, str, int], ...] = (                # (key, words, max minutes)
-    ("kneel", "kneeling upright, hands on thighs", 20),
-    ("fours", "on all fours", 15),
-    ("forehead", "kneeling, forehead to the floor", 15),
-    ("wall", "facing a wall, hands behind your head", 15),
-    ("corner", "kneeling in a corner, hands behind your back", 15),
-    ("facedown", "lying face down, legs apart", 20),
+# Owner, 2026-11-14: "make the tasks so that it's not repetitive". Most erotic days are COMPOSED from a pose and one or two add-ons, so there
+# are dozens of combinations; a combination used in the last REPEAT_DAYS days is not used again, and the main gear never repeats two days in
+# a row. The photo is always from behind, waist down: never his face.
+# Alone (owner, 2026-11-15): up to 30 minutes, two add-ons, louder. Discreet: one add-on, at most 15 minutes, quiet.
+POSES: tuple[tuple[str, str, int], ...] = (                # (key, words, max minutes alone)
+    ("kneel", "kneeling upright, hands on thighs", 30),
+    ("fours", "on all fours", 20),
+    ("forehead", "kneeling, forehead to the floor", 20),
+    ("wall", "facing a wall, hands behind your head", 20),
+    ("corner", "kneeling in a corner, hands behind your back", 25),
+    ("facedown", "lying face down, legs apart", 30),
 )
-ADDONS: dict[str, str] = {
-    "vibe": "Deep Diver in and vibrating",
-    "blind": "blindfolded",
-    "cuffs": "wrists cuffed in front, key within reach",
-    "thighs": "thighs tied with the red rope, shears within reach",
-    "word": "'locked' written on your thigh",
+DISCREET_MINUTES = 15
+CLAMP_MINUTES = 10
+# Each add-on: variations in order of preference, (gear needed, words, modes). The first one he has gear for and that suits the mode is used;
+# with none, the add-on is left out. A variation with no gear ("eyes closed") keeps a task alive while a piece is missing.
+ADDONS: dict[str, tuple[tuple[frozenset, str, frozenset], ...]] = {
+    "vibe": ((frozenset({"deep_diver"}), "Deep Diver in and vibrating", ALONE_ONLY),
+             (frozenset({"deep_diver"}), "Deep Diver in, vibrating on its lowest setting", DISCREET_ONLY)),
+    "blind": ((frozenset({"blindfold"}), "blindfolded", BOTH),
+              (frozenset(), "eyes closed the whole time", BOTH)),
+    "cuffs": ((frozenset({"leather_cuffs"}), "wrists in the leather cuffs, buckled together in front", BOTH),
+              (frozenset({"toy_cuffs"}), "wrists cuffed in front, key within reach", BOTH)),
+    "thighs": ((frozenset({"rope_cotton"}), "thighs tied with the red rope, shears within reach", BOTH),),
+    "word": ((frozenset(), "'locked' written on your thigh", BOTH),),
+    "collar": ((frozenset({"collar"}), "wearing your collar", BOTH),),
+    "clamps": ((frozenset({"clamps"}), "clamps on your nipples", BOTH),),
 }
 _ADDON_BAN = {("blind", "cuffs"), ("blind", "thighs"), ("cuffs", "thighs")}            # never blindfolded in restraints; one restraint at a time
 _POSE_BAN = {("cuffs", "wall"), ("cuffs", "corner"), ("thighs", "wall"), ("thighs", "fours")}   # hands are behind / legs must move
 REPEAT_DAYS = 14
 
+_DD, _BJ = frozenset({"deep_diver"}), frozenset({"bijou_large"})
 EXTRAS: tuple[Task, ...] = (
-    Task("dildo_kneel", "Show: kneeling with the purple RealRock dildo stuck to the floor in front of you. Photo of the dildo and your knees only, code beside it.", "erotic"),
-    Task("dildo_ride", "Show: the purple RealRock dildo stuck to the floor and you riding it, with water-based lube. " + PHOTO_BEHIND, "erotic"),
-    Task("dildo_size", "Show: the big Lovetoy dildo next to your cage, for size. Photo of the two only, code beside it.", "erotic"),
-    Task("rope_harness", "Show: a chest harness in the red rope. Photo from the neck down, no face, code beside it. Keep it 20 minutes, shears within reach.", "erotic"),
-    Task("rope_ankles", "Show: your ankles tied with the hemp rope. Photo of your ankles only, code beside it. Keep it 20 minutes, shears within reach.", "erotic"),
+    Task("dildo_kneel", "Show: kneeling with the purple RealRock dildo stuck to the floor in front of you. Photo of the dildo and your knees only, code beside it.",
+         "erotic", frozenset({"dildo_purple"})),
+    Task("dildo_ride", "Show: the purple RealRock dildo stuck to the floor and you riding it, with water-based lube. " + PHOTO_BEHIND,
+         "erotic", frozenset({"dildo_purple"}), ALONE_ONLY),
+    Task("dildo_size", "Show: the big Lovetoy dildo next to your cage, for size. Photo of the two only, code beside it.", "erotic",
+         frozenset({"dildo_big"})),
+    Task("rope_harness", "Show: a chest harness in the red rope. Photo from the neck down, no face, code beside it. Keep it 20 minutes, shears within reach.",
+         "erotic", frozenset({"rope_cotton"}), ALONE_ONLY),
+    Task("rope_ankles", "Show: your ankles tied with the hemp rope. Photo of your ankles only, code beside it. Keep it 15 minutes, shears within reach.",
+         "erotic", frozenset({"rope_hemp"})),
+    Task("selfbond_cuffs", "Show: kneeling, wrists in the leather cuffs locked together in front, key within reach on the floor. " + PHOTO_BEHIND + " 20 minutes.",
+         "erotic", frozenset({"leather_cuffs", "padlocks"}), ALONE_ONLY, frozenset({"cuffs"})),
+    Task("selfbond_ankles", "Show: ankles buckled together in the leather cuffs, lying face down, key within reach. " + PHOTO_BEHIND + " 25 minutes.",
+         "erotic", frozenset({"leather_cuffs"}), ALONE_ONLY, frozenset({"cuffs"})),
+    Task("collar_kneel", "Show: kneeling in your collar, hands behind your back. Photo from the collar down, chin out of frame, no face, code beside it. 15 minutes.",
+         "erotic", frozenset({"collar"})),
+    Task("collar_plug", "Show: your collar on and the clear Bijou in, on all fours. " + PHOTO_BEHIND + " Collar visible only from behind. 20 minutes.",
+         "erotic", frozenset({"collar", "bijou_large"}), ALONE_ONLY, frozenset({"collar", "plug"})),
+    Task("clamps_chest", "Show: clamps on your nipples, kneeling upright. Photo of your chest only, no face, code beside it. 10 minutes, then off slowly.",
+         "erotic", frozenset({"clamps"})),
+    Task("clamps_vibe", "Show: clamps on your nipples, the Deep Diver vibrating in you, on all fours. Photo from the side, neck down only, code beside it. 10 minutes.",
+         "erotic", frozenset({"clamps", "deep_diver"}), ALONE_ONLY, frozenset({"clamps", "vibe"})),
+    Task("blind_plug", "Show: blindfolded, kneeling, the clear Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
+         frozenset({"blindfold", "bijou_large"}), ALONE_ONLY, frozenset({"blind", "plug"})),
+    Task("plug_quiet", "Show: the clear Bijou in, lying on your bed. Photo of the plug base only, code beside it. Then keep it in 30 minutes at your desk.",
+         "erotic", _BJ, DISCREET_ONLY, frozenset({"plug"})),
 )
 WORKOUTS: tuple[Task, ...] = (
     Task("workout_squats", "Show: the bar in your rack after 5 sets of squats. Photo of the bar and your legs only, code beside it.", "workout"),
     Task("workout_pullups", "Show: 5 sets of pull-ups done, the last one with your vest. Photo of the bar and your hands only, code beside it.", "workout"),
-    Task("workout_pushups", "Show: 50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only, code beside it.", "workout"),
+    Task("workout_pushups", "Show: 50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only, code beside it.", "workout", _DD),
     Task("workout_plank", "Show: a 3-minute plank, cage visible. Photo from the side, neck down only, code beside it.", "workout"),
     Task("workout_bike", "Show: 10 rounds of 20 s hard / 40 s easy on the air bike. Photo of the bike's display only, code beside it.", "workout"),
     Task("workout_incline", "Show: 20 minutes of incline walking on the treadmill. Photo of the treadmill display only, code beside it.", "workout"),
@@ -112,12 +180,25 @@ CATALOG: tuple[Task, ...] = EXTRAS + WORKOUTS                # the fixed tasks (
 _BY_KEY = {t.key: t for t in CATALOG}
 
 
-def compose(rng, banned: set[str], yesterday_gear: set[str]) -> Task | None:
-    """A pose plus one or two add-ons, never a combination in `banned` and never yesterday's main gear. None when nothing new is left."""
+def suits(task: Task, owned: frozenset | set, mode: str) -> bool:
+    """He owns everything the task needs and it suits his answer to "Are you alone right now?"."""
+    return task.needs <= owned and mode in task.modes
+
+
+def _variation(addon: str, owned, mode: str) -> str | None:
+    for needs, words, modes in ADDONS[addon]:
+        if needs <= owned and mode in modes:
+            return words
+    return None
+
+
+def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mode: str = ALONE) -> Task | None:
+    """A pose plus add-ons (two at most when alone, one when not), never a combination in `banned`, never yesterday's main gear, and only
+    variations he has the gear for. None when nothing new is left."""
     combos = []
+    names = [a for a in ADDONS if _variation(a, owned, mode) is not None]
+    options = [(a,) for a in names] + ([(a, b) for i, a in enumerate(names) for b in names[i + 1:]] if mode == ALONE else [])
     for pose, words, minutes in POSES:
-        names = list(ADDONS)
-        options = [(a,) for a in names] + [(a, b) for i, a in enumerate(names) for b in names[i + 1:]]
         for addons in options:
             if any((a, b) in _ADDON_BAN or (b, a) in _ADDON_BAN for a in addons for b in addons if a != b):
                 continue
@@ -129,9 +210,13 @@ def compose(rng, banned: set[str], yesterday_gear: set[str]) -> Task | None:
     if not combos:
         return None
     key, words, minutes, addons = rng.choice(combos)
-    minutes = rng.choice([m for m in (10, 15, 20) if m <= minutes])
-    parts = ", ".join(ADDONS[a] for a in addons)
-    return Task(key, f"Show: {words}, {parts}. {PHOTO_BEHIND} {minutes} minutes.", "erotic")
+    cap = min(minutes, DISCREET_MINUTES) if mode == DISCREET else minutes
+    if "clamps" in addons:
+        cap = min(cap, CLAMP_MINUTES)
+    minutes = rng.choice([m for m in (10, 15, 20, 25, 30) if m <= cap])
+    parts = ", ".join(_variation(a, owned, mode) for a in addons)
+    needs = frozenset().union(*(next(n for n, w, _m in ADDONS[a] if w == _variation(a, owned, mode)) for a in addons))
+    return Task(key, f"Show: {words}, {parts}. {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}))
 
 
 def gear_of(key: str) -> set[str]:
@@ -140,27 +225,43 @@ def gear_of(key: str) -> set[str]:
         return set(key.split("+")[1:])
     if key.startswith("plug:"):
         return {"plug"}
+    task = _BY_KEY.get(key)
+    if task is not None and task.uses:
+        return set(task.uses)
     return {key.split("_")[0]}
+
+
+def safety_notes(text: str) -> str:
+    """Safety lines for the DM, from what the task names (owner, 2026-11-15: in both modes)."""
+    t = text.lower()
+    notes = []
+    if any(w in t for w in ("rope", "cuff", "tied")):
+        notes.append("Key and shears (or scissors) within reach the whole time; never blindfolded while restrained; free yourself at once if "
+                     "anything tingles or goes cold.")
+    if "collar" in t:
+        notes.append("The collar stays loose enough for two fingers and is never tied, clipped or locked to anything.")
+    if "clamp" in t:
+        notes.append("Clamps come off after 10 minutes at most, slowly, one at a time.")
+    return " ".join(notes)
 
 
 @dataclass(frozen=True)
 class Plug:
-    key: str
+    key: str                                 # also its GEAR key: on the ladder only when he owns it
     name: str
     diameter_cm: float
-    owned: bool
     lube: str                                # what the plug's material takes
 
 
-# Sizes from sexshop51.cz product pages and retailer specs (2026-11-14). Mark a plug owned when the owner says he has it.
+# Sizes from sexshop51.cz product pages and retailer specs (2026-11-14). A rung counts only when its plug is in his gear list.
 # Research (2026-11-14): warm up on the size below, short sessions growing slowly, rest days between sessions, water-based lube on silicone
 # and PVC, never numbing lube, never overnight, stop at pain or bleeding.
 PLUG_LADDER: tuple[Plug, ...] = (
-    Plug("deep_diver", "gray Satisfyer Deep Diver", 3.3, True, "water-based lube"),
-    Plug("bijou_large", "clear Crushious Bijou", 4.1, True, "plenty of lube"),
-    Plug("gildo_27", "glass Gildo No. 27", 4.5, False, "plenty of lube"),
-    Plug("plug_joy_medium", "Plug & Joy medium", 5.5, False, "water-based lube"),
-    Plug("rimfire_s", "Wolf Rimfire S", 6.0, True, "water-based lube"),
+    Plug("deep_diver", "gray Satisfyer Deep Diver", 3.3, "water-based lube"),
+    Plug("bijou_large", "clear Crushious Bijou", 4.1, "plenty of lube"),
+    Plug("gildo_27", "glass Gildo No. 27", 4.5, "plenty of lube"),
+    Plug("plug_joy_medium", "Plug & Joy medium", 5.5, "water-based lube"),
+    Plug("rimfire_s", "Wolf Rimfire S", 6.0, "water-based lube"),
 )
 LADDER_STEP = 3                          # verified wears on a rung before the next one
 LADDER_SHARE = 1 / 3                     # of erotic days
@@ -221,7 +322,8 @@ class ObedienceTasks:
             # Work queue Q4c: a training day's task is the plan's session, given at the start of free time so the whole evening is his.
             planned, task, details = moments[0], Task(training.key, training.text, "workout"), training.details
         else:
-            planned, task, details = self._rng.choice(moments), self._pick(day), None
+            # Owner, 2026-11-15: the task itself is chosen only when he answers "Are you alone right now?" (ASK_KEY until then).
+            planned, task, details = self._rng.choice(moments), Task(ASK_KEY, "", "erotic"), None
         row_id = str(uuid.uuid4())
 
         def write(tx: Transaction, _s: object) -> None:
@@ -232,9 +334,11 @@ class ObedienceTasks:
         apply_transition(self._core, write=write)
         decision("obedience", "Today's obedience task was planned.", day=day.isoformat(), task=task.key, planned_at=_iso(planned))
 
-    def _pick(self, day: date) -> Task:
+    def _pick(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
         """Workout about one day in four; otherwise the plug ladder (never two days running: a rest day between plug sessions), a composed
-        pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, and never yesterday's main gear."""
+        pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, never yesterday's main gear, only gear he owns, and only
+        tasks that suit `mode` (alone: the full versions; discreet: quiet and short)."""
+        owned = self.owned_gear() if owned is None else owned
         since = (day - timedelta(days=REPEAT_DAYS)).isoformat()
         with self._core.transaction() as tx:
             rows = [dict(r) for r in tx.fetch_all("SELECT local_date, catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? "
@@ -242,29 +346,39 @@ class ObedienceTasks:
         banned = {r["catalog_key"] for r in rows}
         yesterday = (day - timedelta(days=1)).isoformat()
         yesterday_gear = set().union(*(gear_of(r["catalog_key"]) for r in rows if r["local_date"] == yesterday)) if rows else set()
-        if self._rng.random() < WORKOUT_SHARE:
-            options = [t for t in WORKOUTS if t.key not in banned] or list(WORKOUTS)
-            return self._rng.choice(options)
+        workouts = [t for t in WORKOUTS if suits(t, owned, mode)]
+        if self._rng.random() < WORKOUT_SHARE and "workout" not in yesterday_gear:
+            return self._rng.choice([t for t in workouts if t.key not in banned] or workouts)
         roll = self._rng.random()
         if roll < LADDER_SHARE and "plug" not in yesterday_gear:
-            return self.ladder_task()
-        if roll < 0.8:
-            composed = compose(self._rng, banned, yesterday_gear)
+            plug = self.ladder_task(owned)
+            if plug is not None:
+                return plug
+        extras = [t for t in EXTRAS if suits(t, owned, mode)]
+        fresh = [t for t in extras if t.key not in banned and not gear_of(t.key) & yesterday_gear]
+        # Composed tasks most days; the fixed extras get a fair share, more of it when new gear unlocked many of them.
+        if roll < 0.8 - 0.02 * len(fresh):
+            composed = compose(self._rng, banned, yesterday_gear, owned, mode)
             if composed is not None:
                 return composed
-        options = [t for t in EXTRAS if t.key not in banned and not gear_of(t.key) & yesterday_gear] or list(EXTRAS)
-        return self._rng.choice(options)
+        if fresh:
+            return self._rng.choice(fresh)
+        return compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode) or self._rng.choice(workouts)
 
-    def ladder_task(self) -> Task:
+    def ladder_task(self, owned: frozenset | None = None) -> Task | None:
         """The next plug task on the ladder: the current rung's plug, a warm-up on the size below, the right lube, and a wearing time that grows
-        with verified wears there. A plug task cancelled for health or safety sends the next one a rung back down."""
+        with verified wears there. A plug task cancelled for health or safety sends the next one a rung back down. Only plugs in his gear list
+        count; None when he has none."""
+        owned = self.owned_gear() if owned is None else owned
         with self._core.transaction() as tx:
             passed = {r["catalog_key"]: r["n"] for r in tx.fetch_all(
                 "SELECT catalog_key, COUNT(*) AS n FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
                 "AND catalog_key LIKE 'plug:%' GROUP BY catalog_key", (self.user_id,))}
             last = tx.fetch_one("SELECT catalog_key, outcome FROM obedience_tasks WHERE user_id = ? AND catalog_key LIKE 'plug:%' AND decided_at IS NOT NULL "
                                 "ORDER BY decided_at DESC LIMIT 1", (self.user_id,))
-        owned = [p for p in PLUG_LADDER if p.owned]
+        owned = [p for p in PLUG_LADDER if p.key in owned]
+        if not owned:
+            return None
         index = 0
         for i, plug in enumerate(owned):
             index = i
@@ -281,7 +395,7 @@ class ObedienceTasks:
 
     def _cancel_open(self, now: datetime, outcome: str) -> None:
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('assigned', 'submitted')",
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned', 'submitted')",
                                                   (self.user_id,))]
         for row in rows:
             try:
@@ -295,7 +409,7 @@ class ObedienceTasks:
 
     def _start_due(self, now: datetime) -> None:
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND planned_at <= ?",
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('planned', 'asking') AND planned_at <= ?",
                                                   (self.user_id, _iso(now)))]
         for row in rows:
             try:
@@ -303,14 +417,27 @@ class ObedienceTasks:
             except Exception:
                 logger.exception("An obedience task could not start; it is retried.")
 
-    def _start(self, row: dict, now: datetime) -> None:
+    def _start(self, row: dict, now: datetime) -> bool:
+        """True when the task is in Chaster now."""
         if self._ports.today(now).isoformat() != row["local_date"] or not self._ports.free_time(now + PHOTO_DEADLINE) or self._ports.paused(now):
             self._close(row, "skipped", "no_free_slot", now)            # the free time is over: no task today, no consequence
-            return
+            return False
         lock_id = self._ports.lock_id(now)
         if lock_id is None or self._ports.halted() or self._ports.slot_taken() or self._chaster.current_task(lock_id) is not None:
-            return                                                      # tried again next pass
-        task_id = self._chaster.assign(lock_id, row["text"][:200])
+            return False                                                # tried again next pass
+        key, text, mode = row["catalog_key"], row["text"], row.get("mode")
+        if key == ASK_KEY:
+            if row["status"] == "planned":
+                self._ask(row, now)
+                return False
+            if mode is None:
+                asked = _parse_iso(row["asked_at"]) if row.get("asked_at") else now
+                if now < asked + ASK_WAIT:
+                    return False
+                mode = DISCREET                                         # no answer: the discreet version (still mandatory)
+            task = self._pick(self._ports.today(now), mode)
+            key, text = task.key, task.text
+        task_id = self._chaster.assign(lock_id, text[:200])
         deadline = now + PHOTO_DEADLINE
         if row.get("details"):                                          # a training session: the log photo is due by the end of free time
             at = now + PHOTO_DEADLINE
@@ -318,27 +445,121 @@ class ObedienceTasks:
                 at += PLAN_STEP
             deadline = at
         if row.get("details"):
-            message = (f"Today's training:\n{row['details']}\nWhen you're done, in Chaster: {row['text']}\nDue by {self._ports.local_clock(deadline)}. "
+            message = (f"Today's training:\n{row['details']}\nWhen you're done, in Chaster: {text}\nDue by {self._ports.local_clock(deadline)}. "
                        f"{SAFETY}")
             actions = (ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"),)
         else:
-            message = (f"Your task for today is in Chaster now:\n{row['text']}\nPhoto with Chaster's code by "
-                       f"{self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}")
-            actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Not alone right now (+2 h, once)"),
+            version = {ALONE: "the full version, you're alone", DISCREET: "a discreet version"}.get(mode, "")
+            head = f"Your task for today is in Chaster now ({version}):" if version else "Your task for today is in Chaster now:"
+            extra = safety_notes(text)
+            message = (f"{head}\n{text}\nPhoto with Chaster's code by {self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}"
+                       + (f" {extra}" if extra else ""))
+            actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Someone's around (+2 h, once)"),
                        ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
 
         def write(tx: Transaction, _s: object) -> bool:
-            done = tx.execute("UPDATE obedience_tasks SET status = 'assigned', lock_id = ?, task_id = ?, deadline = ? WHERE id = ? AND status = 'planned'",
-                              (lock_id, task_id, _iso(deadline), row["id"])).rowcount
+            done = tx.execute("UPDATE obedience_tasks SET status = 'assigned', lock_id = ?, task_id = ?, deadline = ?, catalog_key = ?, text = ?, mode = ? "
+                              "WHERE id = ? AND status IN ('planned', 'asking')",
+                              (lock_id, task_id, _iso(deadline), key, text, mode, row["id"])).rowcount
             if done:
                 write_event(tx, DomainEvent(event_type="obedience.task_assigned", source_module="obedience", occurred_at=now,
-                                            payload={"obedience_task_id": row["id"], "catalog_key": row["catalog_key"]}))
+                                            payload={"obedience_task_id": row["id"], "catalog_key": key, "mode": mode}))
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}", now=now, immediate=True,
                                        text=message, actions=actions)
             return bool(done)
 
         if apply_transition(self._core, write=write):
-            decision("obedience", "Today's obedience task was assigned in Chaster.", task=row["catalog_key"], deadline=_iso(deadline))
+            decision("obedience", "Today's obedience task was assigned in Chaster.", task=key, mode=mode, deadline=_iso(deadline))
+            return True
+        return False
+
+    def _ask(self, row: dict, now: datetime) -> None:
+        """Owner, 2026-11-15: before the task, "Are you alone right now?". Alone = the full version, not alone = a discreet one; both mandatory."""
+        text = (f"Your task for today is ready. Are you alone right now? Alone gets the full version, not alone a discreet one; both are "
+                f"mandatory. No answer in {int(ASK_WAIT.total_seconds() // 60)} minutes means the discreet version.")
+        actions = (ActionSpec(action_id=f"obedience:alone:{row['id']}", label="I'm alone"),
+                   ActionSpec(action_id=f"obedience:discreet:{row['id']}", label="Not alone"),
+                   ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET status = 'asking', asked_at = ? WHERE id = ? AND status = 'planned'",
+                              (_iso(now), row["id"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.alone_asked", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"]}))
+                enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:ask:{row['id']}", now=now, immediate=True,
+                                       text=text, actions=actions)
+            return bool(done)
+
+        if apply_transition(self._core, write=write):
+            decision("obedience", "The wearer was asked whether he is alone before today's task.", day=row["local_date"])
+
+    def _answer(self, row: dict, mode: str, now: datetime) -> str:
+        if row["status"] != "asking" or row.get("mode"):
+            return "Already answered."
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET mode = ? WHERE id = ? AND status = 'asking' AND mode IS NULL", (mode, row["id"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.alone_answered", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"], "mode": mode}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return "Already answered."
+        decision("obedience", "The wearer answered the alone question.", mode=mode)
+        started = False
+        try:
+            started = self._start(self._row(row["id"]), now)
+        except Exception:
+            logger.exception("The obedience task could not start after the answer; it is retried.")
+        head = "Alone: the full version." if mode == ALONE else "Not alone: a discreet version."
+        return f"{head} It's in Chaster now." if started else f"{head} It comes as soon as Chaster's task slot is free."
+
+    # ------------------------------------------------------------------ gear list (owner, 2026-11-15)
+
+    def owned_gear(self) -> frozenset:
+        """His gear: DEFAULT_OWNED, changed by his own `gear add` / `gear remove`."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT gear, owned FROM obedience_gear WHERE user_id = ?", (self.user_id,))
+        owned = set(DEFAULT_OWNED)
+        for r in rows:
+            (owned.add if r["owned"] else owned.discard)(r["gear"])
+        return frozenset(owned & ALL_GEAR)
+
+    def gear_command(self, user_id: str, text: str, now: datetime) -> str | None:
+        """`gear`, `gear add <piece>`, `gear remove <piece>`; None for any other message."""
+        words = (text or "").strip().lower().split()
+        if not words or words[0] != "gear" or user_id != self.user_id:
+            return None
+        if len(words) == 1:
+            return self._gear_list()
+        if words[1] not in ("add", "remove") or len(words) < 3:
+            return "Use `gear`, `gear add <piece>` or `gear remove <piece>`."
+        name = "_".join(words[2:]).replace("-", "_").replace("&", "and")
+        gear = name if name in GEAR else GEAR_ALIASES.get(name)
+        if gear is None:
+            return f"I don't know that piece. Pieces: {', '.join(sorted(GEAR))}."
+        owned = 1 if words[1] == "add" else 0
+
+        def write(tx: Transaction, _s: object) -> None:
+            tx.execute("INSERT INTO obedience_gear (user_id, gear, owned, changed_at) VALUES (?, ?, ?, ?) "
+                       "ON CONFLICT (user_id, gear) DO UPDATE SET owned = excluded.owned, changed_at = excluded.changed_at",
+                       (self.user_id, gear, owned, _iso(now)))
+            write_event(tx, DomainEvent(event_type="obedience.gear_changed", source_module="obedience", occurred_at=now,
+                                        payload={"user_id": self.user_id, "gear": gear, "owned": bool(owned)}))
+
+        apply_transition(self._core, write=write)
+        decision("obedience", "The wearer changed his gear list.", gear=gear, owned=bool(owned))
+        if owned:
+            return f"Added: {GEAR[gear]}. Tasks that need it can come now."
+        return f"Removed: {GEAR[gear]}. Tasks that need it wait until you add it back."
+
+    def _gear_list(self) -> str:
+        owned = self.owned_gear()
+        have = ", ".join(GEAR[g] for g in GEAR if g in owned) or "nothing"
+        missing = ", ".join(GEAR[g] for g in GEAR if g not in owned) or "nothing"
+        return f"Your gear: {have}.\nTasks waiting for: {missing}.\nChange it with `gear add <piece>` or `gear remove <piece>`."
 
     # ------------------------------------------------------------------ poll
 
@@ -400,12 +621,14 @@ class ObedienceTasks:
         row = self._row(row_id)
         if row is None or row["user_id"] != user_id:
             return "That isn't yours to decide."
-        if action not in ("cannot", "later"):
+        if action not in ("cannot", "later", "alone", "discreet"):
             return "That isn't one of the options."
-        if row["status"] not in ("planned", "assigned", "submitted"):
+        if row["status"] not in ("planned", "asking", "assigned", "submitted"):
             return "That task is already decided."
         if action == "later":
             return self._postpone(row, now)
+        if action in ("alone", "discreet"):
+            return self._answer(row, ALONE if action == "alone" else DISCREET, now)
         try:
             if row["task_id"] and not self._ports.halted():
                 current = self._chaster.current_task(row["lock_id"])
@@ -450,12 +673,12 @@ class ObedienceTasks:
 
     def has_open_task(self) -> bool:
         with self._core.transaction() as tx:
-            return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status IN ('assigned', 'submitted')", (self.user_id,)) is not None
+            return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned', 'submitted')", (self.user_id,)) is not None
 
     def due_now(self, now: datetime) -> bool:
         """A planned task whose moment has come: lines and recovery offers wait for it (the slot order after a spot check)."""
         with self._core.transaction() as tx:
-            return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND planned_at <= ?",
+            return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status IN ('planned', 'asking') AND planned_at <= ?",
                                 (self.user_id, _iso(now))) is not None
 
     # ------------------------------------------------------------------ internals
@@ -472,7 +695,7 @@ class ObedienceTasks:
 
     def _close(self, row: dict, status: str, outcome: str, now: datetime, *, text: str | None = None) -> bool:
         def write(tx: Transaction, _s: object) -> bool:
-            done = tx.execute("UPDATE obedience_tasks SET status = ?, outcome = ?, decided_at = ? WHERE id = ? AND status IN ('planned', 'assigned', 'submitted')",
+            done = tx.execute("UPDATE obedience_tasks SET status = ?, outcome = ?, decided_at = ? WHERE id = ? AND status IN ('planned', 'asking', 'assigned', 'submitted')",
                               (status, outcome, _iso(now), row["id"])).rowcount
             if done:
                 write_event(tx, DomainEvent(event_type="obedience.task_decided", source_module="obedience", occurred_at=now,

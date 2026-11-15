@@ -1032,6 +1032,7 @@ def main() -> None:
         from system.dm_actions import ObedienceDm
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
+        application_service.gear_command = obedience.gear_command
         training_plan = getattr(obedience, "training", None)
         if training_plan is not None:
             from system.dm_actions import TrainingDm
