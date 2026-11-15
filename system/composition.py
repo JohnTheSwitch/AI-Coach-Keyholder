@@ -137,6 +137,13 @@ def research_export_loop_for(config, exporters, clock, *, interval_seconds: floa
     return research_export_loop(link, exporters, clock, interval_seconds=interval_seconds)
 
 
+def runtime_halted(core):
+    """G4 (owner, 2026-11-15): a read-only "is the runtime halt on?" for the settings watch (the bot never imports the execution plane)."""
+    from chaster_execution.control import ExecutionControl
+    control = ExecutionControl(core.db_path, core=core)
+    return control.is_halted
+
+
 def window_config_from(config) -> WindowConfig:
     """Fail-fast: raises ValueError for an invalid layout / timezone."""
     return WindowConfig.build(

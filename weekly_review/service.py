@@ -75,6 +75,7 @@ class WeekFacts:
     recovery_hours: float = 0.0
     health_uses: int | None = None                        # G2 (owner, 2026-11-15): None when not wired; counted, never judged here
     health_detail: str = ""
+    settings_changed: tuple = ()                          # G4 (owner, 2026-11-15): "quiet hours 22:00-07:00 -> 23:00-08:00", ...
 
     @property
     def commitments(self) -> int:
@@ -133,6 +134,8 @@ def render_week(f: WeekFacts) -> str:
         lines.append(line)
     if f.recovery_verified:
         lines.append(f"Recovery tasks verified: {f.recovery_verified} ({f.recovery_hours:g} hours off your Penalty Window).")
+    if f.settings_changed:
+        lines.append("Settings changed: " + "; ".join(f.settings_changed) + ".")
     if f.health_uses:
         lines.append(f"Health uses: {f.health_uses} ({f.health_detail}). A health need never counts against you.")
     lines.append(f"Today is counted after midnight. {OFF_HINT}")
@@ -148,6 +151,7 @@ class WeeklyReview:
         self.lines_owed: Callable[[], int] | None = None
         self.recovery_between: Callable[[date, date], list[dict]] | None = None    # Q4: recovery_tasks.service.RecoveryTasks.get_tasks_between
         self.health_between: Callable[[date, date], list[dict]] | None = None      # G2: system.health_pattern.health_uses over local dates
+        self.settings_between: Callable[[date, date], list[dict]] | None = None    # G4: settings_watch changes over local dates
 
     # ------------------------------------------------------------------ the switch
 
@@ -213,6 +217,9 @@ class WeeklyReview:
             from system.health_pattern import describe
             uses = self.health_between(week_start, end)
             counts["health_uses"], counts["health_detail"] = len(uses), describe(uses)
+        if self.settings_between is not None:
+            from settings_watch.service import LABELS
+            counts["settings_changed"] = tuple(f"{LABELS.get(c['key'], c['key'])} {c['old']} -> {c['new']}" for c in self.settings_between(week_start, end))
         return WeekFacts(start=week_start, end=end, **counts)
 
     # ------------------------------------------------------------------ Sunday evening

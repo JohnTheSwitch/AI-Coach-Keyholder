@@ -170,6 +170,7 @@ class CoachKeyholderBot(discord.Client):
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
         self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
+        self.settings_watch_loop = None          # settings_watch.service.SettingsWatch.loop: changed settings asked about (G4)
         self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
         self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
@@ -237,6 +238,8 @@ class CoachKeyholderBot(discord.Client):
             self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
         if self.obedience_loop is not None:
             self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
+        if self.settings_watch_loop is not None:
+            self._settings_watch_task = asyncio.create_task(self.settings_watch_loop, name="settings-watch")
         if self.opt_outs_loop is not None:
             self._opt_outs_task = asyncio.create_task(self.opt_outs_loop, name="opt-outs")
         if self.health_pattern_loop is not None:
@@ -1062,6 +1065,17 @@ def main() -> None:
     application_service.opt_outs = opt_outs
     bot.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=resolve_user, now=clock.now)
     bot.opt_outs_loop = opt_outs.loop(clock)
+    # G4 (owner, 2026-11-15): changed time settings (after a restart) and the runtime halt are asked about and listed in the weekly review.
+    from infrastructure.time_format import iso as iso_time
+    from system.composition import runtime_halted
+    from settings_watch.service import SettingsWatch, config_values
+    settings_user = getattr(proof_checks, "user_id", None) or getattr(config, "check_in_user_id", None)
+    settings_watch = None
+    if settings_user:
+        halted = runtime_halted(core)
+        settings_watch = SettingsWatch(core, user_id=settings_user,
+                                       values=lambda: {**config_values(config), "halt": "on" if halted() else "off"})
+        bot.settings_watch_loop = settings_watch.loop(clock)
     # G2 (owner, 2026-11-15): health uses counted; from the 3rd in 7 days the keyholder asks once a week; never restricts anything.
     from system.health_pattern import HealthPattern, health_uses, week_label
     health_user = getattr(proof_checks, "user_id", None) or getattr(config, "check_in_user_id", None)
@@ -1083,6 +1097,9 @@ def main() -> None:
         bot.weekly_review_loop = weekly_review.loop(clock)
         if recovery_tasks is not None:
             weekly_review.recovery_between = recovery_tasks.get_tasks_between      # work queue Q4
+        if settings_watch is not None:
+            weekly_review.settings_between = (lambda start, end, cfg=health_cfg, sw=settings_watch:
+                                              sw.get_changes_between(iso_time(cfg.to_utc(start, dt_time(0, 0))), iso_time(cfg.to_utc(end, dt_time(0, 0)))))
         if health_user:
             weekly_review.health_between = (lambda start, end, u=health_user, cfg=health_cfg:
                                             health_uses(core, u, cfg.to_utc(start, dt_time(0, 0)), cfg.to_utc(end, dt_time(0, 0))))
