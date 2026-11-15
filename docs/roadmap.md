@@ -81,7 +81,19 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
 5. **Morning report** (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
    after the bot comes back if it was offline that morning (whichever is later); the bot asks for it on his first message of the day; none
    by the deadline = a missed check-in. Suspended during a wear exemption, a vacation or a halt. Code checks only that it arrived.
-6. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
+6. **From the keyholding research** (owner, 2026-11-15, all approved; docs/research/keyholding_and_training.md):
+   a. **Surprise rewards:** about 1 in 5 verified obedience tasks adds +0.05 to the pool, unannounced until it happens.
+   b. **No debate with brat lines:** pushback on a rule gets one short reply restating the rule and the consequence, nothing more that turn.
+   c. **Protocol ladder:** one new rung after the current one held 14 days with at most 1 miss, announced a day ahead, never removed.
+      Duty rungs: a miss = a missed check-in. Manner rungs: no penalty, the bot acts only when redone properly; health and emergency
+      always bypass. Rungs: (1) morning report; (2) asking properly, with a reason, for a hygiene opening, an exemption or a release;
+      (3) thank the keyholder within 2 hours of each verified task; (4) form of address at the start of messages (title asked when the
+      rung comes; commands and buttons exempt); (5) weekly reflection in the Sunday review (obeyed / pushed back / one aim);
+      (6) evening kneel, 5 minutes before quiet hours, a Chaster photo from behind (skipped during an exemption).
+   d. **Wellbeing question** in the Sunday review, free answer, never scored; a hard answer gets a calm check, never a consequence.
+   e. **Photo check-ins scale with lock length** (more on week-plus locks).
+   f. **Skin-check reminder** in every hygiene opening; redness, numbness or broken skin means staying unlocked to heal, no consequence.
+7. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
 
 ## Ideas (not approved; each needs the owner's yes)
 
