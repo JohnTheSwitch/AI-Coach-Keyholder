@@ -79,7 +79,7 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
 4. **Earn the release** (done 2026-11-15; `release_earning/`; release lines: "I am grateful to my keyholder for every release I earn.") (owner, 2026-11-15): after a token is spent, the release is scheduled only once a release task is verified in
    Chaster (20 lines "I earn my release", a short obedience task, or on a training day the session itself). Rejected or missed: the token
    is kept and the task comes again the next day. Health and emergencies bypass it.
-5. **Morning report** (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
+5. **Morning report** (done 2026-11-15; `supervision/checkins.py`, slot 90) (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
    after the bot comes back if it was offline that morning (whichever is later); the bot asks for it on his first message of the day; none
    by the deadline = a missed check-in. Suspended during a wear exemption, a vacation or a halt. Code checks only that it arrived.
 6. **From the keyholding research** (owner, 2026-11-15, all approved; docs/research/keyholding_and_training.md):

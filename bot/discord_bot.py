@@ -1135,6 +1135,14 @@ def main() -> None:
         application_service.photo_check_ins = PhotoCheckInSwitch(consent=wiring.check_ins.photo_consent, user_id=wiring.check_ins.user_id)
         logger.info("Photo check-ins available (%s).", "on" if wiring.check_ins.photo_consent.is_on(wiring.check_ins.user_id)
                     else "off until the wearer sends `photo check-ins on`")
+    if wiring.check_ins is not None:
+        # The morning report (owner, 2026-11-15; roadmap item 5): asked on his first message of the day, due by 12:00 / 13:00 (or 2 h after
+        # the bot came back that morning); none = a missed check-in. Suspended during a wear exemption or the runtime halt (a vacation pauses all).
+        from system.composition import runtime_halted as _morning_halted
+        wiring.check_ins.morning_on = True
+        wiring.check_ins.online_since = clock.now()
+        wiring.check_ins.morning_suspended = (lambda now, ex=bot.exemptions, u=wiring.check_ins.user_id, halted=_morning_halted(core):
+                                              (ex is not None and ex.wear_exemption_in_force(u)) or halted())
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:

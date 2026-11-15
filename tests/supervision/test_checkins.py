@@ -451,3 +451,74 @@ class TestMissedCheckInMatrix:
         assert checkin_evidence_spec("insufficient")[1] == -0.01
         with pytest.raises(ValueError):
             checkin_evidence_spec("missed", 0)
+
+
+class TestMorningReport:
+    """Owner, 2026-11-15: asked on his first message of the day, any content, due by 12:00 on a workday / 13:00 at weekends (or 2 h after the
+    bot came back that morning); none by then = a missed check-in; suspended during a wear exemption or the halt."""
+
+    def _env(self, tmp_path, **kw):
+        e = Env(tmp_path, score=0.9, **kw)              # level 4: no ordinary check-ins in the way
+        e.svc.morning_on = True
+        return e
+
+    def _morning(self, e):
+        from supervision.checkins import MORNING_SLOT
+        return [r for r in e.rows() if r["slot_index"] == MORNING_SLOT]
+
+    def test_asked_on_the_first_message_then_any_answer_counts(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 6, 30))
+        assert self._morning(e) == []                                   # quiet hours: nothing yet
+        e.svc.tick(local(MON, 7, 5))
+        row = self._morning(e)[0]
+        assert row["status"] == "scheduled" and row["due_at"] == _iso_(local(MON, 12))
+        assert e.svc.on_user_message(U, "morning", local(MON, 8)) is False           # the first message only brings the question
+        with e.core.transaction() as tx:
+            note = tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'check_in:morning:%'")["text"]
+        assert "plan for today" in note and "12:00" in note and self._morning(e)[0]["status"] == "sent"
+        assert e.svc.on_user_message(U, "Gym after work, then laundry.", local(MON, 8, 5)) is True
+        e.svc.tick(local(MON, 8, 6))
+        assert self._morning(e)[0]["status"] == "answered" and e.evaluated == [] and e.events("check_in.answered")
+
+    def test_none_by_the_deadline_is_a_missed_check_in(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 7, 5))
+        e.svc.tick(local(MON, 12, 1))
+        assert self._morning(e)[0]["status"] == "missed" and e.events("check_in.missed")
+
+    def test_asked_but_unanswered_is_missed_too(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 7, 5))
+        e.svc.on_user_message(U, "hi", local(MON, 9))
+        e.svc.tick(local(MON, 12, 1))
+        assert self._morning(e)[0]["status"] == "missed"
+
+    def test_weekend_is_due_at_13(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(SAT, 7, 5))
+        assert self._morning(e)[0]["due_at"] == _iso_(local(SAT, 13))
+
+    def test_two_hours_after_the_bot_came_back(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.online_since = local(MON, 11, 30)
+        e.svc.tick(local(MON, 11, 31))
+        assert self._morning(e)[0]["due_at"] == _iso_(local(MON, 13, 30))
+
+    def test_suspended_during_an_exemption_or_the_halt(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 7, 5))
+        e.svc.morning_suspended = lambda now: True
+        assert e.svc.on_user_message(U, "hi", local(MON, 8)) is False
+        e.svc.tick(local(MON, 12, 1))
+        assert self._morning(e)[0]["status"] == "skipped" and not e.events("check_in.missed")
+
+    def test_off_unless_switched_on(self, tmp_path) -> None:
+        e = Env(tmp_path, score=0.9)
+        e.svc.tick(local(MON, 7, 5))
+        assert self._morning(e) == []
+
+
+def _iso_(at):
+    from infrastructure.time_format import iso
+    return iso(at)

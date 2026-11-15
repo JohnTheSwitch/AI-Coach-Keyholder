@@ -33,7 +33,7 @@ import logging
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Protocol
@@ -44,7 +44,8 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
-from schedule_windows.windows import WindowConfig, WindowKind, classify
+from notifications.queue import enqueue_in_transaction
+from schedule_windows.windows import WindowConfig, WindowKind, classify, is_non_working_day
 from supervision.checkin_evaluator import RUBRIC_VERSION, Verdict
 from supervision.checkin_schedule import slots_for_day
 from supervision.escalation import CheckInEscalation
@@ -75,6 +76,11 @@ STRICT_FOLLOW_UP_WINDOW = timedelta(minutes=15)
 QUIET_AFTER_ANSWER = timedelta(hours=3)       # owner, 2026-11-10: an hour after answering, the same question came again
 MAX_LATE = timedelta(minutes=30)             # a slot that is this overdue is skipped, not sent
 _STALE_SENDING = timedelta(minutes=5)
+MORNING_SLOT = 90                            # owner, 2026-11-15: the morning report (one a local day; below the release slot)
+MORNING_DUE = (time(12, 0), time(13, 0))     # due by 12:00 on a workday, 13:00 on a weekend or public holiday
+MORNING_AFTER_START = timedelta(hours=2)     # ...or 2 hours after the bot came back that morning, whichever is later
+MORNING_ASK = ("Good morning. Your morning report: tell me your plan for today, in your own words. Any answer counts. "
+               "Due by {due}; none by then counts as a missed check-in.")
 RELEASE_SLOT = 100                           # above any scheduled slot index: one release check-in per local day
 RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
@@ -149,6 +155,11 @@ class CheckInService:
         self.photo_times: Callable[[datetime], list[datetime] | None] | None = None
         self.photo_consent = PhotoCheckInConsent(self.db_path, core=self._core)
         self._photo_checked: dict[str, datetime] = {}
+        # The morning report (owner, 2026-11-15; roadmap item 5, protocol rung 1). Off unless the wiring switches it on. `morning_suspended(now)`:
+        # a wear exemption or the runtime halt (a vacation pauses everything anyway). `online_since`: when this process started.
+        self.morning_on = False
+        self.morning_suspended: Callable[[datetime], bool] = lambda now: False
+        self.online_since: datetime | None = None
 
     # ------------------------------------------------------------------ driver
 
@@ -159,6 +170,11 @@ class CheckInService:
             self._close_open_for_pause(now)
             return
         self._check_photos(now)
+        if self.morning_on:
+            try:
+                self._morning(now)
+            except Exception:
+                logger.exception("The morning report pass failed; it continues.")
         self._apply_deadlines(now)
         self._schedule_today(now)
         self._send_due(now)
@@ -209,6 +225,8 @@ class CheckInService:
         if user_id != self._user or not isinstance(text, str) or not text.strip():
             return False
         text = text.strip()[:_MAX_RESPONSE_CHARS]
+        if self.morning_on and self._ask_morning(now):
+            return False                # his first message of the day is not the report: the report is what he sends after the question
 
         def write(tx: Transaction, _s: object) -> bool:
             row = tx.fetch_one(
@@ -298,7 +316,8 @@ class CheckInService:
         def write(tx: Transaction, _s: object) -> int:
             # Level improved (or is now 4): unsent slots beyond the new count are skipped.
             tx.execute("UPDATE check_ins SET status = 'skipped', updated_at = ? WHERE user_id = ? AND local_date = ? "
-                       "AND status = 'scheduled' AND kind IS NULL AND slot_index >= ?", (_iso(now), self._user, local_date.isoformat(), n))
+                       "AND status = 'scheduled' AND kind IS NULL AND slot_index >= ? AND slot_index < ?",
+                       (_iso(now), self._user, local_date.isoformat(), n, MORNING_SLOT))
             made = 0
             window = max(self._timeouts[0], self._strict_timeouts[0])      # the whole time to answer lies before quiet hours
             for index, due in enumerate(slots_for_day(self._cfg, local_date, n, self._rand, answer_window=window)):
@@ -319,8 +338,8 @@ class CheckInService:
 
     def _send_due(self, now: datetime) -> None:
         with self._core.transaction() as tx:
-            due = tx.fetch_all("SELECT * FROM check_ins WHERE user_id = ? AND status = 'scheduled' AND due_at <= ? "
-                               "ORDER BY due_at", (self._user, _iso(now)))
+            due = tx.fetch_all("SELECT * FROM check_ins WHERE user_id = ? AND status = 'scheduled' AND due_at <= ? AND slot_index != ? "
+                               "ORDER BY due_at", (self._user, _iso(now), MORNING_SLOT))
             # A photo check-in is answered in Chaster, not by a text reply, so it neither waits for nor holds back a text check-in.
             awaiting = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND kind IS NULL AND status IN "
                                     "('sent', 'responded', 'insufficient_pending', 'sending')", (self._user,))
@@ -366,6 +385,84 @@ class CheckInService:
                 self._cas(row["id"], ("sending",), "undeliverable", now)
             else:
                 self._cas(row["id"], ("sending",), "needs_review", now)
+
+    # ------------------------------------------------------------------ the morning report (owner, 2026-11-15)
+
+    def _morning_held(self, now: datetime) -> bool:
+        try:
+            return bool(self.morning_suspended(now))
+        except Exception:
+            logger.exception("Could not read whether the morning report is suspended; it is (never a miss by accident).")
+            return True
+
+    def _morning_due(self, day) -> datetime:
+        base = self._cfg.to_utc(day, MORNING_DUE[1] if is_non_working_day(self._cfg, day) else MORNING_DUE[0])
+        if self.online_since is not None and self._cfg.local(self.online_since).date() == day:
+            base = max(base, self.online_since + MORNING_AFTER_START)
+        return base
+
+    def _morning(self, now: datetime) -> None:
+        """Plans today's report once quiet hours are over, moves its time when the bot came back late, and decides an unasked one at its time."""
+        local = self._cfg.local(now)
+        day = local.date()
+        with self._core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM check_ins WHERE user_id = ? AND slot_index = ? AND status IN ('scheduled', 'sent')",
+                                                  (self._user, MORNING_SLOT))]
+            exists = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND local_date = ? AND slot_index = ?",
+                                  (self._user, day.isoformat(), MORNING_SLOT)) is not None
+        for row in rows:
+            due = _parse_iso(row["due_at"])
+            later = self._morning_due(day) if row["local_date"] == day.isoformat() else due
+            if later > due and now < due:
+                def move(tx: Transaction, _s: object, r=row, at=later) -> None:
+                    tx.execute("UPDATE check_ins SET due_at = ?, deadline_at = CASE WHEN status = 'sent' THEN ? ELSE deadline_at END, updated_at = ? "
+                               "WHERE id = ?", (_iso(at), _iso(at), _iso(now), r["id"]))
+                apply_transition(self._core, write=move)
+            elif row["status"] == "scheduled" and now >= due:
+                if self._morning_held(now):
+                    self._cas(row["id"], ("scheduled",), "skipped", now)
+                else:
+                    streak = self._miss_streak(row["id"], row["due_at"])
+                    if self._cas(row["id"], ("scheduled",), "missed", now, event="check_in.missed", payload={"streak": streak}):
+                        decision("check_ins", "Morning report missed: none by its time.", check_in_id=row["id"], streak=streak)
+        if exists or classify(self._cfg, now) is WindowKind.QUIET or local.time() < self._cfg.quiet_end:
+            return
+        due = self._morning_due(day)
+        if now >= due or self._morning_held(now):
+            return
+        level = self._level() or TrustLevel(4)
+        prompt = MORNING_ASK.format(due=self._cfg.local(due).strftime("%H:%M"))
+
+        def write(tx: Transaction, _s: object) -> None:
+            tx.execute("INSERT OR IGNORE INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, prompt_text, created_at, updated_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)",
+                       (str(uuid.uuid4()), self._user, day.isoformat(), MORNING_SLOT, int(level), _iso(due), prompt, _iso(now), _iso(now)))
+
+        apply_transition(self._core, write=write)
+
+    def _ask_morning(self, now: datetime) -> bool:
+        """His first message of the day: the question goes out, due at the report's time. True when it was asked now."""
+        day = self._cfg.local(now).date().isoformat()
+        if self._morning_held(now):
+            return False
+
+        def write(tx: Transaction, _s: object) -> bool:
+            row = tx.fetch_one("SELECT * FROM check_ins WHERE user_id = ? AND local_date = ? AND slot_index = ? AND status = 'scheduled' AND due_at > ?",
+                               (self._user, day, MORNING_SLOT, _iso(now)))
+            if row is None:
+                return False
+            tx.execute("UPDATE check_ins SET status = 'sent', sent_at = ?, deadline_at = due_at, updated_at = ? WHERE id = ? AND status = 'scheduled'",
+                       (_iso(now), _iso(now), row["id"]))
+            write_event(tx, DomainEvent(event_type="check_in.prompt_due", source_module="supervision", occurred_at=now,
+                                        payload={"check_in_id": row["id"], "trust_domain": self._domain}))
+            enqueue_in_transaction(tx, user_id=self._user, kind="check_in", dedupe_key=f"check_in:morning:{row['id']}", now=now, immediate=True,
+                                   text=row["prompt_text"])
+            return True
+
+        asked = apply_transition(self._core, write=write)
+        if asked:
+            decision("check_ins", "Morning report asked on his first message of the day.")
+        return bool(asked)
 
     # ------------------------------------------------------------------ photo check-ins (supervision/photo_check_ins.py)
 
@@ -497,6 +594,9 @@ class CheckInService:
         with self._core.transaction() as tx:
             rows = tx.fetch_all("SELECT * FROM check_ins WHERE user_id = ? AND status = 'responded'", (self._user,))
         for row in rows:
+            if row["slot_index"] == MORNING_SLOT:     # owner, 2026-11-15: any content counts; code checks only that it arrived, no model
+                self._cas(row["id"], ("responded",), "answered", now, event="check_in.answered")
+                continue
             try:
                 verdict = self._evaluate(row["prompt_text"] or "", row["response_text"] or "")
             except Exception:
@@ -521,6 +621,9 @@ class CheckInService:
                                         "AND follow_up_until < ?", (self._user, _iso(now)))
         for r in sorted(missed, key=lambda row: row["due_at"]):
             if r["slot_index"] == RELEASE_SLOT:           # ignoring a release offer costs nothing
+                self._cas(r["id"], ("sent",), "skipped", now)
+                continue
+            if r["slot_index"] == MORNING_SLOT and self._morning_held(now):
                 self._cas(r["id"], ("sent",), "skipped", now)
                 continue
             streak = self._miss_streak(r["id"], r["due_at"])
