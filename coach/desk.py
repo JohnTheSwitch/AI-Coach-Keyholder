@@ -164,6 +164,9 @@ def _similar(a: str, b: str) -> bool:
     return bool(left and right) and len(left & right) / len(left | right) >= _SIMILAR
 
 
+# Owner, 2026-11-15: on a training day the plan's session is the workout commitment (verified in Chaster, it earns token progress).
+_WORKOUT = re.compile(r"\b(gym|work ?out|training|train|exercise|lift|lifting|squats?|bench|run|running|leg day|upper body)\b", re.I)
+
 class CoachDesk:
     def __init__(self, core: CoreDatabase, *, user_id: str, trust_domain: str, goals: GoalManager, today: Callable[[datetime], date],
                  targets_frozen: Callable[[str], bool] = lambda _user: False, paused: Callable[[datetime], bool] = lambda _now: False,
@@ -175,6 +178,7 @@ class CoachDesk:
         self._goals = goals
         self.today = today
         self.time_of_day: Callable[[datetime], str] | None = None      # a coarse word for the model; set by build_coach
+        self.training_day: Callable[[date], bool] | None = None        # the training plan has a session that day (set by the bot)
         self.local_now: Callable[[datetime], datetime] | None = None   # the user's local time; set by build_coach (None: UTC)
         self._targets_frozen = targets_frozen
         self._paused = paused
@@ -211,6 +215,9 @@ class CoachDesk:
             payload = self._resolve(action, subject_key, now)
             if isinstance(payload, Refusal):
                 return self._refuse(subject_key, name, payload.reason, now)
+            if (action.kind is ActionKind.PROPOSE_COMMITMENT and self.training_day is not None and _WORKOUT.search(payload.get("text", ""))
+                    and self.training_day(date.fromisoformat(payload["for_date"]))):
+                return self._refuse(subject_key, name, "training_day", now)     # owner, 2026-11-15: the plan's session already counts
             fingerprint = _fingerprint(action.texts())
             limit = self._limit_refusal(action.kind, fingerprint, now)
             if limit is not None:

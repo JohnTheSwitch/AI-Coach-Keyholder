@@ -17,3 +17,5 @@ on 2026-11-14 in his workout chat (`plan.py`: exercises, sets, rep ranges, start
 Tables (written only by `service.py`): `training_sessions`, `training_weights`, `training_logs`, `training_weeks`. Events:
 `training.session_planned`, `training.short_day_chosen`, `training.sets_logged`. Wired through `system/obedience_wiring.py`; the Monday
 buttons through `system/dm_actions.TrainingDm` (scope `training`); `log ...` is read in `ApplicationService` before any model.
+
+**Training earns tokens (owner, 2026-11-15).** A session verified in Chaster adds +0.15 (full) or +0.08 (short) to the token pool on a day without a confirmed incident (`system/daily_evaluation.TRAINING_BONUS`, read through `obedience.service.get_verified_training`), and on a day with goals it counts as one more kept item. `TrainingPlan.is_training_day` tells the coach not to propose a separate workout commitment that day.

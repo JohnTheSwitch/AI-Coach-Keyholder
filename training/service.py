@@ -86,6 +86,10 @@ class TrainingPlan:
                            text=f"Show: today's training log ({name}), every set and weight written. Photo of the page only, code beside it.",
                            details="\n".join(lines), optional=optional)
 
+    def is_training_day(self, day: date) -> bool:
+        """Read-only: the plan has a session that day (owner, 2026-11-15: the coach then proposes no separate workout)."""
+        return self._session_for(day) is not None
+
     def _session_for(self, day: date) -> str | None:
         weekday = day.weekday()
         if weekday == 5:

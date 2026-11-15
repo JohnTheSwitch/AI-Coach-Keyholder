@@ -119,3 +119,5 @@ The backstop never passes through this.
 Live, every "release_held" line carried a 42-hour-old reading ("lock_frozen": false) that read like the lock's current state. The decisions
 themselves refresh the reading when they need it and treat an old one as unknown; the log line now adds `lock_reading_age_hours` and, past
 `LOCK_DATA_MAX_AGE`, `"lock_reading": "stale: ..."`.
+
+**Pool bonus (owner, 2026-11-15).** `apply_day(..., bonus=)` adds a non-negative bonus to an earning day's progress; used for verified training sessions (+0.15 full, +0.08 short). A day with a confirmed incident still adds nothing.

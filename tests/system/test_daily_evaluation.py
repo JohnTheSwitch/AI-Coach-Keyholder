@@ -344,3 +344,51 @@ class TestOwnerRules20261113:
         w.task.run(local(TUE, 1))
         row = w.rows()[0]
         assert row["violations"] == 0 and row["clean"] == 1 and Decimal(row["progress"]) > 0
+
+
+class TestVerifiedTraining:
+    """Owner, 2026-11-15: a training session verified in Chaster earns token progress (+0.15 full, +0.08 short) and counts as kept."""
+
+    def _session(self, w, d: date, key: str, outcome: str = "verified", status: str = "passed") -> None:
+        with w.core.transaction() as tx:
+            tx.execute("INSERT INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, outcome) "
+                       "VALUES (?, ?, ?, ?, 't', ?, ?, ?, ?)", (f"{d}{key}", U, d.isoformat(), key, iso(local(d, 17)), status,
+                                                                iso(local(d, 17)), outcome))
+
+    def _base(self, tmp_path) -> Decimal:
+        plain = World(tmp_path / "plain")
+        plain.task.run(local(TUE, 1))
+        return Decimal(plain.rows()[0]["progress"])
+
+    def test_a_verified_full_session_adds_its_bonus(self, tmp_path) -> None:
+        base = self._base(tmp_path)
+        world = World(tmp_path)
+        self._session(world, MON, "training:upper")
+        world.task.run(local(TUE, 1))
+        assert Decimal(world.rows()[0]["progress"]) == base + Decimal("0.15")
+
+    def test_a_short_session_adds_less_and_an_unverified_one_nothing(self, tmp_path) -> None:
+        base = self._base(tmp_path)
+        world = World(tmp_path)
+        self._session(world, MON, "training:short:upper_short")
+        world.task.run(local(TUE, 1))
+        assert Decimal(world.rows()[0]["progress"]) == base + Decimal("0.08")
+        for i, (key, outcome) in enumerate((("workout_plank", "verified"), ("training:legs_a", "unknown"))):   # not training / vote never ended
+            other = World(tmp_path / f"o{i}")
+            self._session(other, MON, key, outcome=outcome)
+            other.task.run(local(TUE, 1))
+            assert Decimal(other.rows()[0]["progress"]) == base
+
+    def test_it_counts_as_kept_on_a_day_with_goals(self, tmp_path) -> None:
+        world = World(tmp_path)
+        world.goal(MON, GoalOutcome.MISSED, "a")
+        self._session(world, MON, "training:upper")
+        world.task.run(local(TUE, 1))
+        assert (world.rows()[0]["goals_assigned"], world.rows()[0]["goals_met"]) == (2, 1)
+
+    def test_no_bonus_on_a_day_with_a_confirmed_incident(self, tmp_path) -> None:
+        from release_engine.token_pool import apply_day
+        assert apply_day(0, 0, 0, 1, earning=False, bonus=Decimal("0.15")).progress == 0
+        assert apply_day(0, 0, 0, 1, bonus=Decimal("0.15")).progress == apply_day(0, 0, 0, 1).progress + Decimal("0.15")
+        with pytest.raises(ValueError):
+            apply_day(0, 0, 0, 1, bonus=-1)

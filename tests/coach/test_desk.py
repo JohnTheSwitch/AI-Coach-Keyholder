@@ -369,3 +369,17 @@ class TestIsolation:
     def test_the_desk_reads_no_trust_table(self) -> None:
         text = (ROOT / "coach" / "desk.py").read_text(encoding="utf-8").lower()
         assert "from trust" not in text and "trust_domain_state" not in text and "trust_evidence" not in text and "get_trust" not in text
+
+
+class TestTrainingDay:
+    """Owner, 2026-11-15: on a training day the plan's session is the workout commitment; the coach proposes no second one."""
+
+    def test_no_workout_commitment_on_a_training_day(self, w) -> None:
+        w.desk.training_day = lambda d: True
+        gym = {"action": "propose_commitment", "text": "Go to the gym", "when": "tomorrow"}
+        assert w.submit(gym).reason == "training_day" and w.refusals() == ["training_day"]
+        assert w.submit().proposal is not None                                # anything else is still proposed
+
+    def test_a_workout_commitment_on_a_rest_day_is_fine(self, w) -> None:
+        w.desk.training_day = lambda d: False
+        assert w.submit({"action": "propose_commitment", "text": "Do a workout", "when": "tomorrow"}).proposal is not None

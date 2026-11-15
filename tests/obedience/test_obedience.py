@@ -50,7 +50,7 @@ def _all_texts():
 def test_the_catalogue_respects_the_limits() -> None:
     owned = ("plug", "deep diver", "dildo", "rope", "cuff", "corner", "cage", "rack", "push-ups", "plank", "pull-ups", "workout", "thigh",
              "kneel", "bike", "treadmill", "calf", "cable", "wall", "fours", "face down", "blindfolded", "forehead", "collar", "clamps", "bijou",
-             "eyes closed")
+             "eyes closed", "harness")
     for task in _all_texts():
         text = task.text.lower()
         assert len(task.text) <= 200 and "code beside it" in text and task.text.startswith("Show: "), task.key
@@ -60,11 +60,15 @@ def test_the_catalogue_respects_the_limits() -> None:
         if "rope" in text:
             assert "shears within reach" in text and "minutes" in text
         if "cuff" in text:
-            assert "key within reach" in text or "buckled" in text
+            assert any(w in text for w in ("key within reach", "buckled", "fluffy", "bondage harness")), task.key   # a release he can reach
         if "clamps" in text:
             assert "10 minutes" in text
-        if "blindfolded" in text:
-            assert "rope" not in text and "cuff" not in text                    # never blindfolded in restraints
+        if "blindfolded" in text:                                               # owner, 2026-11-15: cuffs in front only, never rope on limbs
+            assert " tied" not in text and "ankles" not in text and "clipped behind" not in text, task.key
+            if "cuff" in text or "clipped" in text:
+                assert "in front" in text, task.key
+            if "rope" in text:
+                assert "chest harness" in text, task.key
     assert {t.kind for t in CATALOG} == {"erotic", "workout"}
 
 
@@ -321,7 +325,9 @@ class TestGearTags:
     def test_safety_notes_follow_the_gear(self) -> None:
         from obedience.service import safety_notes
         assert "never tied, clipped or locked to anything" in safety_notes("Show: kneeling in your collar")
-        assert "never blindfolded while restrained" in safety_notes("Show: wrists in the leather cuffs")
+        assert "never rope on your limbs while blindfolded" in safety_notes("Show: wrists in the leather cuffs")
+        assert "never to the collar ring" in safety_notes("Show: in the bondage harness, wrists clipped behind you")
+        assert "release lever" in safety_notes("Show: kneeling, fluffy cuffs behind your back, lever tested first")
         assert "10 minutes at most" in safety_notes("Show: clamps on your nipples")
         assert safety_notes("Show: on all fours") == ""
 
@@ -380,3 +386,47 @@ class TestAloneQuestion:
         w.slot = False
         w.tasks.tick(w.due() + timedelta(minutes=10))
         assert w.row()["status"] == "asking" and w.tasks.has_open_task()
+
+
+class TestLimitsTalk:
+    """Owner, 2026-11-15: cuffed + blindfolded + stimulated, behind-back fluffy cuffs, longer wear, gag told only by the bot, the harness."""
+
+    def test_the_gag_is_never_in_chaster_only_in_the_dm(self, tmp_path) -> None:
+        import random as r
+        from obedience.service import GAG_NOTE, compose
+        gagged = [t for t in (compose(r.Random(s), set(), set()) for s in range(400)) if t and "gag" in t.key]
+        assert gagged and all("gag" not in t.text.lower() and t.dm_note == GAG_NOTE for t in gagged)
+        assert all(not ({"cuffs", "cuffs_back", "thighs"} & set(t.key.split("+")[1:])) for t in gagged)   # hands free with a gag
+        w = World(tmp_path)
+        w.tasks._pick = lambda day, mode: next(t for t in gagged)
+        w.tasks.tick(MORNING)
+        w.start()
+        with w.core.transaction() as tx:
+            note = tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")["text"]
+        assert "Only between us: Ball gag" in note and "gag" not in w.chaster.assigned[0].lower()
+
+    def test_blindfold_behind_the_back_only_after_three_good_tries(self, tmp_path) -> None:
+        import random as r
+        from obedience.service import compose
+        before = {t.key for t in (compose(r.Random(s), set(), set()) for s in range(600)) if t}
+        after = {t.key for t in (compose(r.Random(s), set(), set(), back_blind_ok=True) for s in range(600)) if t}
+        assert not any("blind" in k and "cuffs_back" in k for k in before) and any("blind" in k and "cuffs_back" in k for k in after)
+        assert any({"blind", "cuffs"} <= set(k.split("+")[1:]) for k in before)                            # front cuffs + blindfold from the start
+
+    def test_the_harness_needs_three_good_tries_before_the_blindfold_and_brings_a_collar(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.tasks.gear_command(U, "gear add harness", MORNING)
+        w.tasks.gear_command(U, "gear add blindfold", MORNING)
+        keys = {w.tasks._pick(MORNING.date(), "alone").key for _ in range(800)}
+        assert {"hd_front", "hd_back"} & keys and "hd_blind" not in keys and {"collar_kneel", "wear_collar_long"} & keys
+        TestPlugLadder()._verify(w, "hd_front", 3)
+        keys = {w.tasks._pick(MORNING.date(), "alone").key for _ in range(1500)}
+        assert "hd_blind" in keys
+
+    def test_longer_wear_tasks_exist_and_restraint_stays_short(self) -> None:
+        import re
+        from obedience.service import EXTRAS
+        assert any("90 minutes" in t.text for t in EXTRAS) and any("2 hours" in t.text for t in EXTRAS)
+        for t in EXTRAS:
+            if any(w in t.text for w in ("cuff", "clipped", "tied")):
+                assert int(re.search(r"(\d+) minutes", t.text).group(1)) <= 30, t.key

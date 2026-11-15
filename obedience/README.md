@@ -54,6 +54,16 @@ safety)" works while being asked too. A training day is not asked. Safety lines 
 within reach and never blindfolded while restrained; the collar loose enough for two fingers and never tied, clipped or locked to anything;
 clamps off after 10 minutes at most. Events: `obedience.alone_asked`, `obedience.alone_answered`.
 
+**Limits talk (owner, 2026-11-15).** His own hard limits are unchanged (nothing public, nothing identifying, no strong pain); the
+safety rules were agreed with him: blindfolded in cuffs only with the cuffs in front, 20 minutes at most (`blind_cuffs_vibe`: cuffs,
+blindfold and the vibrating Deep Diver); behind the back (`cuffs_back`) only in the fluffy cuffs with the release lever tested first, and
+blindfolded behind the back only after `BACK_BLIND_AFTER` (3) verified behind-back tasks; restraint time 30 minutes at most; wear tasks of
+60 minutes to 2 hours without restraints while he does something else; the gag is never in Chaster's text, only in the DM (`Task.dm_note`,
+"Only between us: ..."), never with restraints, 20 minutes at most; a decorative rope chest harness may be blindfolded, rope on the limbs
+never. **Hidden Desire bondage harness** (`bondage_harness`, `gear add harness`): cuffs clip only to the waist rings, never to the collar
+ring, the velcro rips open; `hd_blind` only after 3 verified harness tasks (`Task.after`); the harness's collar counts for collar tasks
+(`IMPLIED`). Still never: anything that can pull on the neck, a gag with restraints, ice or timer releases.
+
 **He does not live alone (owner, 2026-11-14; migration 070).** Every task message says: in your room with the door closed, quiet, nothing
 left lying around or visible afterwards. "Someone's around (+2 h, once)" (was "Not alone right now") moves the photo deadline to 2 hours from the press, once per
 task and never past free time; after that the task is done or it fails. No gag task; loud toys only in the alone version; the collar only inside a task.

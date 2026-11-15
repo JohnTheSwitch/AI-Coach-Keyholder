@@ -46,7 +46,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
+__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
@@ -84,12 +84,26 @@ GEAR: dict[str, str] = {
     "blindfold": "blindfold",
     "collar": "collar",
     "clamps": "nipple clamps",
+    "gag": "Ouch! ball gag",
+    "bondage_harness": "Hidden Desire bondage harness (collar, waist strap, velcro cuffs)",
 }
-DEFAULT_OWNED = frozenset({"deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs"})
+DEFAULT_OWNED = frozenset({"deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs",
+                           "gag"})
 ALL_GEAR = frozenset(GEAR)
 GEAR_ALIASES = {"gildo": "gildo_27", "plug_joy": "plug_joy_medium", "plug_and_joy": "plug_joy_medium", "rimfire": "rimfire_s",
                 "bijou": "bijou_large", "diver": "deep_diver", "cuffs": "leather_cuffs", "padlock": "padlocks", "locks": "padlocks",
-                "nipple_clamps": "clamps", "clamp": "clamps", "mask": "blindfold"}
+                "nipple_clamps": "clamps", "clamp": "clamps", "mask": "blindfold", "harness": "bondage_harness",
+                "hidden_desire_harness": "bondage_harness", "ball_gag": "gag", "fluffy_cuffs": "toy_cuffs"}
+IMPLIED = {"bondage_harness": frozenset({"collar"})}          # the harness has a collar: collar tasks work with it
+
+
+def effective(owned) -> frozenset:
+    """What tasks may use: his gear plus what a piece implies (the harness's collar)."""
+    out = set(owned)
+    for piece, more in IMPLIED.items():
+        if piece in owned:
+            out |= more
+    return frozenset(out)
 
 
 @dataclass(frozen=True)
@@ -100,6 +114,8 @@ class Task:
     needs: frozenset = frozenset()      # gear (GEAR keys) the task needs; given only when he owns all of it
     modes: frozenset = BOTH             # alone | discreet: which answers to "Are you alone right now?" it suits
     uses: frozenset = frozenset()       # main gear for "never two days in a row" (empty: the key's first word)
+    dm_note: str = ""                   # said only in the DM, never in Chaster (owner, 2026-11-15: the gag)
+    after: tuple = ()                   # (key prefix, n): given only after n verified tasks whose key starts with the prefix
 
 
 PHOTO_BEHIND = "Photo from behind, waist down only, code beside it."
@@ -127,13 +143,27 @@ ADDONS: dict[str, tuple[tuple[frozenset, str, frozenset], ...]] = {
               (frozenset(), "eyes closed the whole time", BOTH)),
     "cuffs": ((frozenset({"leather_cuffs"}), "wrists in the leather cuffs, buckled together in front", BOTH),
               (frozenset({"toy_cuffs"}), "wrists cuffed in front, key within reach", BOTH)),
+    # Owner, 2026-11-15: behind the back starts with the fluffy cuffs (the release lever opens them without the key).
+    "cuffs_back": ((frozenset({"toy_cuffs"}), "fluffy cuffs behind your back, lever tested first", ALONE_ONLY),),
+    # Owner, 2026-11-15: gag tasks, told by the bot only (never in Chaster's text); hands always free with it.
+    "gag": ((frozenset({"gag"}), "", ALONE_ONLY),),
     "thighs": ((frozenset({"rope_cotton"}), "thighs tied with the red rope, shears within reach", BOTH),),
     "word": ((frozenset(), "'locked' written on your thigh", BOTH),),
     "collar": ((frozenset({"collar"}), "wearing your collar", BOTH),),
     "clamps": ((frozenset({"clamps"}), "clamps on your nipples", BOTH),),
 }
-_ADDON_BAN = {("blind", "cuffs"), ("blind", "thighs"), ("cuffs", "thighs")}            # never blindfolded in restraints; one restraint at a time
-_POSE_BAN = {("cuffs", "wall"), ("cuffs", "corner"), ("thighs", "wall"), ("thighs", "fours")}   # hands are behind / legs must move
+# Owner, 2026-11-15 (limits talk): blindfolded in cuffs is fine with the cuffs in front (hands can always reach the blindfold) or, after
+# BACK_BLIND_AFTER verified behind-back tasks, behind; never rope on the limbs while blindfolded; one restraint at a time; the gag only with
+# hands free.
+RESTRAINTS = {"cuffs", "cuffs_back", "thighs"}
+_ADDON_BAN = {("blind", "thighs"), ("cuffs", "thighs"), ("cuffs", "cuffs_back"), ("cuffs_back", "thighs"),
+              ("gag", "cuffs"), ("gag", "cuffs_back"), ("gag", "thighs")}
+_POSE_BAN = {("cuffs", "wall"), ("cuffs", "corner"), ("thighs", "wall"), ("thighs", "fours"),
+             ("cuffs_back", "wall"), ("cuffs_back", "corner"), ("cuffs_back", "fours")}   # hands are behind / legs must move
+BACK_BLIND_AFTER = 3
+BLIND_RESTRAINED_MINUTES = 20
+GAG_MINUTES = 20
+GAG_NOTE = "Ball gag in the whole time (only I know). Out at once if you feel sick or can't breathe freely through your nose."
 REPEAT_DAYS = 14
 
 _DD, _BJ = frozenset({"deep_diver"}), frozenset({"bijou_large"})
@@ -162,6 +192,34 @@ EXTRAS: tuple[Task, ...] = (
          "erotic", frozenset({"clamps", "deep_diver"}), ALONE_ONLY, frozenset({"clamps", "vibe"})),
     Task("blind_plug", "Show: blindfolded, kneeling, the clear Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
          frozenset({"blindfold", "bijou_large"}), ALONE_ONLY, frozenset({"blind", "plug"})),
+    # Owner, 2026-11-15: the three together (cuffs in front so the blindfold can always come off, quick release in reach).
+    Task("blind_cuffs_vibe", "Show: blindfolded, fluffy cuffs in front, the Deep Diver vibrating in you, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
+         "erotic", frozenset({"blindfold", "toy_cuffs", "deep_diver"}), ALONE_ONLY, frozenset({"blind", "cuffs", "vibe"})),
+    Task("rope_harness_blind", "Show: a chest harness in the red rope, blindfolded, kneeling. Photo from the neck down, no face, code beside it. 20 minutes, shears within reach.",
+         "erotic", frozenset({"rope_cotton", "blindfold"}), ALONE_ONLY, frozenset({"rope", "blind"})),
+    Task("gag_kneel", "Show: kneeling upright, hands on your thighs, the Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
+         frozenset({"gag", "bijou_large"}), ALONE_ONLY, frozenset({"gag", "plug"}), GAG_NOTE),
+    # Owner, 2026-11-15: longer sessions, especially while doing something else (no restraints; restraint time stays 30 minutes at most).
+    Task("wear_diver_long", "Show: the Deep Diver in. Photo of the plug base only, code beside it. Then keep it in 90 minutes while you do something else.",
+         "erotic", _DD, BOTH, frozenset({"vibe"})),
+    Task("wear_bijou_long", "Show: the clear Bijou in. Photo of the plug base only, code beside it. Then keep it in 60 minutes while you do something else.",
+         "erotic", _BJ, ALONE_ONLY, frozenset({"plug"})),
+    Task("wear_collar_long", "Show: your collar on. Photo from the collar down, chin out of frame, no face, code beside it. Keep it on 2 hours.",
+         "erotic", frozenset({"collar"}), ALONE_ONLY),
+    Task("wear_rope_long", "Show: a chest harness in the red rope under your shirt. Photo from the neck down, no face, code beside it. Keep it on 60 minutes, shears within reach.",
+         "erotic", frozenset({"rope_cotton"}), ALONE_ONLY, frozenset({"rope"})),
+    # Owner, 2026-11-15: the Hidden Desire bondage harness. Cuffs clip only to the waist rings (a pull goes to the waist belt, not the neck);
+    # the velcro rips open any time. Blindfolded in it only after HD_BLIND_AFTER verified harness tasks.
+    Task("hd_front", "Show: in the bondage harness, wrists in its cuffs clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
+         "erotic", frozenset({"bondage_harness"}), ALONE_ONLY, frozenset({"harness"})),
+    Task("hd_back", "Show: in the bondage harness, wrists clipped to the waist rings behind you, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
+         "erotic", frozenset({"bondage_harness"}), ALONE_ONLY, frozenset({"harness"})),
+    Task("hd_back_vibe", "Show: in the bondage harness, wrists clipped behind you, the Deep Diver vibrating in you. " + PHOTO_BEHIND + " 20 minutes.",
+         "erotic", frozenset({"bondage_harness", "deep_diver"}), ALONE_ONLY, frozenset({"harness", "vibe"})),
+    Task("hd_blind", "Show: in the bondage harness, blindfolded, wrists clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
+         "erotic", frozenset({"bondage_harness", "blindfold"}), ALONE_ONLY, frozenset({"harness", "blind"}), after=("hd_", 3)),
+    Task("hd_quiet", "Show: the bondage harness on, cuffs open, kneeling quietly. Photo from the collar down, chin out of frame, no face, code beside it. 15 minutes.",
+         "erotic", frozenset({"bondage_harness"}), DISCREET_ONLY, frozenset({"harness"})),
     Task("plug_quiet", "Show: the clear Bijou in, lying on your bed. Photo of the plug base only, code beside it. Then keep it in 30 minutes at your desk.",
          "erotic", _BJ, DISCREET_ONLY, frozenset({"plug"})),
 )
@@ -192,7 +250,7 @@ def _variation(addon: str, owned, mode: str) -> str | None:
     return None
 
 
-def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mode: str = ALONE) -> Task | None:
+def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mode: str = ALONE, *, back_blind_ok: bool = False) -> Task | None:
     """A pose plus add-ons (two at most when alone, one when not), never a combination in `banned`, never yesterday's main gear, and only
     variations he has the gear for. None when nothing new is left."""
     combos = []
@@ -201,6 +259,8 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
     for pose, words, minutes in POSES:
         for addons in options:
             if any((a, b) in _ADDON_BAN or (b, a) in _ADDON_BAN for a in addons for b in addons if a != b):
+                continue
+            if {"blind", "cuffs_back"} <= set(addons) and not back_blind_ok:
                 continue
             if any((a, pose) in _POSE_BAN for a in addons) or set(addons) & yesterday_gear:
                 continue
@@ -213,10 +273,16 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
     cap = min(minutes, DISCREET_MINUTES) if mode == DISCREET else minutes
     if "clamps" in addons:
         cap = min(cap, CLAMP_MINUTES)
+    if "gag" in addons:
+        cap = min(cap, GAG_MINUTES)
+    if "blind" in addons and set(addons) & RESTRAINTS:
+        cap = min(cap, BLIND_RESTRAINED_MINUTES)
     minutes = rng.choice([m for m in (10, 15, 20, 25, 30) if m <= cap])
-    parts = ", ".join(_variation(a, owned, mode) for a in addons)
+    parts = ", ".join(w for w in (_variation(a, owned, mode) for a in addons) if w)
     needs = frozenset().union(*(next(n for n, w, _m in ADDONS[a] if w == _variation(a, owned, mode)) for a in addons))
-    return Task(key, f"Show: {words}, {parts}. {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}))
+    shown = f"Show: {words}, {parts}." if parts else f"Show: {words}."
+    return Task(key, f"{shown} {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}),
+                dm_note=GAG_NOTE if "gag" in addons else "")
 
 
 def gear_of(key: str) -> set[str]:
@@ -235,10 +301,14 @@ def safety_notes(text: str) -> str:
     """Safety lines for the DM, from what the task names (owner, 2026-11-15: in both modes)."""
     t = text.lower()
     notes = []
-    if any(w in t for w in ("rope", "cuff", "tied")):
-        notes.append("Key and shears (or scissors) within reach the whole time; never blindfolded while restrained; free yourself at once if "
-                     "anything tingles or goes cold.")
-    if "collar" in t:
+    if any(w in t for w in ("rope", "cuff", "tied", "clipped")):
+        notes.append("Key or quick release and shears (or scissors) within reach the whole time; never rope on your limbs while blindfolded; "
+                     "free yourself at once if anything tingles, goes numb or cold.")
+    if "behind your back" in t and "fluffy" in t:
+        notes.append("Test the fluffy cuffs' release lever before you put them on behind your back.")
+    if "bondage harness" in t:
+        notes.append("Clip the cuffs only to the waist rings, never to the collar ring; the velcro rips open any time.")
+    if "collar" in t and "bondage harness" not in t:
         notes.append("The collar stays loose enough for two fingers and is never tied, clipped or locked to anything.")
     if "clamp" in t:
         notes.append("Clamps come off after 10 minutes at most, slowly, one at a time.")
@@ -281,6 +351,15 @@ class Ports:
     in_exemption: Callable[[], bool] = lambda: False       # a wear exemption is in force: no tasks (owner, 2026-11-14)
     training: Callable[[date], object] | None = None       # Q4c: training.service.TrainingPlan.day_task (the plan's session, or None)
     training_tick: Callable[[datetime], None] | None = None  # Q4c: the Monday question about the short session
+
+
+def get_verified_training(core: CoreDatabase, user_id: str, local_date: str) -> list[str]:
+    """Read-only (owner, 2026-11-15: a training session verified in Chaster earns token progress): the catalog keys of that local day's
+    training sessions the community verified ("training:upper", "training:short:upper_short", ...)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date = ? AND status = 'passed' "
+                            "AND outcome = 'verified' AND catalog_key LIKE 'training:%'", (user_id, local_date))
+    return [r["catalog_key"] for r in rows]
 
 
 class ObedienceTasks:
@@ -338,7 +417,7 @@ class ObedienceTasks:
         """Workout about one day in four; otherwise the plug ladder (never two days running: a rest day between plug sessions), a composed
         pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, never yesterday's main gear, only gear he owns, and only
         tasks that suit `mode` (alone: the full versions; discreet: quiet and short)."""
-        owned = self.owned_gear() if owned is None else owned
+        owned = effective(self.owned_gear() if owned is None else owned)
         since = (day - timedelta(days=REPEAT_DAYS)).isoformat()
         with self._core.transaction() as tx:
             rows = [dict(r) for r in tx.fetch_all("SELECT local_date, catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? "
@@ -354,16 +433,27 @@ class ObedienceTasks:
             plug = self.ladder_task(owned)
             if plug is not None:
                 return plug
-        extras = [t for t in EXTRAS if suits(t, owned, mode)]
+        verified = self._verified_keys()
+
+        def unlocked(task: Task) -> bool:
+            return not task.after or sum(1 for k in verified if k.startswith(task.after[0])) >= task.after[1]
+
+        back_blind_ok = sum(1 for k in verified if "cuffs_back" in k) >= BACK_BLIND_AFTER
+        extras = [t for t in EXTRAS if suits(t, owned, mode) and unlocked(t)]
         fresh = [t for t in extras if t.key not in banned and not gear_of(t.key) & yesterday_gear]
         # Composed tasks most days; the fixed extras get a fair share, more of it when new gear unlocked many of them.
         if roll < 0.8 - 0.02 * len(fresh):
-            composed = compose(self._rng, banned, yesterday_gear, owned, mode)
+            composed = compose(self._rng, banned, yesterday_gear, owned, mode, back_blind_ok=back_blind_ok)
             if composed is not None:
                 return composed
         if fresh:
             return self._rng.choice(fresh)
         return compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode) or self._rng.choice(workouts)
+
+    def _verified_keys(self) -> list[str]:
+        with self._core.transaction() as tx:
+            return [r["catalog_key"] for r in tx.fetch_all("SELECT catalog_key FROM obedience_tasks WHERE user_id = ? AND status = 'passed' "
+                                                           "AND outcome = 'verified'", (self.user_id,))]
 
     def ladder_task(self, owned: frozenset | None = None) -> Task | None:
         """The next plug task on the ladder: the current rung's plug, a warm-up on the size below, the right lube, and a wearing time that grows
@@ -425,7 +515,7 @@ class ObedienceTasks:
         lock_id = self._ports.lock_id(now)
         if lock_id is None or self._ports.halted() or self._ports.slot_taken() or self._chaster.current_task(lock_id) is not None:
             return False                                                # tried again next pass
-        key, text, mode = row["catalog_key"], row["text"], row.get("mode")
+        key, text, mode, note = row["catalog_key"], row["text"], row.get("mode"), ""
         if key == ASK_KEY:
             if row["status"] == "planned":
                 self._ask(row, now)
@@ -436,7 +526,7 @@ class ObedienceTasks:
                     return False
                 mode = DISCREET                                         # no answer: the discreet version (still mandatory)
             task = self._pick(self._ports.today(now), mode)
-            key, text = task.key, task.text
+            key, text, note = task.key, task.text, task.dm_note
         task_id = self._chaster.assign(lock_id, text[:200])
         deadline = now + PHOTO_DEADLINE
         if row.get("details"):                                          # a training session: the log photo is due by the end of free time
@@ -452,8 +542,8 @@ class ObedienceTasks:
             version = {ALONE: "the full version, you're alone", DISCREET: "a discreet version"}.get(mode, "")
             head = f"Your task for today is in Chaster now ({version}):" if version else "Your task for today is in Chaster now:"
             extra = safety_notes(text)
-            message = (f"{head}\n{text}\nPhoto with Chaster's code by {self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}"
-                       + (f" {extra}" if extra else ""))
+            message = (f"{head}\n{text}\n" + (f"Only between us: {note}\n" if note else "")
+                       + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}. {DISCRETION} {SAFETY}" + (f" {extra}" if extra else ""))
             actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Someone's around (+2 h, once)"),
                        ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
 

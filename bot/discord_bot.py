@@ -1038,6 +1038,9 @@ def main() -> None:
             from system.dm_actions import TrainingDm
             bot.dm_actions["training"] = TrainingDm(training_plan, resolve_user=resolve_user, now=clock.now)
             application_service.training_log = training_plan.log
+            desk = getattr(getattr(bot, "coach_dm", None), "_desk", None)
+            if desk is not None:
+                desk.training_day = training_plan.is_training_day
         if peer.watch is not None:
             before_obedience = peer.watch.is_spot_check
             peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)

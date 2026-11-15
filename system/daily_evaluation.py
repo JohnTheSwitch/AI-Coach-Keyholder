@@ -16,6 +16,8 @@ run evaluates only yesterday.
 Owner, 2026-11-13 (before, the pool filled on bad days and one incident spoiled days it should not):
 - A day without an assigned goal uses the share of check-ins answered as its goal ratio (1.0 only when nothing was due either), and a day
   with a confirmed incident in any domain adds nothing to the pool.
+- Owner, 2026-11-15: a training session verified in Chaster adds TRAINING_BONUS["full"] (0.15) or ["short"] (0.08) to the pool on an
+  earning day, and on a day with goals it also counts as one more goal met (a kept commitment).
 - `violations` (clean day, probation) counts only incidents of this evaluation's own Trust domain, and never the repeated-missed-check-ins
   incident: it is created the morning after, and its misses already spoiled their own day.
 
@@ -47,6 +49,7 @@ logger = logging.getLogger("ai_coach_keyholder.system.daily_evaluation")
 __all__ = ["DailyEvaluationTask", "DayFacts", "MAX_CATCH_UP_DAYS", "get_daily_evaluations"]
 
 MAX_CATCH_UP_DAYS = 7
+TRAINING_BONUS = {"full": Decimal("0.15"), "short": Decimal("0.08")}     # owner, 2026-11-15
 _CHECK_IN_CONCLUDED = ("answered", "answered_uncertain", "insufficient", "missed")
 # Its misses already spoil their own day; the incident itself is created the next morning (owner, 2026-11-13: no double count).
 _NOT_A_DAY_VIOLATION = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE"})
@@ -60,6 +63,12 @@ class DayFacts:
     check_ins_ok: int
     violations: int
     any_violations: int = 0     # confirmed incidents of the day in ANY domain (still without the repeated-misses one): no pool progress
+    training_full: int = 0      # training sessions verified in Chaster that day (owner, 2026-11-15)
+    training_short: int = 0
+
+    @property
+    def training_bonus(self) -> Decimal:
+        return TRAINING_BONUS["full"] * self.training_full + TRAINING_BONUS["short"] * self.training_short
 
 
 def get_daily_evaluations(core: CoreDatabase, user_id: str, start: date, end: date) -> list[dict]:
@@ -128,12 +137,19 @@ class DailyEvaluationTask:
             outcome[r["goal_group_id"]] = r["outcome"] == "met"
         for r in completed:
             outcome[r["goal_group_id"]] = True
+        from obedience.service import get_verified_training
+        training = get_verified_training(self._core, self._user, day.isoformat())
+        short = sum(1 for k in training if k.startswith("training:short:"))
+        if outcome:                                         # a day with goals: each verified session is one more kept item
+            for k in training:
+                outcome[f"training:{k}"] = True
         day_incidents = [c for c in self._trust.get_confirmed_incidents_since(start)
                          if c.created_at < end and c.rule_group_id not in _NOT_A_DAY_VIOLATION]
         return DayFacts(
             goals_assigned=len(outcome), goals_met=sum(outcome.values()), check_ins_due=len(check_ins),
             check_ins_ok=sum(1 for c in check_ins if c["status"] in ("answered", "answered_uncertain")),
             violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
+            training_full=len(training) - short, training_short=short,
         )
 
     def _evaluate(self, day: date, now: datetime) -> bool:
@@ -161,7 +177,7 @@ class DailyEvaluationTask:
             threshold = self._conditioning.threshold_in(tx, self._user) if self._conditioning is not None else 1
             done, total = ((facts.goals_met, facts.goals_assigned) if facts.goals_assigned
                            else (facts.check_ins_ok, facts.check_ins_due))
-            result = apply_day(pool_before, done, total, score, threshold, earning=facts.any_violations == 0)
+            result = apply_day(pool_before, done, total, score, threshold, earning=facts.any_violations == 0, bonus=facts.training_bonus)
             if result.tokens_earned:
                 self._engine._earn_in_transaction(
                     tx, user_id=self._user, amount=result.tokens_earned, reason_code=TOKEN_SOURCE,
