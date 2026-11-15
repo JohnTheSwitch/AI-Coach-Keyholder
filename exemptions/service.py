@@ -68,6 +68,8 @@ _REQUEST = re.compile(r"\b(exemption|exempt me|v[yý]jimk[auy]|v[yý]jimku)\b", 
 _HYGIENE = re.compile(r"\bhygiene (opening|break)\b|\bhygienick\w* (otevren\w*|prestavk\w*)\b|\botevr\w* .*\bhygien")
 HEALTH_MINUTES = 60                         # how long a health opening runs on Chaster's clock; nothing is judged against it
 ALLOWANCE_WINDOW = timedelta(days=7)
+RELOCK_PICTURE_WITHIN = timedelta(minutes=30)     # owner, 2026-11-15: the relock picture is due within 30 minutes of relocking
+RELOCK_PICTURE_GIVE_UP = timedelta(hours=6)       # an unreadable Chaster is not retried forever (unknown never counts)
 
 
 def is_exemption_request(message: str) -> bool:
@@ -137,6 +139,11 @@ class ExemptionService:
         self._raise_overrun = raise_overrun
         self._allowance = hygiene_allowance         # () -> (planned breaks a rolling week, minutes each); None means hygiene requests are not offered
         self._judge = None                          # exemptions.judge.ExemptionJudge: when set, requests are decided by it and never by a keyholder's button
+        # Owner, 2026-11-15: the relock picture after a planned hygiene opening. relock_pictures(start, end) -> a verification picture in that
+        # span? (None = Chaster unreadable); picture_required(relocked_at) -> was it required then?; raise_missing_picture(row, now) -> ask him.
+        self.relock_pictures = None
+        self.picture_required = None
+        self.raise_missing_picture = None
         self.lines_open = None                      # (user_id) -> lines still owed (lines/service.py, owner 2026-11-14): planned hygiene waits for them
         # Owner, 2026-11-13: the hygiene Trust domain. A planned opening relocked on time then emits `hygiene_opening.relocked_on_time`, which earns
         # hygiene Trust (it had no way up at all). None: no event.
@@ -532,6 +539,10 @@ class ExemptionService:
             self._rule_pending(now)
         except Exception:
             logger.exception("Pending exemption requests could not be judged; retrying on the next pass.")
+        try:
+            self._check_relock_pictures(now)
+        except Exception:
+            logger.exception("Relock pictures could not be checked; retrying on the next pass.")
         with self._core.transaction() as tx:
             rows = tx.fetch_all("SELECT * FROM wear_exemptions WHERE status = 'approved'")
         for row in rows:
@@ -547,6 +558,40 @@ class ExemptionService:
                     self._apply(row, now)
             except Exception:
                 logger.exception("An exemption could not be applied; retrying on the next pass.")
+
+    def _check_relock_pictures(self, now: datetime) -> None:
+        """Owner, 2026-11-15: RELOCK_PICTURE_WITHIN after a planned hygiene relock, Chaster's verification pictures are read. A picture from just
+        before the relock to RELOCK_PICTURE_WITHIN after it counts; none at all = the wearer is asked to explain. A health opening is never
+        checked; an unreadable Chaster is retried and, after RELOCK_PICTURE_GIVE_UP, dropped (unknown never counts against him)."""
+        if self.relock_pictures is None:
+            return
+        with self._core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM wear_exemptions WHERE kind = 'hygiene' AND relocked_at IS NOT NULL "
+                                                  "AND picture_checked_at IS NULL AND relocked_at <= ?", (_iso(now - RELOCK_PICTURE_WITHIN),))]
+        for row in rows:
+            relocked = parse_iso(row["relocked_at"])
+            if self.picture_required is not None and not self.picture_required(relocked):
+                self._picture_outcome(row, "not_required", now)
+                continue
+            found = self.relock_pictures(relocked - timedelta(minutes=5), relocked + RELOCK_PICTURE_WITHIN)
+            if found is None:
+                if now - relocked > RELOCK_PICTURE_GIVE_UP:
+                    self._picture_outcome(row, "unknown", now)
+                continue
+            if self._picture_outcome(row, "sent" if found else "missing", now) and not found and self.raise_missing_picture is not None:
+                self.raise_missing_picture(row, now)
+                decision("exemptions", "No relock picture after a hygiene opening; the wearer is asked to explain.", exemption_id=row["id"])
+
+    def _picture_outcome(self, row: dict, outcome: str, now: datetime) -> bool:
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE wear_exemptions SET picture_checked_at = ?, picture_outcome = ? WHERE id = ? AND picture_checked_at IS NULL",
+                              (_iso(now), outcome, row["id"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="exemptions.relock_picture_checked", source_module="exemptions", occurred_at=now,
+                                            payload={"exemption_id": row["id"], "outcome": outcome}))
+            return bool(done)
+
+        return apply_transition(self._core, write=write)
 
     def wear_exemption_in_force(self, user_id: str) -> bool:
         """A real wear exemption (not a hygiene opening) is in force. Owner, 2026-11-14: no obedience tasks during one; a hygiene opening

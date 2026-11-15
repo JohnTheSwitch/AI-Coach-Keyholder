@@ -161,7 +161,7 @@ REQUIRED_SETTINGS = {"temporary-opening": {"penaltyTime": 0}}
 # ends with a verification picture (Chaster's code in it, reviewed like any verification picture); at or above it the bot switches that off
 # again. Never on another wearer's lock (they never agreed to it), and only while the lock has the `verification-picture` extension: a consent
 # revocation removes that extension, and then nothing here asks for a photo again. An unknown Trust score changes nothing.
-HYGIENE_PICTURE_BELOW = 0.70            # owner, 2026-11-14: hygiene Trust levels 1-2
+from chaster.hygiene_policy import HYGIENE_PICTURE_BELOW  # noqa: E402  (one value for the plan and the relock-picture check)
 PICTURE_AFTER = "requireVerificationPictureAfter"
 
 

@@ -40,3 +40,11 @@ judge (infractions/judge.py):
   `wearer_override`) and, in the same transaction, it is filed as an incident the wearer disclosed themselves (`EXEMPTION_OVERRIDE`, warning only:
   Trust and a Warning, never a Penalty Window; Trust domain `routine`, or `hygiene` for an extra hygiene opening). If it cannot be recorded,
   nothing opens. A health or safety need is never held back by a used appeal and never needs the button.
+
+## The relock picture is checked (owner, 2026-11-15; migration 072)
+
+After a planned hygiene opening, while the relock picture is required (hygiene Trust below 0.70, see `chaster_execution/README.md`), the
+bot reads Chaster's verification pictures 30 minutes after the relock. A picture from just before the relock to 30 minutes after it counts;
+none = the wearer is asked to explain (infractions path); unexplained = `HYGIENE_PICTURE_MISSING`, a Warning and 20 lines ("I send my relock
+picture every time."). A health opening is never checked; an unreadable Chaster is retried for 6 hours and then dropped (unknown never
+counts against him). "I'm back" is never needed for any of this: the relock time is Chaster's own.

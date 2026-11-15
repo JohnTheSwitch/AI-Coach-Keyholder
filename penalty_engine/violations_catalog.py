@@ -47,6 +47,7 @@ CATALOG: tuple[Violation, ...] = (
     _v("DETECTION_UNANSWERED", "supervision", S.MINOR, "0.02", "A detector's question went unanswered past its deadline (warning only)"),
     _v("EXEMPTION_OVERRIDE", "supervision", S.MINOR, "0.03", "Took a declined exemption anyway, disclosed by the wearer (warning only)"),
     _v("FALSE_REPORT", "integrity", S.MINOR, "0.03", "A spot check of a Done report was missed or its photo rejected, and not explained (warning only)"),
+    _v("HYGIENE_PICTURE_MISSING", "hygiene", S.MINOR, "0.03", "No verification picture within 30 minutes of relocking after a planned hygiene opening, and not explained (warning only)"),
     _v("OBEDIENCE_TASK_MISSED", "supervision", S.MINOR, "0.03", "The daily obedience task was not done in time or its photo was rejected, and not explained (warning only)"),
     _v("SUPERVISION_ABANDONED", "supervision", S.SEVERE, None, "No communication for more than 24 hours",
        ("high_security_status",), detectable=False),

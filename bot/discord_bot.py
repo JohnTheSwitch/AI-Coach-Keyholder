@@ -1082,6 +1082,37 @@ def main() -> None:
                                             hygiene_score=_hygiene_score(config, core))
     if extension_guard is not None:
         bot.extension_guard = extension_guard_loop(extension_guard, clock, interval_seconds=config.extension_guard_poll_seconds)
+    # Owner, 2026-11-15: after a planned hygiene opening the relock picture is due within 30 minutes (while it is required).
+    relock_account = config.chaster_execution_keyholder_user_id
+    relock_tokens = background_tokens or chaster_token_manager
+    relock_lock = _owner_lock_id(config, getattr(wiring, "owner_lock", None))
+    if bot.exemptions is not None and detectors.signals is not None and relock_account and relock_tokens is not None and relock_lock is not None:
+        from chaster.hygiene_policy import HYGIENE_PICTURE_BELOW
+        from chaster.peer_reviews import PeerReviewReader
+        from infractions.signals import SignalKind
+        relock_reader = PeerReviewReader(token_manager=relock_tokens, lock_client=chaster_lock_client)
+        relock_score = _hygiene_score(config, core)
+
+        def relock_pictures(start, end, reader=relock_reader, lock_of=relock_lock, account=relock_account):
+            lock = lock_of(clock.now())
+            if not lock:
+                return None
+            times = reader.picture_times(user_id=account, lock_ids=[lock], now=clock.now())
+            return None if times is None else any(start <= t <= end for t in times)
+
+        def raise_missing_picture(row, now, signals=detectors.signals, domain=config.hygiene_trust_domain or "hygiene"):
+            from infrastructure.time_format import parse_iso as _parse
+            relocked = _parse(row["relocked_at"])
+            signals.raise_signal(user_id=row["user_id"], kind=SignalKind.RELOCK_PICTURE_MISSING, subject_id=row["id"], trust_domain=domain, now=now,
+                                 detail="No verification picture within 30 minutes of relocking after a planned hygiene opening.",
+                                 wearer_text="No relock picture arrived in Chaster within 30 minutes of closing your hygiene opening. What happened?",
+                                 facts=f"Planned hygiene opening relocked at {row['relocked_at']}; no verification picture by 30 minutes later.",
+                                 window=(relocked, now))
+
+        bot.exemptions.relock_pictures = relock_pictures
+        bot.exemptions.picture_required = lambda _at, score=relock_score: (lambda s: s is not None and s < HYGIENE_PICTURE_BELOW)(score())
+        bot.exemptions.raise_missing_picture = raise_missing_picture
+        logger.info("Relock picture check active: due within 30 minutes of a planned hygiene relock while hygiene Trust is below 0.70.")
         logger.info("Extension guard enabled: every %d s, subject to the runtime halt.", config.extension_guard_poll_seconds)
     bot.keyholder_inbox = keyholder_inbox_coro
     # Owner, 2026-11-13: once a day, a read-only comparison with GitHub; a newer version is announced to the owner, never installed.
