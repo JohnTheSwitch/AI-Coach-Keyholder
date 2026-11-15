@@ -830,7 +830,13 @@ def main() -> None:
                 return None
             if is_hygiene_request(text):
                 return exemption_dm.service.start_hygiene(user_id, now)
-            return exemption_dm.service.start(user_id, now) if is_exemption_request(text) else None
+            if not is_exemption_request(text):
+                return None
+            try:                                        # owner, 2026-11-15: the reason he already gave counts (this message and the last 15 minutes)
+                earlier = [t for t in db.get_user_texts_since(now - timedelta(minutes=15)) if t != text][-3:]
+            except Exception:
+                earlier = []
+            return exemption_dm.service.start(user_id, now, said="\n".join([*earlier, text]))
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,

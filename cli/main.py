@@ -522,7 +522,8 @@ def run_obedience_extra(args, *, out, now) -> int:
         print("Refused: no obedience task was ever given, so there is no wearer to task.", file=out)
         return 3
     print(f"This files ONE extra obedience task for today ({day.isoformat()}) at {args.at}: the usual \"Are you alone right now?\", a Chaster task "
-          "once its task slot is free, photo and community review, the usual consequences. Skipped without consequence if your free time ends first.",
+          "once its task slot is free, photo and community review, the usual consequences. Skipped without consequence if "
+          + ("the day ends first (it may run in quiet hours, once)." if getattr(args, "anytime", False) else "your free time ends first."),
           file=out)
     if not args.yes:
         print("Refused: add --yes to file it.", file=out)

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from database import backup as backup_module
@@ -719,6 +719,13 @@ class Database:
             if start <= at < end:
                 found.append((at, r["content"] or ""))
         return found
+
+    def get_user_texts_since(self, since: datetime) -> list[str]:
+        """Read-only (owner, 2026-11-15): what the user wrote since `since`, oldest first (an exemption request reuses its reason)."""
+        with self._core.transaction() as tx:
+            rows = tx.execute("SELECT content FROM conversation_messages WHERE role = 'user' AND created_at >= ? ORDER BY created_at",
+                              (since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),)).fetchall()
+        return [r["content"] for r in rows]
 
     def get_recent_messages(
         self, discord_channel_id: str, limit: int = 20

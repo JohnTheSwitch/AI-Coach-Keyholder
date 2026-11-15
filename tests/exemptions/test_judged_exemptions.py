@@ -262,3 +262,24 @@ class TestHealthCap:
         ask(w, category="health", hours=24)
         out = w.service.give_reason(WEARER, "Still irritated.", w.at)
         assert w.model.prompts and out.text.startswith("Declined"), out.text
+
+
+class TestTheReasonHeAlreadyGave:
+    """Owner, 2026-11-15: "it asked me for the reason even though I gave it in the message before"."""
+
+    def _ask(self, w, said):
+        card = w.service.start(WEARER, w.at, said=said)
+        ident = card.actions[0].action_id.split(":")[2]
+        w.dm.press(discord_user_id=WEARER_DISCORD, action="cat_social", ident=ident)
+        return card, w.dm.press(discord_user_id=WEARER_DISCORD, action="h6", ident=ident)
+
+    def test_a_real_sentence_is_judged_right_after_the_length(self, tmp_path) -> None:
+        w = world(tmp_path, APPROVE)
+        card, reply = self._ask(w, "I have a dancing school tonight.\nI need a wear exemption, it would be seen under what I wear there.")
+        assert "already told me" in card.text and "approved" in reply.text.lower() and not w.service.awaiting_reason(WEARER)
+        assert "dancing school" in w.model.prompts[-1][1] and w.exemption()["status"] == "approved"
+
+    def test_a_bare_request_still_asks(self, tmp_path) -> None:
+        w = world(tmp_path, APPROVE)
+        card, reply = self._ask(w, "I need a wear exemption")
+        assert "What is it for?" in card.text and reply.text == REASON_QUESTION

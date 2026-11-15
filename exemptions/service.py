@@ -66,6 +66,7 @@ SAFETY_LINE = "If this is an urgent health or safety matter, you don't need this
 
 _REQUEST = re.compile(r"\b(exemption|exempt me|v[yý]jimk[auy]|v[yý]jimku)\b", re.IGNORECASE)
 _HYGIENE = re.compile(r"\bhygiene (opening|break)\b|\bhygienick\w* (otevren\w*|prestavk\w*)\b|\botevr\w* .*\bhygien")
+SAID_MIN_WORDS = 8                          # owner, 2026-11-15: a request this long (with what came just before) already holds its reason
 HEALTH_AUTO_HOURS = 24                      # owner, 2026-11-15: code approves a health exemption for at most this; longer or a renewal goes to the judge
 HEALTH_MINUTES = 60                         # how long a health opening runs on Chaster's clock; nothing is judged against it
 ALLOWANCE_WINDOW = timedelta(days=7)
@@ -198,14 +199,18 @@ class ExemptionService:
 
     # ------------------------------------------------------------------ the wearer
 
-    def start(self, user_id: str, now: datetime) -> OutgoingMessage:
+    def start(self, user_id: str, now: datetime, *, said: str | None = None) -> OutgoingMessage:
+        """`said` (owner, 2026-11-15: "it asked me for the reason even though I gave it"): the request and what he wrote just before it. When it
+        is a real sentence (SAID_MIN_WORDS), it becomes the reason and the judge decides right after the duration, without asking again."""
+        said = " ".join(said.split())[:1500] if isinstance(said, str) and len(said.split()) >= SAID_MIN_WORDS else None
+
         def write(tx: Transaction, _s: object) -> tuple[str, str | None]:
             row = tx.fetch_one("SELECT id, status FROM wear_exemptions WHERE user_id = ? AND status IN ('requested', 'approved')", (user_id,))
             if row is not None:
                 return row["status"], row["id"]
             tx.execute("DELETE FROM wear_exemptions WHERE user_id = ? AND status = 'draft'", (user_id,))     # an abandoned draft holds nothing
             new_id = str(uuid4())
-            tx.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at) VALUES (?, ?, 'draft', ?)", (new_id, user_id, _iso(now)))
+            tx.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, reason) VALUES (?, ?, 'draft', ?, ?)", (new_id, user_id, _iso(now), said))
             return "draft", new_id
 
         status, ident = apply_transition(self._core, write=write)
@@ -213,7 +218,8 @@ class ExemptionService:
             return OutgoingMessage(text=f"Your exemption request is {'still being decided' if self._judge is not None else 'with your keyholder'}. {SAFETY_LINE}")
         if status == "approved":
             return self._running_card(ident)
-        return OutgoingMessage(text=f"Of course. What is it for? {SAFETY_LINE}",
+        ask = "Of course. Pick what it's for and how long; I'll go by what you already told me." if said else "Of course. What is it for?"
+        return OutgoingMessage(text=f"{ask} {SAFETY_LINE}",
                                actions=tuple(ActionSpec(action_id=f"exemption:cat_{code}:{ident}", label=label) for code, label in CATEGORIES.items()))
 
     def start_hygiene(self, user_id: str, now: datetime) -> OutgoingMessage | None:
@@ -324,9 +330,14 @@ class ExemptionService:
             return OutgoingMessage(text="That isn't one of the options.")
 
         def write(tx: Transaction, _s: object) -> bool:
-            row = tx.fetch_one("SELECT category FROM wear_exemptions WHERE id = ? AND user_id = ? AND status = 'draft' AND category IS NOT NULL", (exemption_id, user_id))
+            row = tx.fetch_one("SELECT category, reason FROM wear_exemptions WHERE id = ? AND user_id = ? AND status = 'draft' AND category IS NOT NULL",
+                               (exemption_id, user_id))
             if row is None:
                 return False
+            if self._judge is not None and row["reason"]:
+                tx.execute("UPDATE wear_exemptions SET hours = ?, reason_asked_at = ?, status = 'requested', requested_at = ? WHERE id = ?",
+                           (hours, _iso(now), _iso(now), exemption_id))
+                return "judge"
             if self._judge is not None:
                 tx.execute("UPDATE wear_exemptions SET hours = ?, reason_asked_at = ? WHERE id = ?", (hours, _iso(now), exemption_id))
                 return True
@@ -339,8 +350,13 @@ class ExemptionService:
                              ActionSpec(action_id=f"exemption:decline:{exemption_id}", label="Decline", style="secondary")))
             return True
 
-        if not apply_transition(self._core, write=write):
+        outcome = apply_transition(self._core, write=write)
+        if not outcome:
             return OutgoingMessage(text="That request is no longer open. Just ask again if you still need one.")
+        if outcome == "judge":
+            decision("exemptions", "Exemption asked for with the reason he already gave: judged now.", exemption_id=exemption_id, hours=hours)
+            text_out, actions = self._rule(exemption_id, now)
+            return OutgoingMessage(text=text_out, actions=actions)
         if self._judge is not None:
             decision("exemptions", "Exemption asked for: waiting for the wearer's reason.", exemption_id=exemption_id, hours=hours)
             return OutgoingMessage(text=REASON_QUESTION)
