@@ -529,11 +529,33 @@ def run_obedience_extra(args, *, out, now) -> int:
         return 3
     if planned < current:
         planned = current
-    ident = plan_extra_task(core, row["user_id"], day, planned, current)
+    ident = plan_extra_task(core, row["user_id"], day, planned, current, anytime=bool(getattr(args, "anytime", False)))
     if ident is None:
         print("Nothing to do: an extra task already exists for today.", file=out)
         return 3
     print(f"Filed. [task={ident}]", file=out)
+    return 0
+
+
+def run_obedience_credit(args, *, out, now) -> int:
+    import hmac
+
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from obedience.service import credit_training
+
+    config = Config.load()
+    owner = getattr(config, "owner_user_id", None)
+    if not owner or not hmac.compare_digest(str(args.owner_id).encode("utf-8"), str(owner).encode("utf-8")):
+        print("Refused: --owner-id must match OWNER_USER_ID.", file=out)
+        return 3
+    core = CoreDatabase(config.db_path)
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT user_id FROM obedience_tasks ORDER BY created_at DESC LIMIT 1")
+    if row is None or not credit_training(core, row["user_id"], args.date, now()):
+        print("Nothing to credit: no training session that day was cancelled by a wear exemption.", file=out)
+        return 3
+    print(f"Credited: the training session of {args.date} counts as verified.", file=out)
     return 0
 
 
@@ -1053,7 +1075,11 @@ def main(argv: list[str], *, out: TextIO | None = None,
     ox = sub.add_parser("obedience-extra", help="Owner, 2026-11-15: file ONE extra erotic obedience task for today at a local time (the running bot gives it).")
     ox.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     ox.add_argument("--at", required=True, help="local time HH:MM")
+    ox.add_argument("--anytime", action="store_true", help="one-time exception: it may run outside free time (quiet hours)")
     ox.add_argument("--yes", action="store_true", help="confirm")
+    oc = sub.add_parser("obedience-credit-training", help="Owner, 2026-11-15: count a training session a wear exemption cancelled as verified.")
+    oc.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    oc.add_argument("--date", required=True, help="the local date YYYY-MM-DD")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -1269,6 +1295,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
                          lock_tasks=lock_tasks_reader(config_factory, now) if args.setup_command == "check" else None)
     if args.command == "obedience-extra":
         return run_obedience_extra(args, out=out, now=now)
+    if args.command == "obedience-credit-training":
+        return run_obedience_credit(args, out=out, now=now)
     if args.command == "release-test-override":
         return run_release_test_override(args, out=out, now=now, factory=release_test_factory)
     if args.command == "freeze-lock":

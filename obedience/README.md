@@ -69,3 +69,15 @@ ring, the velcro rips open; `hd_blind` only after 3 verified harness tasks (`Tas
 **He does not live alone (owner, 2026-11-14; migration 070).** Every task message says: in your room with the door closed, quiet, nothing
 left lying around or visible afterwards. "Someone's around (+2 h, once)" (was "Not alone right now") moves the photo deadline to 2 hours from the press, once per
 task and never past free time; after that the task is done or it fails. No gag task; loud toys only in the alone version; the collar only inside a task.
+
+## Brief texts, an extra task, training and exemptions (owner, 2026-11-15; migrations 077, 078)
+
+- **Brief Chaster texts.** The voters see the task text, so it never starts with "Show:" and never mentions the code; the photo's privacy rule
+  ("... only", "no face") stays. The DM explains the code. A training session's proof is a photo of the gym.
+- **One extra task a day.** `python -m cli obedience-extra --owner-id <id> --at HH:MM --yes` files ONE extra erotic task for today (slot 1)
+  beside the day's own task (slot 0); it runs the usual way once Chaster's task slot is free. `--anytime` is the owner's one-time exception:
+  that task may start and run outside free time (quiet hours).
+- **A wear exemption leaves a training session due** (it needs no cage): back before the end of the day's free time, he still does it, and its
+  photo is read during the exemption too. Only when the exemption still holds as the deadline passes is it cancelled, quietly (no message)
+  and without consequence; a session not yet started waits and is skipped the same way if the exemption covers the rest of free time. A session cancelled
+  that way before the fix can be counted on the owner's word: `python -m cli obedience-credit-training --owner-id <id> --date YYYY-MM-DD`.

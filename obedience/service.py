@@ -46,7 +46,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
+__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "credit_training", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
@@ -377,16 +377,18 @@ def get_health_cancels(core: CoreDatabase, user_id: str, lo: str, hi: str) -> li
     return [r["decided_at"] for r in rows]
 
 
-def plan_extra_task(core: CoreDatabase, user_id: str, day: date, planned_at: datetime, now: datetime) -> str | None:
+def plan_extra_task(core: CoreDatabase, user_id: str, day: date, planned_at: datetime, now: datetime, *, anytime: bool = False) -> str | None:
     """Owner, 2026-11-15 (migration 077; `python -m cli obedience-extra`): ONE extra erotic task for `day` (slot 1), beside the day's own task.
     It runs like any other: at `planned_at` he is asked "Are you alone right now?", then the task goes to Chaster when its one task slot is free
     (after the day's own task), photo and community review, same consequences. Skipped without consequence if his free time is over first.
-    None when an extra task already exists for that day."""
+    `anytime` (the owner's one-time exception, migration 078): it may start and run outside free time (quiet hours). None when an extra
+    task already exists for that day."""
     row_id = str(uuid.uuid4())
 
     def write(tx: Transaction, _s: object) -> bool:
-        done = tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, slot) "
-                          "VALUES (?, ?, ?, ?, '', ?, 'planned', ?, 1)", (row_id, user_id, day.isoformat(), ASK_KEY, _iso(planned_at), _iso(now))).rowcount
+        done = tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, slot, "
+                          "anytime) VALUES (?, ?, ?, ?, '', ?, 'planned', ?, 1, ?)",
+                          (row_id, user_id, day.isoformat(), ASK_KEY, _iso(planned_at), _iso(now), 1 if anytime else 0)).rowcount
         if done:
             write_event(tx, DomainEvent(event_type="obedience.extra_planned", source_module="obedience", occurred_at=now,
                                         payload={"obedience_task_id": row_id}))
@@ -396,6 +398,26 @@ def plan_extra_task(core: CoreDatabase, user_id: str, day: date, planned_at: dat
         return None
     decision("obedience", "An extra obedience task was filed by the owner.", day=day.isoformat(), planned_at=_iso(planned_at))
     return row_id
+
+
+def credit_training(core: CoreDatabase, user_id: str, local_date: str, now: datetime) -> bool:
+    """Owner, 2026-11-15 (`python -m cli obedience-credit-training`): a training session a wear exemption cancelled before its photo (the bug
+    fixed the same day) counts as verified on the owner's word. Only such a row; True when one was credited."""
+    def write(tx: Transaction, _s: object) -> str | None:
+        row = tx.fetch_one("SELECT id FROM obedience_tasks WHERE user_id = ? AND local_date = ? AND catalog_key LIKE 'training:%' "
+                           "AND status = 'cancelled' AND outcome = 'exemption'", (user_id, local_date))
+        if row is None:
+            return None
+        tx.execute("UPDATE obedience_tasks SET status = 'passed', outcome = 'verified', review_status = 'owner_credit', decided_at = ? WHERE id = ?",
+                   (_iso(now), row["id"]))
+        write_event(tx, DomainEvent(event_type="obedience.training_credited", source_module="obedience", occurred_at=now,
+                                    payload={"obedience_task_id": row["id"]}))
+        return row["id"]
+
+    ident = apply_transition(core, write=write)
+    if ident:
+        decision("obedience", "A training session cancelled by an exemption was credited as verified by the owner.", day=local_date)
+    return bool(ident)
 
 
 class ObedienceTasks:
@@ -411,6 +433,8 @@ class ObedienceTasks:
     def tick(self, now: datetime) -> None:
         if self._ports.in_exemption():
             self._cancel_open(now, "exemption")
+            self._end_training_in_exemption(now)
+            self.poll(now)                         # owner, 2026-11-15: a training session needs no cage, so its proof is still read
             return
         if self._ports.training_tick is not None:
             try:
@@ -521,8 +545,9 @@ class ObedienceTasks:
 
     def _cancel_open(self, now: datetime, outcome: str) -> None:
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned', 'submitted')",
-                                                  (self.user_id,))]
+            # Owner, 2026-11-15: a wear exemption never cancels a training session (it needs no cage; one was lost that way).
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned', 'submitted') "
+                                                  "AND catalog_key NOT LIKE 'training:%'", (self.user_id,))]
         for row in rows:
             try:
                 current = self._chaster.current_task(row["lock_id"]) if row["task_id"] and not self._ports.halted() else None
@@ -532,6 +557,23 @@ class ObedienceTasks:
                 logger.exception("An obedience task could not be taken back in Chaster.")
             if self._close(row, "cancelled", outcome, now, text="Your task is cancelled: a wear exemption is in force. No consequence."):
                 decision("obedience", "An obedience task was cancelled by a wear exemption; no consequence.", task=row["catalog_key"])
+
+    def _end_training_in_exemption(self, now: datetime) -> None:
+        """Owner, 2026-11-15: an exemption leaves a training session due; back before the end of free time, he still does it. Only when the
+        exemption still holds as its deadline (the end of the day's free time) passes is it cancelled, quietly and without consequence. A photo
+        already submitted is left to the vote."""
+        with self._core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status = 'assigned' AND catalog_key LIKE 'training:%' "
+                                                  "AND deadline <= ?", (self.user_id, _iso(now)))]
+        for row in rows:
+            try:
+                current = self._chaster.current_task(row["lock_id"]) if row["task_id"] and not self._ports.halted() else None
+                if current is not None and current.get("id") == row["task_id"]:
+                    self._chaster.unassign(row["lock_id"])
+            except Exception:
+                logger.exception("A training task could not be taken back in Chaster.")
+            if self._close(row, "cancelled", "exemption", now):
+                decision("obedience", "A training session ran out during a wear exemption: cancelled quietly, no consequence.", task=row["catalog_key"])
 
     def _start_due(self, now: datetime) -> None:
         with self._core.transaction() as tx:
@@ -545,7 +587,9 @@ class ObedienceTasks:
 
     def _start(self, row: dict, now: datetime) -> bool:
         """True when the task is in Chaster now."""
-        if self._ports.today(now).isoformat() != row["local_date"] or not self._ports.free_time(now + PHOTO_DEADLINE) or self._ports.paused(now):
+        anytime = bool(row.get("anytime"))                              # the owner's one-time exception to free time (migration 078)
+        if (self._ports.today(now).isoformat() != row["local_date"] or (not anytime and not self._ports.free_time(now + PHOTO_DEADLINE))
+                or self._ports.paused(now)):
             self._close(row, "skipped", "no_free_slot", now)            # the free time is over: no task today, no consequence
             return False
         lock_id = self._ports.lock_id(now)

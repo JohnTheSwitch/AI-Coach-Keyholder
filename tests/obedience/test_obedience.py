@@ -460,3 +460,67 @@ class TestExtraTask:
         assert extra()["status"] == "asking"
         w.tasks.press(user_id=U, row_id=extra()["id"], action="alone", now=evening + timedelta(minutes=3))
         assert extra()["status"] == "assigned" and extra()["text"] in w.chaster.assigned
+
+
+class TestTrainingAndExemptions:
+    """Owner, 2026-11-15: a wear exemption no longer cancels a training session (it needs no cage); one lost that way may be credited."""
+
+    def _training_row(self, w, status="assigned", outcome=None):
+        with w.core.transaction() as tx:
+            tx.execute("INSERT INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, lock_id, task_id, "
+                       "deadline, outcome, details) VALUES ('t', ?, ?, 'training:upper', 'Workout done.', ?, ?, ?, 'lock', 'task-t', ?, ?, 'x')",
+                       (U, MORNING.date().isoformat(), MORNING.isoformat(), status, MORNING.isoformat(), (MORNING + timedelta(hours=8)).isoformat(),
+                        outcome))
+
+    def test_an_exemption_leaves_an_open_training_session_alone(self, tmp_path) -> None:
+        import dataclasses
+        w = World(tmp_path)
+        self._training_row(w)
+        w.tasks._ports = dataclasses.replace(w.tasks._ports, in_exemption=lambda: True)
+        w.tasks.tick(MORNING + timedelta(minutes=5))
+        assert w.row()["status"] == "assigned" and w.chaster.unassigned == 0
+
+    def test_a_session_an_exemption_cancelled_can_be_credited_once(self, tmp_path) -> None:
+        from obedience.service import credit_training, get_verified_training
+        w = World(tmp_path)
+        self._training_row(w, status="cancelled", outcome="exemption")
+        day = MORNING.date().isoformat()
+        assert get_verified_training(w.core, U, day) == []
+        assert credit_training(w.core, U, day, MORNING) is True
+        assert get_verified_training(w.core, U, day) == ["training:upper"]
+        assert credit_training(w.core, U, day, MORNING) is False
+
+    def test_only_an_exemption_cancel_is_credited(self, tmp_path) -> None:
+        from obedience.service import credit_training
+        w = World(tmp_path)
+        self._training_row(w, status="failed", outcome="missed")
+        assert credit_training(w.core, U, MORNING.date().isoformat(), MORNING) is False
+
+
+class TestExtraAnytime:
+    def test_the_one_time_exception_runs_outside_free_time(self, tmp_path) -> None:
+        from obedience.service import plan_extra_task
+        late = MORNING.replace(hour=22, minute=15)
+        for anytime, expected in ((False, "skipped"), (True, "asking")):
+            (tmp_path / str(anytime)).mkdir()
+            w = World(tmp_path / str(anytime))
+            plan_extra_task(w.core, U, MORNING.date(), late, MORNING, anytime=anytime)
+            w.tasks.tick(late)
+            with w.core.transaction() as tx:
+                assert tx.fetch_one("SELECT status FROM obedience_tasks WHERE slot = 1")["status"] == expected
+
+    def test_still_in_the_exemption_at_its_deadline_it_is_cancelled_quietly(self, tmp_path) -> None:
+        import dataclasses
+        w = World(tmp_path)
+        TestTrainingAndExemptions._training_row(self, w)
+        w.tasks._ports = dataclasses.replace(w.tasks._ports, in_exemption=lambda: True)
+        w.tasks.tick(MORNING + timedelta(hours=8, minutes=1))
+        assert (w.row()["status"], w.row()["outcome"]) == ("cancelled", "exemption") and w.failures == []
+        with w.core.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM notifications WHERE dedupe_key LIKE 'obedience:decided:%'")["n"] == 0
+
+    def test_back_before_its_deadline_he_still_has_to_do_it(self, tmp_path) -> None:
+        w = World(tmp_path)
+        TestTrainingAndExemptions._training_row(self, w)
+        w.tasks.tick(MORNING + timedelta(hours=9))                           # no exemption any more: the usual rules
+        assert w.failures == ["missed"]
