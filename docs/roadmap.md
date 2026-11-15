@@ -94,7 +94,10 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
    d. **Wellbeing question** in the Sunday review, free answer, never scored; a hard answer gets a calm check, never a consequence.
    e. **Photo check-ins scale with lock length** (more on week-plus locks).
    f. **Skin-check reminder** in every hygiene opening; redness, numbness or broken skin means staying unlocked to heal, no consequence.
-7. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
+7. **Submissive lines** (done 2026-11-15) (owner, 2026-11-15): every line sentence reworded, e.g. "I obey my keyholder without excuses.", "I never use my health to escape my keyholder."; counts unchanged; an open assignment keeps its own sentence. Release lines (with earn the release): "I am grateful to my keyholder for every release I earn."
+8. **Clean-up heads-up** (done 2026-11-15) (owner, 2026-11-15): 30 minutes before an erotic task, a DM to clean up, douche or not.
+9. **From his favourite stories** (owner, 2026-11-15; designs in docs/research/story_ideas.md): **P1 task board**, **P2 title in every DM** (with rung 4), **P4 the release as a timed window** (longer than 45 minutes; length to be set), **P5 temptations that cost** (sometimes free as a treat; the session itself waits for P6), **P8 monthly review**. On hold: P6 Deep Diver control (engineering: pairing). Deferred: P9 one-way strictness beyond G3 (remind him when the system is more mature).
+10. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
 
 ## Ideas (not approved; each needs the owner's yes)
 
@@ -103,6 +106,9 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
 - **Typing Lines** extension: only after desk research shows the bot could keep rewriting the lock's extensions with it on.
+- **Ideas from his favourite stories (2026-11-15), P1-P10 + his kink ideas 1-5:** task board, title in every DM, the release as a timed
+  session, temptations that cost, Deep Diver edge sessions, relief without a release, a monthly review, one-way strictness, quiet after
+  begging. Designs and conflicts with earlier decisions: `docs/research/story_ideas.md`.
 
 ## Shopping list (most important first; only gear the bot can use)
 
@@ -126,7 +132,7 @@ Tasks for each piece are already in the catalogue; after buying, send `gear add 
 "answer or freeze", the non-negotiating keyholder; a smaller cage as a punishment (smaller is more comfortable for him); the electro cage
 and other session-only gear the bot cannot use; ManCage one-time locks (they don't fit his cage). 2026-11-15: begging pushes the next
 release back (could spiral); a spent token not always meaning an orgasm (ruined / cleaning only); a stronger penalty for a missed training
-session (an unexplained miss already costs the whole day's pool progress, never below zero); a minimum gap between releases.
+session (an unexplained miss already costs the whole day's pool progress, never below zero); a minimum gap between releases. Story ideas P3 (a cost for brat lines) and P10 (quiet after begging): begging can't change a bot's mind anyway.
 
 **Standing goal (owner, 2026-11-13): make this system the best version of itself.** Between slices, Claude reads the logs and the bot's chat
 history for bugs and design gaps, and proposes them with a recommendation; approved ones are added here.

@@ -81,3 +81,6 @@ task and never past free time; after that the task is done or it fails. No gag t
   photo is read during the exemption too. Only when the exemption still holds as the deadline passes is it cancelled, quietly (no message)
   and without consequence; a session not yet started waits and is skipped the same way if the exemption covers the rest of free time. A session cancelled
   that way before the fix can be counted on the owner's word: `python -m cli obedience-credit-training --owner-id <id> --date YYYY-MM-DD`.
+- **Clean-up heads-up** (owner, 2026-11-15): 30 minutes (`PREP_AHEAD`) before an erotic task (it may use a plug or a dildo; the task itself is
+  chosen only at the alone question), a DM to use the toilet and rinse (plain lukewarm water, no soap; a douche not required). Once per task;
+  none before a training session; never during an exemption (no task runs then).

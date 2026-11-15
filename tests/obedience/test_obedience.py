@@ -80,7 +80,7 @@ def test_dozens_of_combinations() -> None:
 def test_a_missed_task_is_a_warning_level_incident_with_lines() -> None:
     assert RULE_GROUPS[SignalKind.OBEDIENCE_MISSED] == "OBEDIENCE_TASK_MISSED" and SignalKind.OBEDIENCE_MISSED in EVIDENCE
     assert "OBEDIENCE_TASK_MISSED" in WARNING_ONLY_RULE_GROUPS and any(v.code == "OBEDIENCE_TASK_MISSED" for v in VIOLATIONS)
-    assert sentence_for("OBEDIENCE_TASK_MISSED") == "I obey my keyholder's tasks."
+    assert sentence_for("OBEDIENCE_TASK_MISSED") == "I obey my keyholder without excuses."
 
 
 def test_planned_once_a_day_in_free_time_then_assigned_and_verified(tmp_path) -> None:
@@ -524,3 +524,32 @@ class TestExtraAnytime:
         TestTrainingAndExemptions._training_row(self, w)
         w.tasks.tick(MORNING + timedelta(hours=9))                           # no exemption any more: the usual rules
         assert w.failures == ["missed"]
+
+
+class TestCleanUpHeadsUp:
+    """Owner, 2026-11-15: 30 minutes before an erotic task, a heads-up to clean up (with or without a douche); never before training."""
+
+    def _notes(self, w):
+        with w.core.transaction() as tx:
+            return [r["text"] for r in tx.fetch_all("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:prep:%'")]
+
+    def test_it_comes_thirty_minutes_before_and_once(self, tmp_path) -> None:
+        from obedience.service import PREP_AHEAD, PREP_TEXT
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        w.tasks.tick(due - PREP_AHEAD - timedelta(minutes=5))
+        assert self._notes(w) == []
+        w.tasks.tick(due - PREP_AHEAD + timedelta(minutes=1))
+        w.tasks.tick(due - timedelta(minutes=5))
+        assert self._notes(w) == [PREP_TEXT] and "clean up" in PREP_TEXT
+
+    def test_none_before_a_training_session(self, tmp_path) -> None:
+        from obedience.service import PREP_AHEAD
+        w = World(tmp_path)
+        with w.core.transaction() as tx:
+            tx.execute("INSERT INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, details) "
+                       "VALUES ('t', ?, ?, 'training:upper', 'Workout done.', ?, 'planned', ?, 'x')",
+                       (U, MORNING.date().isoformat(), (MORNING + timedelta(hours=1)).isoformat(), MORNING.isoformat()))
+        w.tasks.tick(MORNING + timedelta(hours=1) - PREP_AHEAD + timedelta(minutes=1))
+        assert self._notes(w) == []

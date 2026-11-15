@@ -33,7 +33,7 @@ def outcome(w):
 def test_the_rule() -> None:
     assert RELOCK_PICTURE_WITHIN == timedelta(minutes=30)
     assert RULE_GROUPS[SignalKind.RELOCK_PICTURE_MISSING] == "HYGIENE_PICTURE_MISSING" and "HYGIENE_PICTURE_MISSING" in WARNING_ONLY_RULE_GROUPS
-    assert sentence_for("HYGIENE_PICTURE_MISSING") == "I send my relock picture every time."
+    assert sentence_for("HYGIENE_PICTURE_MISSING") == "I prove to my keyholder that I am locked again."
 
 
 def test_no_picture_within_30_minutes_asks_him(tmp_path) -> None:

@@ -59,6 +59,9 @@ DISCRETION = "Do it in your room with the door closed, keep it quiet, and leave 
 SAFETY = ("Stop at once if anything hurts, bleeds, goes numb or feels wrong; that never counts against you. Never numbing lube, never "
           "overnight.")
 ALONE, DISCREET = "alone", "discreet"
+PREP_AHEAD = timedelta(minutes=30)      # owner, 2026-11-15: the clean-up heads-up comes this long before an erotic task
+PREP_TEXT = ("Heads-up: your task comes in about 30 minutes, and it may use a plug or a dildo. Use the toilet now and clean up in the "
+             "shower: lukewarm plain water, no soap. Without a douche, a thorough rinse is enough.")
 ASK_KEY = "ask"                          # a planned task not chosen yet: chosen when he answers the alone question
 BOTH = frozenset({ALONE, DISCREET})
 ALONE_ONLY = frozenset({ALONE})
@@ -442,6 +445,7 @@ class ObedienceTasks:
             except Exception:
                 logger.exception("The training plan's pass failed; tasks go on.")
         self._plan(now)
+        self._prep_notice(now)
         self._start_due(now)
         self.poll(now)
 
@@ -574,6 +578,16 @@ class ObedienceTasks:
                 logger.exception("A training task could not be taken back in Chaster.")
             if self._close(row, "cancelled", "exemption", now):
                 decision("obedience", "A training session ran out during a wear exemption: cancelled quietly, no consequence.", task=row["catalog_key"])
+
+    def _prep_notice(self, now: datetime) -> None:
+        """Owner, 2026-11-15: PREP_AHEAD before an erotic task (one not chosen yet: it may use a plug), a heads-up to clean up. Once per task
+        (the notification's dedupe key); a training session gets none. Never a consequence."""
+        with self._core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT id FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
+                                                  "AND planned_at <= ? AND planned_at > ?", (self.user_id, ASK_KEY, _iso(now + PREP_AHEAD), _iso(now)))]
+        for row in rows:
+            apply_transition(self._core, write=lambda tx, _s, r=row: enqueue_in_transaction(
+                tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:prep:{r['id']}", now=now, text=PREP_TEXT))
 
     def _start_due(self, now: datetime) -> None:
         with self._core.transaction() as tx:

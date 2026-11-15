@@ -51,19 +51,20 @@ class PaperPort:
     lock_id: Callable[[datetime], str | None]
     halted: Callable[[], bool]
     slot_taken: Callable[[], bool]                   # an open spot check or recovery task
-DEFAULT_SENTENCE = "I follow the rules I agreed to."
+# Owner, 2026-11-15: the more submissive wording he approved (counts unchanged; an open assignment keeps its own sentence).
+DEFAULT_SENTENCE = "I obey the rules my keyholder sets for me."
 SENTENCES = {
-    "HYGIENE_MISUSE": "I use hygiene breaks only for hygiene.",
-    "CHECKIN_MISSED_FIRST": "I answer my check-ins on time.",
-    "CHECKIN_INSUFFICIENT": "I answer my check-ins properly.",
-    "CHECKIN_REPEATED_NONCOMPLIANCE": "I answer my check-ins on time.",
-    "DETECTION_UNANSWERED": "I answer my keyholder's questions.",
-    "EXEMPTION_OVERRIDE": "A declined exemption means no.",
-    "FALSE_REPORT": "I report only what I really did.",
-    "OBEDIENCE_TASK_MISSED": "I obey my keyholder's tasks.",
-    "HYGIENE_PICTURE_MISSING": "I send my relock picture every time.",
-    "EPISTEMIC_MISREPRESENTATION": "I tell the truth about my lock.",
-    "FALSE_HEALTH_CLAIM": "I claim a health need only when it is real.",
+    "HYGIENE_MISUSE": "My keyholder trusts me with my breaks, and I use them only for hygiene.",
+    "CHECKIN_MISSED_FIRST": "I answer my keyholder on time, every time.",
+    "CHECKIN_INSUFFICIENT": "I give my keyholder full and honest answers.",
+    "CHECKIN_REPEATED_NONCOMPLIANCE": "I do not make my keyholder wait for me.",
+    "DETECTION_UNANSWERED": "When my keyholder asks, I answer.",
+    "EXEMPTION_OVERRIDE": "My keyholder's no is final, and I accept it.",
+    "FALSE_REPORT": "I never lie to my keyholder about what I did.",
+    "OBEDIENCE_TASK_MISSED": "I obey my keyholder without excuses.",
+    "HYGIENE_PICTURE_MISSING": "I prove to my keyholder that I am locked again.",
+    "EPISTEMIC_MISREPRESENTATION": "I am honest with my keyholder about my cage.",
+    "FALSE_HEALTH_CLAIM": "I never use my health to escape my keyholder.",
 }
 _NUMBER = re.compile(r"^\s*\d{1,3}\s*[.):-]\s*")
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"'})

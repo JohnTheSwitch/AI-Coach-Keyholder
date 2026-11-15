@@ -25,7 +25,7 @@ def test_the_rule() -> None:
     assert LONG_CLAIM == timedelta(hours=3) and DECLINED_BEFORE == timedelta(hours=12) and STILL_OPEN == timedelta(hours=24)
     assert RULE_GROUPS[SignalKind.HEALTH_CLAIM] == "FALSE_HEALTH_CLAIM" and "FALSE_HEALTH_CLAIM" not in WARNING_ONLY_RULE_GROUPS
     assert violation("FALSE_HEALTH_CLAIM").domain == "integrity" and EVIDENCE[SignalKind.HEALTH_CLAIM] is EVIDENCE[SignalKind.LOCK_CLAIM]
-    assert sentence_for("FALSE_HEALTH_CLAIM") == "I claim a health need only when it is real."
+    assert sentence_for("FALSE_HEALTH_CLAIM") == "I never use my health to escape my keyholder."
 
 
 def test_every_signal_kind_can_be_stored(tmp_path) -> None:

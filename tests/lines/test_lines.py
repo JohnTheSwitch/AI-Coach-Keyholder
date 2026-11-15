@@ -40,11 +40,11 @@ def rows(db, sql, *args):
 
 
 def test_sentences_and_matching() -> None:
-    assert sentence_for("HYGIENE_MISUSE") == "I use hygiene breaks only for hygiene."
-    assert sentence_for("SOMETHING_NEW") == "I follow the rules I agreed to."
-    assert normalize("12.  i use HYGIENE breaks only for hygiene") == normalize("I use hygiene breaks only for hygiene.")
+    assert sentence_for("HYGIENE_MISUSE") == "My keyholder trusts me with my breaks, and I use them only for hygiene."
+    assert sentence_for("SOMETHING_NEW") == "I obey the rules my keyholder sets for me."
+    assert normalize("12.  my keyholder trusts me with my BREAKS, and i use them only for hygiene") == normalize("My keyholder trusts me with my breaks, and I use them only for hygiene.")
     assert normalize("3) I answer my keyholder’s questions!") == normalize("I answer my keyholder's questions.")
-    assert normalize("I use hygiene breaks for hygiene.") != normalize("I use hygiene breaks only for hygiene.")
+    assert normalize("My keyholder trusts me with my breaks, and I use them for hygiene.") != normalize("My keyholder trusts me with my breaks, and I use them only for hygiene.")
 
 
 class TestAssignment:
@@ -58,7 +58,7 @@ class TestAssignment:
             ("a", LINES_WARNING), ("b", LINES_WINDOW)]
         assert s.open_lines(U) == 60
         notes = rows(db, "SELECT text FROM notifications WHERE kind = 'lines' ORDER BY created_at, rowid")
-        assert len(notes) == 2 and '"I report only what I really did."' in notes[0]["text"] and "A health need never waits." in notes[0]["text"]
+        assert len(notes) == 2 and '"I never lie to my keyholder about what I did."' in notes[0]["text"] and "A health need never waits." in notes[0]["text"]
         assert len(rows(db, "SELECT 1 FROM domain_events WHERE event_type = 'lines.assigned'")) == 2
 
     def test_no_incident_id_no_lines(self, tmp_path) -> None:
@@ -75,10 +75,10 @@ class TestWriting:
         s = LineService(db, user_id=U)
         assign(s, db, "penalty_warning.recorded", incident="a")                          # 20 x hygiene
         assign(s, db, "penalty_warning.recorded", incident="b", rule="FALSE_REPORT")     # 20 x false report
-        hygiene = "I use hygiene breaks only for hygiene."
+        hygiene = "My keyholder trusts me with my breaks, and I use them only for hygiene."
         reply = s.take(U, "\n".join([f"{i}. {hygiene}" for i in range(1, 16)] + ["I use breaks for fun."]), NOW)
         assert reply.text == "15 counted, 25 to go. 1 line didn't match exactly and didn't count."
-        reply = s.take(U, "\n".join([hygiene] * 8 + ["I report only what I really did."] * 20), NOW)
+        reply = s.take(U, "\n".join([hygiene] * 8 + ["I never lie to my keyholder about what I did."] * 20), NOW)
         assert reply.text == "25 counted. That's all of them. Good."            # 5 hygiene (3 extra ignored) + 20
         assert s.open_lines(U) == 0
         assert len(rows(db, "SELECT 1 FROM domain_events WHERE event_type = 'lines.completed'")) == 2
@@ -86,9 +86,9 @@ class TestWriting:
     def test_an_ordinary_message_is_not_lines(self, tmp_path) -> None:
         db = core(tmp_path)
         s = LineService(db, user_id=U)
-        assert s.take(U, "I use hygiene breaks only for hygiene.", NOW) is None          # nothing owed
+        assert s.take(U, "My keyholder trusts me with my breaks, and I use them only for hygiene.", NOW) is None          # nothing owed
         assign(s, db, "penalty_warning.recorded")
-        assert s.take(U, "How are you?", NOW) is None and s.take("someone-else", "I use hygiene breaks only for hygiene.", NOW) is None
+        assert s.take(U, "How are you?", NOW) is None and s.take("someone-else", "My keyholder trusts me with my breaks, and I use them only for hygiene.", NOW) is None
 
 
 class TestWhatWaits:
@@ -138,7 +138,7 @@ def test_the_dm_counts_lines_before_any_model(tmp_path) -> None:
     lines = LineService(db, user_id=user_id)
     service.lines = lines
     assign(lines, db, "penalty_warning.recorded")
-    reply = service.handle_message(_incoming("I use hygiene breaks only for hygiene.\nI use hygiene breaks only for hygiene.", now=FIXED_TIME))
+    reply = service.handle_message(_incoming("My keyholder trusts me with my breaks, and I use them only for hygiene.\nMy keyholder trusts me with my breaks, and I use them only for hygiene.", now=FIXED_TIME))
     assert reply.text == "2 counted, 18 to go."
     assert WEARER  # the hygiene world's wearer id is imported for the helpers above
 
@@ -159,7 +159,7 @@ class TestOnPaper:
         assign(s, db, "penalty_warning.recorded")
         assert "by hand on paper" in rows(db, "SELECT text FROM notifications WHERE kind = 'lines'")[0]["text"]
         s.paper_tick(NOW)
-        assert chaster.assigned == ['20 handwritten lines: "I use hygiene breaks only for hygiene." Photo of the sheet only.']
+        assert chaster.assigned == ['20 handwritten lines: "My keyholder trusts me with my breaks, and I use them only for hygiene." Photo of the sheet only.']
         assert s.is_lines_task("t1") and s.has_open_task()
         s.paper_tick(NOW)                                                   # nothing submitted yet: still open
         assert s.open_lines(U) == 20
@@ -188,7 +188,7 @@ class TestOnPaper:
         assign(s, db, "penalty_warning.recorded")
         s.paper_tick(NOW)
         assert chaster.assigned == []                                       # a spot check holds the slot
-        line = "I use hygiene breaks only for hygiene."
+        line = "My keyholder trusts me with my breaks, and I use them only for hygiene."
         assert "Lines go on paper" in s.take(U, line, NOW).text and s.open_lines(U) == 20
         assert s.take(U, "How are you?", NOW) is None
         assert s.take(U, line, NOW + timedelta(hours=3)).text == "1 counted, 19 to go."
