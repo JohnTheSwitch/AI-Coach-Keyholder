@@ -170,6 +170,7 @@ class CoachKeyholderBot(discord.Client):
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
         self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
+        self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
         self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
@@ -235,6 +236,8 @@ class CoachKeyholderBot(discord.Client):
             self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
         if self.obedience_loop is not None:
             self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
+        if self.health_pattern_loop is not None:
+            self._health_pattern_task = asyncio.create_task(self.health_pattern_loop, name="health-pattern")
         if self.dm_actions:
             from bot.action_buttons import DmActionButton
             self.add_dynamic_items(DmActionButton)
@@ -1044,6 +1047,15 @@ def main() -> None:
         if peer.watch is not None:
             before_obedience = peer.watch.is_spot_check
             peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)
+    # G2 (owner, 2026-11-15): health uses counted; from the 3rd in 7 days the keyholder asks once a week; never restricts anything.
+    from system.health_pattern import HealthPattern, health_uses, week_label
+    health_user = getattr(proof_checks, "user_id", None) or getattr(config, "check_in_user_id", None)
+    health_cfg = window_config_from(config)
+    if health_user:
+        health_pattern = HealthPattern(core, user_id=health_user, iso_week=week_label(health_cfg.local),
+                                       paused=lambda now, u=health_user: wiring.vacation.is_paused(u, now))
+        bot.health_pattern_loop = health_pattern.loop(clock)
+        logger.info("Health uses are counted (G2): from the 3rd in 7 days the keyholder asks once a week; nothing is restricted.")
     # Weekly review (owner, 2026-11-13; roadmap slice 5): Sunday 19:00 local, the week in plain facts, written by code.
     from system.weekly_review_wiring import build_weekly_review
     weekly_notes: list[str] = []
@@ -1056,6 +1068,9 @@ def main() -> None:
         bot.weekly_review_loop = weekly_review.loop(clock)
         if recovery_tasks is not None:
             weekly_review.recovery_between = recovery_tasks.get_tasks_between      # work queue Q4
+        if health_user:
+            weekly_review.health_between = (lambda start, end, u=health_user, cfg=health_cfg:
+                                            health_uses(core, u, cfg.to_utc(start, dt_time(0, 0)), cfg.to_utc(end, dt_time(0, 0))))
     # Photo check-ins (owner, 2026-11-13): the submission times of the verification pictures on the connected account's locked locks.
     photo_account = config.chaster_execution_keyholder_user_id
     photo_tokens = background_tokens or chaster_token_manager

@@ -370,6 +370,14 @@ def get_training_outcomes(core: CoreDatabase, user_id: str, start: str, end: str
     return {r["local_date"]: {"catalog_key": r["catalog_key"], "status": r["status"], "outcome": r["outcome"]} for r in rows}
 
 
+def get_health_cancels(core: CoreDatabase, user_id: str, lo: str, hi: str) -> list[str]:
+    """Read-only (G2, owner 2026-11-15): when a task was cancelled with "I can't now (health or safety)", in [lo, hi)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT decided_at FROM obedience_tasks WHERE user_id = ? AND outcome = 'health_or_safety' AND decided_at >= ? AND decided_at < ?",
+                            (user_id, lo, hi))
+    return [r["decided_at"] for r in rows]
+
+
 class ObedienceTasks:
     def __init__(self, core: CoreDatabase, *, user_id: str, chaster, ports: Ports, rng: random.Random | None = None) -> None:
         self._core = core

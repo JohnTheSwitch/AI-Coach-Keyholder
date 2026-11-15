@@ -128,6 +128,14 @@ _OWNED = ("Thank you for owning it. It counts as hygiene misuse in two hours, an
 _DISOWNED = "Okay, I misread you. Nothing is recorded."
 
 
+def get_health_excuses(core: CoreDatabase, user_id: str, lo: str, hi: str) -> list[str]:
+    """Read-only (G2, owner 2026-11-15): when a detector question was cleared because the answer named a health or safety need, in [lo, hi)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT decided_at FROM infraction_signals WHERE user_id = ? AND status = 'cleared' AND cleared_reason = 'health' "
+                            "AND decided_at >= ? AND decided_at < ?", (user_id, lo, hi))
+    return [r["decided_at"] for r in rows]
+
+
 def self_report_buttons(signal_id: str) -> tuple[ActionSpec, ...]:
     return (ActionSpec(action_id=f"infraction:own:{signal_id}", label="Yes, I did", style="danger"),
             ActionSpec(action_id=f"infraction:disown:{signal_id}", label="No, you misread me"))

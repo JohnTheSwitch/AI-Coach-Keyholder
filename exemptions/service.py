@@ -66,6 +66,7 @@ SAFETY_LINE = "If this is an urgent health or safety matter, you don't need this
 
 _REQUEST = re.compile(r"\b(exemption|exempt me|v[yý]jimk[auy]|v[yý]jimku)\b", re.IGNORECASE)
 _HYGIENE = re.compile(r"\bhygiene (opening|break)\b|\bhygienick\w* (otevren\w*|prestavk\w*)\b|\botevr\w* .*\bhygien")
+HEALTH_AUTO_HOURS = 24                      # owner, 2026-11-15: code approves a health exemption for at most this; longer or a renewal goes to the judge
 HEALTH_MINUTES = 60                         # how long a health opening runs on Chaster's clock; nothing is judged against it
 ALLOWANCE_WINDOW = timedelta(days=7)
 RELOCK_PICTURE_WITHIN = timedelta(minutes=30)     # owner, 2026-11-15: the relock picture is due within 30 minutes of relocking
@@ -125,6 +126,15 @@ def _length(row) -> str:
 
 def _span(row) -> timedelta:
     return timedelta(minutes=row["minutes"]) if row["minutes"] else timedelta(hours=row["hours"])
+
+
+def get_health_uses(core: CoreDatabase, user_id: str, lo: str, hi: str) -> list[tuple[str, str]]:
+    """Read-only (G2, owner 2026-11-15): (approved at, "opening" | "exemption") for health openings and health exemptions approved in [lo, hi)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT kind, COALESCE(decided_at, created_at) AS at FROM wear_exemptions WHERE user_id = ? AND status IN ('approved', 'ended') "
+                            "AND (kind = 'hygiene_health' OR (kind = 'exemption' AND (category = 'health' OR decided_by = 'judge_health'))) "
+                            "AND COALESCE(decided_at, created_at) >= ? AND COALESCE(decided_at, created_at) < ?", (user_id, lo, hi))
+    return [(r["at"], "opening" if r["kind"] == "hygiene_health" else "exemption") for r in rows]
 
 
 class ExemptionService:
@@ -348,6 +358,13 @@ class ExemptionService:
                                 "AND decided_at > ? AND reason IS NOT NULL ORDER BY decided_at", (row["user_id"], row["id"], _iso(now - APPEAL_WINDOW)))
         return [r["reason"] for r in rows]
 
+    def _health_renewal(self, row, now: datetime) -> bool:
+        """A health exemption was in force within the last HEALTH_AUTO_HOURS: a new one is a renewal and goes to the judge."""
+        since = _iso(now - timedelta(hours=HEALTH_AUTO_HOURS))
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE user_id = ? AND id != ? AND kind = 'exemption' AND status IN ('approved', 'ended') "
+                                "AND (category = 'health' OR decided_by = 'judge_health') AND expires_at >= ?", (row["user_id"], row["id"], since)) is not None
+
     def _rule(self, exemption_id: str, now: datetime) -> tuple[str, tuple[ActionSpec, ...]]:
         """Judges a 'requested' request that has a reason, and applies the ruling. Returns what to tell the wearer."""
         from exemptions.judge import Ruling
@@ -364,6 +381,8 @@ class ExemptionService:
         health = row["category"] == "health"
         from exemptions.judge import ExemptionRuling
         from infractions.judge import brings_nothing_new, is_health_or_safety
+        health_like = health or is_health_or_safety(row["reason"])
+        long_health = not hygiene and health_like and (_span(row) > timedelta(hours=HEALTH_AUTO_HOURS) or self._health_renewal(row, now))
         ruling = None
         if declined and not health and not is_health_or_safety(row["reason"]):
             if len(declined) > MAX_APPEALS:
@@ -372,7 +391,22 @@ class ExemptionService:
                 ruling = ExemptionRuling(Ruling.DECLINE, "Your appeal doesn't tell me anything new.", by_code=True)
         if ruling is None:
             ruling = self._judge.judge(what=what, length=_length(row), reason=answer if follow_up else first, earlier=first if follow_up else None,
-                                       appeal_of="\n---\n".join(declined) or None, health=health)
+                                       appeal_of="\n---\n".join(declined) or None, health=health, long_health=long_health)
+        span = _span(row)
+        if long_health and (ruling is None or ruling.ruling is not Ruling.APPROVE):
+            # A health need never waits for a model or depends on its answer: the first HEALTH_AUTO_HOURS are approved by code; only the
+            # rest is the judge's to refuse (owner, 2026-11-15).
+            if not self._health_renewal(row, now):
+                said = (ruling.reason + " " if ruling is not None and ruling.reason else "")
+                ruling = ExemptionRuling(Ruling.APPROVE, f"{said}A health need comes first: {HEALTH_AUTO_HOURS} hours approved now. If you need "
+                                         "longer, ask again and say what's going on.", by_code=True)
+                span = timedelta(hours=HEALTH_AUTO_HOURS)
+            elif ruling is None:
+                ruling = ExemptionRuling(Ruling.APPROVE, f"A health need comes first: {HEALTH_AUTO_HOURS} more hours approved while I can't decide "
+                                         "the rest.", by_code=True)
+                span = timedelta(hours=HEALTH_AUTO_HOURS)
+        elif health_like and ruling is not None and ruling.by_code:
+            span = min(span, timedelta(hours=HEALTH_AUTO_HOURS))
         if ruling is None:
             decision("exemptions", "Exemption request not judged yet (no usable answer from the model); retried on the next pass.", exemption_id=exemption_id)
             return f"I can't decide that right now. I'll tell you as soon as I have. {SAFETY_LINE}", ()
@@ -391,7 +425,7 @@ class ExemptionService:
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE wear_exemptions SET status = ?, decided_at = ?, decided_by = ?, expires_at = ?, verdict_reason = ? WHERE id = ? AND status = 'requested'",
-                              ("approved" if approve else "declined", _iso(now), by, _iso(now + _span(row)) if approve else None, said, exemption_id)).rowcount == 1
+                              ("approved" if approve else "declined", _iso(now), by, _iso(now + span) if approve else None, said, exemption_id)).rowcount == 1
             if done and self._owner and self._owner != row["user_id"]:       # a separate keyholder still hears about it
                 enqueue_in_transaction(tx, user_id=self._owner, kind="exemption_request", dedupe_key=f"exemption:ruled:{exemption_id}", now=now, immediate=True,
                                        text=f"{'Approved' if approve else 'Declined'}: {what}, {_length(row)}. {said}")
@@ -561,12 +595,12 @@ class ExemptionService:
 
     def _check_relock_pictures(self, now: datetime) -> None:
         """Owner, 2026-11-15: RELOCK_PICTURE_WITHIN after a planned hygiene relock, Chaster's verification pictures are read. A picture from just
-        before the relock to RELOCK_PICTURE_WITHIN after it counts; none at all = the wearer is asked to explain. A health opening is never
-        checked; an unreadable Chaster is retried and, after RELOCK_PICTURE_GIVE_UP, dropped (unknown never counts against him)."""
+        before the relock to RELOCK_PICTURE_WITHIN after it counts; none at all = the wearer is asked to explain. G2 (owner, 2026-11-15): a
+        health opening is checked too (it restricts nothing; a health explanation is excused by code); an unreadable Chaster is retried and, after RELOCK_PICTURE_GIVE_UP, dropped (unknown never counts against him)."""
         if self.relock_pictures is None:
             return
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM wear_exemptions WHERE kind = 'hygiene' AND relocked_at IS NOT NULL "
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM wear_exemptions WHERE kind IN ('hygiene', 'hygiene_health') AND relocked_at IS NOT NULL "
                                                   "AND picture_checked_at IS NULL AND relocked_at <= ?", (_iso(now - RELOCK_PICTURE_WITHIN),))]
         for row in rows:
             relocked = parse_iso(row["relocked_at"])

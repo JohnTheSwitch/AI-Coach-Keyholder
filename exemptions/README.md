@@ -48,3 +48,7 @@ bot reads Chaster's verification pictures 30 minutes after the relock. A picture
 none = the wearer is asked to explain (infractions path); unexplained = `HYGIENE_PICTURE_MISSING`, a Warning and 20 lines ("I send my relock
 picture every time."). A health opening is never checked; an unreadable Chaster is retried for 6 hours and then dropped (unknown never
 counts against him). "I'm back" is never needed for any of this: the relock time is Chaster's own.
+
+**Health cap (owner, 2026-11-15).** Code approves a health exemption for at most `HEALTH_AUTO_HOURS` (24). Longer, or a renewal while/within 24 hours after a health exemption, goes to the judge (`long_health`): it may approve the full time; if it refuses or cannot answer, the first 24 hours are still approved by code (a renewal the model cannot answer also gets 24 more hours). Urgent needs never come here.
+
+**G2 (owner, 2026-11-15).** The relock picture is checked after health openings too (it restricts nothing; a health explanation is excused by code). `get_health_uses` feeds `system/health_pattern.py`: health openings, health exemptions, the obedience health button and detector questions excused by health are counted; from the 3rd in 7 days the keyholder asks once a week; the weekly review shows the count.

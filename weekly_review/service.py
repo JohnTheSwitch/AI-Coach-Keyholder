@@ -73,6 +73,8 @@ class WeekFacts:
     lines_owed: int = 0
     recovery_verified: int | None = None                  # None when recovery tasks are not wired
     recovery_hours: float = 0.0
+    health_uses: int | None = None                        # G2 (owner, 2026-11-15): None when not wired; counted, never judged here
+    health_detail: str = ""
 
     @property
     def commitments(self) -> int:
@@ -131,6 +133,8 @@ def render_week(f: WeekFacts) -> str:
         lines.append(line)
     if f.recovery_verified:
         lines.append(f"Recovery tasks verified: {f.recovery_verified} ({f.recovery_hours:g} hours off your Penalty Window).")
+    if f.health_uses:
+        lines.append(f"Health uses: {f.health_uses} ({f.health_detail}). A health need never counts against you.")
     lines.append(f"Today is counted after midnight. {OFF_HINT}")
     return "\n".join(lines)
 
@@ -143,6 +147,7 @@ class WeeklyReview:
         self.lines_between: Callable[[date, date], list[dict]] | None = None       # Q4: lines.service.LineService.get_lines_between
         self.lines_owed: Callable[[], int] | None = None
         self.recovery_between: Callable[[date, date], list[dict]] | None = None    # Q4: recovery_tasks.service.RecoveryTasks.get_tasks_between
+        self.health_between: Callable[[date, date], list[dict]] | None = None      # G2: system.health_pattern.health_uses over local dates
 
     # ------------------------------------------------------------------ the switch
 
@@ -204,6 +209,10 @@ class WeeklyReview:
             passed = [r for r in self.recovery_between(week_start, end) if r.get("status") == "passed"]
             counts["recovery_verified"] = len(passed)
             counts["recovery_hours"] = float(len(passed) * RECOVERY_HOURS)
+        if self.health_between is not None:
+            from system.health_pattern import describe
+            uses = self.health_between(week_start, end)
+            counts["health_uses"], counts["health_detail"] = len(uses), describe(uses)
         return WeekFacts(start=week_start, end=end, **counts)
 
     # ------------------------------------------------------------------ Sunday evening

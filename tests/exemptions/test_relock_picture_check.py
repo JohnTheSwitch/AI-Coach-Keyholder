@@ -46,12 +46,20 @@ def test_no_picture_within_30_minutes_asks_him(tmp_path) -> None:
     assert w.raised == ["h"]                                              # decided once
 
 
-def test_a_picture_sent_or_not_required_or_a_health_opening_is_fine(tmp_path) -> None:
-    for i, kw in enumerate(({"found": True}, {"required": False}, {"kind": "hygiene_health"})):
+def test_a_picture_sent_or_not_required_is_fine(tmp_path) -> None:
+    for i, kw in enumerate(({"found": True}, {"required": False}, {"kind": "hygiene_health", "found": True})):
         (tmp_path / str(i)).mkdir()
         w = world(tmp_path / str(i), **kw)
         w.service.tick(NOW + timedelta(minutes=31))
-        assert w.raised == [] and outcome(w) == {0: "sent", 1: "not_required", 2: None}[i]
+        assert w.raised == [] and outcome(w) == {0: "sent", 1: "not_required", 2: "sent"}[i]
+
+
+def test_a_health_opening_is_checked_too(tmp_path) -> None:
+    """G2 (owner, 2026-11-15): the relock picture is checked after a health opening as well; it restricts nothing, and a health
+    explanation is excused by code on the infractions path."""
+    w = world(tmp_path, kind="hygiene_health")
+    w.service.tick(NOW + timedelta(minutes=31))
+    assert len(w.raised) == 1
 
 
 def test_unknown_never_counts(tmp_path) -> None:

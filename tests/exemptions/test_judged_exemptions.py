@@ -222,3 +222,43 @@ class TestOneAppealThenTakeItAnyway:
         self._declined_twice(w)
         ask(w, category="other")
         assert "approved" in w.service.give_reason(WEARER, "I have an injury there.", w.at).text
+
+
+class TestHealthCap:
+    """Owner, 2026-11-15: code approves a health exemption for at most 24 hours; longer, or a renewal right after one, goes to the judge;
+    a model failure or a refusal never takes the first 24 hours away."""
+
+    def _expires_hours(self, w):
+        from datetime import datetime
+        row = w.exemption() if len(w.q("SELECT * FROM wear_exemptions")) == 1 else w.q("SELECT * FROM wear_exemptions ORDER BY created_at DESC, rowid DESC")[0]
+        return (datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) - datetime.fromisoformat(row["decided_at"].replace("Z", "+00:00"))).total_seconds() / 3600
+
+    def test_up_to_a_day_is_approved_by_code(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        ask(w, category="health", hours=24)
+        w.service.give_reason(WEARER, "Skin irritation under the ring.", w.at)
+        assert w.exemption()["decided_by"] == "judge_health" and self._expires_hours(w) == 24 and w.model.prompts == []
+
+    def test_a_week_goes_to_the_judge_who_may_approve_it(self, tmp_path) -> None:
+        w = world(tmp_path, {"decision": "approve", "reason": "An infection needs a week to heal.", "question": ""})
+        ask(w, category="health", hours=168)
+        out = w.service.give_reason(WEARER, "Doctor found an infection, no device for a week.", w.at)
+        assert "approved" in out.text.lower() and self._expires_hours(w) == 168 and "HEALTH request" in w.model.prompts[-1][1]
+
+    def test_a_refused_or_unjudged_week_still_gets_a_day(self, tmp_path) -> None:
+        for name, answer in (("refused", DECLINE), ("down", RuntimeError("model down"))):
+            w = world(tmp_path / name, answer)
+            ask(w, category="health", hours=168)
+            out = w.service.give_reason(WEARER, "It hurts a bit.", w.at)
+            assert w.exemption()["status"] == "approved" and self._expires_hours(w) == 24 and "24 hours approved now" in out.text, name
+
+    def test_a_renewal_right_after_goes_to_the_judge(self, tmp_path) -> None:
+        w = world(tmp_path, DECLINE)
+        ask(w, category="health", hours=24)
+        w.service.give_reason(WEARER, "Skin irritation.", w.at)
+        with w.core.transaction() as tx:
+            tx.execute("UPDATE wear_exemptions SET status = 'ended'")
+        w.at = w.at + timedelta(hours=25)
+        ask(w, category="health", hours=24)
+        out = w.service.give_reason(WEARER, "Still irritated.", w.at)
+        assert w.model.prompts and out.text.startswith("Declined"), out.text
