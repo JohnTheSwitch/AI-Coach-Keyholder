@@ -46,7 +46,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
+__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
@@ -118,7 +118,7 @@ class Task:
     after: tuple = ()                   # (key prefix, n): given only after n verified tasks whose key starts with the prefix
 
 
-PHOTO_BEHIND = "Photo from behind, waist down only, code beside it."
+PHOTO_BEHIND = "Photo from behind, waist down only."
 
 # Owner, 2026-11-14: "make the tasks so that it's not repetitive". Most erotic days are COMPOSED from a pose and one or two add-ons, so there
 # are dozens of combinations; a combination used in the last REPEAT_DAYS days is not used again, and the main gear never repeats two days in
@@ -167,70 +167,70 @@ REPEAT_DAYS = 14
 
 _DD, _BJ = frozenset({"deep_diver"}), frozenset({"bijou_large"})
 EXTRAS: tuple[Task, ...] = (
-    Task("dildo_kneel", "Show: kneeling with the purple RealRock dildo stuck to the floor in front of you. Photo of the dildo and your knees only, code beside it.",
+    Task("dildo_kneel", "Kneeling with the purple RealRock dildo stuck to the floor in front of you. Photo of the dildo and your knees only.",
          "erotic", frozenset({"dildo_purple"})),
-    Task("dildo_ride", "Show: the purple RealRock dildo stuck to the floor and you riding it, with water-based lube. " + PHOTO_BEHIND,
+    Task("dildo_ride", "The purple RealRock dildo stuck to the floor and you riding it, with water-based lube. " + PHOTO_BEHIND,
          "erotic", frozenset({"dildo_purple"}), ALONE_ONLY),
-    Task("dildo_size", "Show: the big Lovetoy dildo next to your cage, for size. Photo of the two only, code beside it.", "erotic",
+    Task("dildo_size", "The big Lovetoy dildo next to your cage, for size. Photo of the two only.", "erotic",
          frozenset({"dildo_big"})),
-    Task("rope_harness", "Show: a chest harness in the red rope. Photo from the neck down, no face, code beside it. Keep it 20 minutes, shears within reach.",
+    Task("rope_harness", "A chest harness in the red rope. Photo from the neck down, no face. Keep it 20 minutes, shears within reach.",
          "erotic", frozenset({"rope_cotton"}), ALONE_ONLY),
-    Task("rope_ankles", "Show: your ankles tied with the hemp rope. Photo of your ankles only, code beside it. Keep it 15 minutes, shears within reach.",
+    Task("rope_ankles", "Your ankles tied with the hemp rope. Photo of your ankles only. Keep it 15 minutes, shears within reach.",
          "erotic", frozenset({"rope_hemp"})),
-    Task("selfbond_cuffs", "Show: kneeling, wrists in the leather cuffs locked together in front, key within reach on the floor. " + PHOTO_BEHIND + " 20 minutes.",
+    Task("selfbond_cuffs", "Kneeling, wrists in the leather cuffs locked together in front, key within reach on the floor. " + PHOTO_BEHIND + " 20 minutes.",
          "erotic", frozenset({"leather_cuffs", "padlocks"}), ALONE_ONLY, frozenset({"cuffs"})),
-    Task("selfbond_ankles", "Show: ankles buckled together in the leather cuffs, lying face down, key within reach. " + PHOTO_BEHIND + " 25 minutes.",
+    Task("selfbond_ankles", "Ankles buckled together in the leather cuffs, lying face down, key within reach. " + PHOTO_BEHIND + " 25 minutes.",
          "erotic", frozenset({"leather_cuffs"}), ALONE_ONLY, frozenset({"cuffs"})),
-    Task("collar_kneel", "Show: kneeling in your collar, hands behind your back. Photo from the collar down, chin out of frame, no face, code beside it. 15 minutes.",
+    Task("collar_kneel", "Kneeling in your collar, hands behind your back. Photo from the collar down, chin out of frame, no face. 15 minutes.",
          "erotic", frozenset({"collar"})),
-    Task("collar_plug", "Show: your collar on and the clear Bijou in, on all fours. " + PHOTO_BEHIND + " Collar visible only from behind. 20 minutes.",
+    Task("collar_plug", "Your collar on and the clear Bijou in, on all fours. " + PHOTO_BEHIND + " Collar visible only from behind. 20 minutes.",
          "erotic", frozenset({"collar", "bijou_large"}), ALONE_ONLY, frozenset({"collar", "plug"})),
-    Task("clamps_chest", "Show: clamps on your nipples, kneeling upright. Photo of your chest only, no face, code beside it. 10 minutes, then off slowly.",
+    Task("clamps_chest", "Clamps on your nipples, kneeling upright. Photo of your chest only, no face. 10 minutes, then off slowly.",
          "erotic", frozenset({"clamps"})),
-    Task("clamps_vibe", "Show: clamps on your nipples, the Deep Diver vibrating in you, on all fours. Photo from the side, neck down only, code beside it. 10 minutes.",
+    Task("clamps_vibe", "Clamps on your nipples, the Deep Diver vibrating in you, on all fours. Photo from the side, neck down only. 10 minutes.",
          "erotic", frozenset({"clamps", "deep_diver"}), ALONE_ONLY, frozenset({"clamps", "vibe"})),
-    Task("blind_plug", "Show: blindfolded, kneeling, the clear Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
+    Task("blind_plug", "Blindfolded, kneeling, the clear Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
          frozenset({"blindfold", "bijou_large"}), ALONE_ONLY, frozenset({"blind", "plug"})),
     # Owner, 2026-11-15: the three together (cuffs in front so the blindfold can always come off, quick release in reach).
-    Task("blind_cuffs_vibe", "Show: blindfolded, fluffy cuffs in front, the Deep Diver vibrating in you, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
+    Task("blind_cuffs_vibe", "Blindfolded, fluffy cuffs in front, the Deep Diver vibrating in you, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
          "erotic", frozenset({"blindfold", "toy_cuffs", "deep_diver"}), ALONE_ONLY, frozenset({"blind", "cuffs", "vibe"})),
-    Task("rope_harness_blind", "Show: a chest harness in the red rope, blindfolded, kneeling. Photo from the neck down, no face, code beside it. 20 minutes, shears within reach.",
+    Task("rope_harness_blind", "A chest harness in the red rope, blindfolded, kneeling. Photo from the neck down, no face. 20 minutes, shears within reach.",
          "erotic", frozenset({"rope_cotton", "blindfold"}), ALONE_ONLY, frozenset({"rope", "blind"})),
-    Task("gag_kneel", "Show: kneeling upright, hands on your thighs, the Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
+    Task("gag_kneel", "Kneeling upright, hands on your thighs, the Bijou in. " + PHOTO_BEHIND + " 20 minutes.", "erotic",
          frozenset({"gag", "bijou_large"}), ALONE_ONLY, frozenset({"gag", "plug"}), GAG_NOTE),
     # Owner, 2026-11-15: longer sessions, especially while doing something else (no restraints; restraint time stays 30 minutes at most).
-    Task("wear_diver_long", "Show: the Deep Diver in. Photo of the plug base only, code beside it. Then keep it in 90 minutes while you do something else.",
+    Task("wear_diver_long", "The Deep Diver in. Photo of the plug base only. Then keep it in 90 minutes while you do something else.",
          "erotic", _DD, BOTH, frozenset({"vibe"})),
-    Task("wear_bijou_long", "Show: the clear Bijou in. Photo of the plug base only, code beside it. Then keep it in 60 minutes while you do something else.",
+    Task("wear_bijou_long", "The clear Bijou in. Photo of the plug base only. Then keep it in 60 minutes while you do something else.",
          "erotic", _BJ, ALONE_ONLY, frozenset({"plug"})),
-    Task("wear_collar_long", "Show: your collar on. Photo from the collar down, chin out of frame, no face, code beside it. Keep it on 2 hours.",
+    Task("wear_collar_long", "Your collar on. Photo from the collar down, chin out of frame, no face. Keep it on 2 hours.",
          "erotic", frozenset({"collar"}), ALONE_ONLY),
-    Task("wear_rope_long", "Show: a chest harness in the red rope under your shirt. Photo from the neck down, no face, code beside it. Keep it on 60 minutes, shears within reach.",
+    Task("wear_rope_long", "A chest harness in the red rope under your shirt. Photo from the neck down, no face. Keep it on 60 minutes, shears within reach.",
          "erotic", frozenset({"rope_cotton"}), ALONE_ONLY, frozenset({"rope"})),
     # Owner, 2026-11-15: the Hidden Desire bondage harness. Cuffs clip only to the waist rings (a pull goes to the waist belt, not the neck);
     # the velcro rips open any time. Blindfolded in it only after HD_BLIND_AFTER verified harness tasks.
-    Task("hd_front", "Show: in the bondage harness, wrists in its cuffs clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
+    Task("hd_front", "In the bondage harness, wrists in its cuffs clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
          "erotic", frozenset({"bondage_harness"}), ALONE_ONLY, frozenset({"harness"})),
-    Task("hd_back", "Show: in the bondage harness, wrists clipped to the waist rings behind you, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
+    Task("hd_back", "In the bondage harness, wrists clipped to the waist rings behind you, kneeling. " + PHOTO_BEHIND + " 30 minutes.",
          "erotic", frozenset({"bondage_harness"}), ALONE_ONLY, frozenset({"harness"})),
-    Task("hd_back_vibe", "Show: in the bondage harness, wrists clipped behind you, the Deep Diver vibrating in you. " + PHOTO_BEHIND + " 20 minutes.",
+    Task("hd_back_vibe", "In the bondage harness, wrists clipped behind you, the Deep Diver vibrating in you. " + PHOTO_BEHIND + " 20 minutes.",
          "erotic", frozenset({"bondage_harness", "deep_diver"}), ALONE_ONLY, frozenset({"harness", "vibe"})),
-    Task("hd_blind", "Show: in the bondage harness, blindfolded, wrists clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
+    Task("hd_blind", "In the bondage harness, blindfolded, wrists clipped to the waist rings in front, kneeling. " + PHOTO_BEHIND + " 20 minutes.",
          "erotic", frozenset({"bondage_harness", "blindfold"}), ALONE_ONLY, frozenset({"harness", "blind"}), after=("hd_", 3)),
-    Task("hd_quiet", "Show: the bondage harness on, cuffs open, kneeling quietly. Photo from the collar down, chin out of frame, no face, code beside it. 15 minutes.",
+    Task("hd_quiet", "The bondage harness on, cuffs open, kneeling quietly. Photo from the collar down, chin out of frame, no face. 15 minutes.",
          "erotic", frozenset({"bondage_harness"}), DISCREET_ONLY, frozenset({"harness"})),
-    Task("plug_quiet", "Show: the clear Bijou in, lying on your bed. Photo of the plug base only, code beside it. Then keep it in 30 minutes at your desk.",
+    Task("plug_quiet", "The clear Bijou in, lying on your bed. Photo of the plug base only. Then keep it in 30 minutes at your desk.",
          "erotic", _BJ, DISCREET_ONLY, frozenset({"plug"})),
 )
 WORKOUTS: tuple[Task, ...] = (
-    Task("workout_squats", "Show: the bar in your rack after 5 sets of squats. Photo of the bar and your legs only, code beside it.", "workout"),
-    Task("workout_pullups", "Show: 5 sets of pull-ups done, the last one with your vest. Photo of the bar and your hands only, code beside it.", "workout"),
-    Task("workout_pushups", "Show: 50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only, code beside it.", "workout", _DD),
-    Task("workout_plank", "Show: a 3-minute plank, cage visible. Photo from the side, neck down only, code beside it.", "workout"),
-    Task("workout_bike", "Show: 10 rounds of 20 s hard / 40 s easy on the air bike. Photo of the bike's display only, code beside it.", "workout"),
-    Task("workout_incline", "Show: 20 minutes of incline walking on the treadmill. Photo of the treadmill display only, code beside it.", "workout"),
-    Task("workout_calves", "Show: 4 sets of calf raises with the bar. Photo of the bar and your calves only, code beside it.", "workout"),
-    Task("workout_cable", "Show: 4 sets of cable rows on the Laubr. Photo of the stack and the handle only, code beside it.", "workout"),
+    Task("workout_squats", "The bar in your rack after 5 sets of squats. Photo of the bar and your legs only.", "workout"),
+    Task("workout_pullups", "5 sets of pull-ups done, the last one with your vest. Photo of the bar and your hands only.", "workout"),
+    Task("workout_pushups", "50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only.", "workout", _DD),
+    Task("workout_plank", "A 3-minute plank, cage visible. Photo from the side, neck down only.", "workout"),
+    Task("workout_bike", "10 rounds of 20 s hard / 40 s easy on the air bike. Photo of the bike's display only.", "workout"),
+    Task("workout_incline", "20 minutes of incline walking on the treadmill. Photo of the treadmill display only.", "workout"),
+    Task("workout_calves", "4 sets of calf raises with the bar. Photo of the bar and your calves only.", "workout"),
+    Task("workout_cable", "4 sets of cable rows on the Laubr. Photo of the stack and the handle only.", "workout"),
     Task("workout_log", "Workout done. Photo of the gym only.", "workout"),
 )
 CATALOG: tuple[Task, ...] = EXTRAS + WORKOUTS                # the fixed tasks (composed and ladder tasks are built when picked)
@@ -279,7 +279,7 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
     minutes = rng.choice([m for m in (10, 15, 20, 25, 30) if m <= cap])
     parts = ", ".join(w for w in (_variation(a, owned, mode) for a in addons) if w)
     needs = frozenset().union(*(next(n for n, w, _m in ADDONS[a] if w == _variation(a, owned, mode)) for a in addons))
-    shown = f"Show: {words}, {parts}." if parts else f"Show: {words}."
+    shown = f"{words[:1].upper()}{words[1:]}, {parts}." if parts else f"{words[:1].upper()}{words[1:]}."
     return Task(key, f"{shown} {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}),
                 dm_note=GAG_NOTE if "gag" in addons else "")
 
@@ -375,6 +375,27 @@ def get_health_cancels(core: CoreDatabase, user_id: str, lo: str, hi: str) -> li
         rows = tx.fetch_all("SELECT decided_at FROM obedience_tasks WHERE user_id = ? AND outcome = 'health_or_safety' AND decided_at >= ? AND decided_at < ?",
                             (user_id, lo, hi))
     return [r["decided_at"] for r in rows]
+
+
+def plan_extra_task(core: CoreDatabase, user_id: str, day: date, planned_at: datetime, now: datetime) -> str | None:
+    """Owner, 2026-11-15 (migration 077; `python -m cli obedience-extra`): ONE extra erotic task for `day` (slot 1), beside the day's own task.
+    It runs like any other: at `planned_at` he is asked "Are you alone right now?", then the task goes to Chaster when its one task slot is free
+    (after the day's own task), photo and community review, same consequences. Skipped without consequence if his free time is over first.
+    None when an extra task already exists for that day."""
+    row_id = str(uuid.uuid4())
+
+    def write(tx: Transaction, _s: object) -> bool:
+        done = tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, slot) "
+                          "VALUES (?, ?, ?, ?, '', ?, 'planned', ?, 1)", (row_id, user_id, day.isoformat(), ASK_KEY, _iso(planned_at), _iso(now))).rowcount
+        if done:
+            write_event(tx, DomainEvent(event_type="obedience.extra_planned", source_module="obedience", occurred_at=now,
+                                        payload={"obedience_task_id": row_id}))
+        return bool(done)
+
+    if not apply_transition(core, write=write):
+        return None
+    decision("obedience", "An extra obedience task was filed by the owner.", day=day.isoformat(), planned_at=_iso(planned_at))
+    return row_id
 
 
 class ObedienceTasks:
@@ -495,7 +516,7 @@ class ObedienceTasks:
         wears = passed.get(f"plug:{rung.key}", 0)
         minutes = LADDER_MINUTES[min(wears, len(LADDER_MINUTES) - 1)]
         warm = f" Warm up with the {owned[index - 1].name} for 10 minutes first." if index > 0 else ""
-        return Task(f"plug:{rung.key}", f"Show: your {rung.name} in, with {rung.lube}.{warm} Photo of the plug base only, code beside it. "
+        return Task(f"plug:{rung.key}", f"Your {rung.name} in, with {rung.lube}.{warm} Photo of the plug base only. "
                                          f"Keep it in {minutes} minutes.", "erotic")
 
     def _cancel_open(self, now: datetime, outcome: str) -> None:
@@ -790,7 +811,7 @@ class ObedienceTasks:
 
     def _row_for(self, day: date) -> dict | None:
         with self._core.transaction() as tx:
-            row = tx.fetch_one("SELECT * FROM obedience_tasks WHERE user_id = ? AND local_date = ?", (self.user_id, day.isoformat()))
+            row = tx.fetch_one("SELECT * FROM obedience_tasks WHERE user_id = ? AND local_date = ? AND slot = 0", (self.user_id, day.isoformat()))
         return None if row is None else dict(row)
 
     def _row(self, row_id: str) -> dict | None:

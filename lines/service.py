@@ -174,7 +174,7 @@ class LineService:
             return
         row = rows[0]
         left = row["required"] - row["done"]
-        task_id = port.chaster.assign(lock_id, f"Show: {left} handwritten lines: {row['sentence']}"[:200])
+        task_id = port.chaster.assign(lock_id, f"{left} handwritten lines: \"{row['sentence']}\" Photo of the sheet only."[:200])
 
         def write(tx: Transaction, _s: object) -> None:
             tx.execute("UPDATE line_assignments SET lock_id = ?, task_id = ?, task_assigned_at = ?, review_status = NULL WHERE id = ? AND status = 'open'",

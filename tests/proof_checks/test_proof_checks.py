@@ -145,7 +145,7 @@ class TestStart:
     def test_the_task_and_the_challenge(self, p) -> None:
         cid = p.commitment()
         assert p.done(cid) == "Noted. This one gets a spot check: see my next message."
-        assert p.chaster.assigned == [task_text("Study for 30 minutes")] == ["Show: Study for 30 minutes"]
+        assert p.chaster.assigned == [task_text("Study for 30 minutes")] == ["Done: Study for 30 minutes"]
         row = p.check()
         assert row["status"] == "assigned" and row["deadline"].startswith(f"{DAY}T22:40")
         note = p.w.rows("SELECT text, actions_json, immediate FROM notifications WHERE kind = 'proof_check'")[0]

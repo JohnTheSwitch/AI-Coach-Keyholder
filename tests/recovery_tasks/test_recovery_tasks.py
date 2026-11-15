@@ -101,7 +101,7 @@ def test_take_assign_verify_credit(tmp_path) -> None:
     w = World(tmp_path)
     w.tasks.offer(NOW)
     reply = w.tasks.press(user_id=U, row_id=w.offered_id(), action="take", now=NOW)
-    assert "It's in Chaster now" in reply and w.chaster.assigned == [f"Show: {CHORES[0]}"]
+    assert "It's in Chaster now" in reply and w.chaster.assigned == ["Your bathroom sink, cleaned."]
     assert ("accept", "rt1") in w.plans.calls
     w.chaster.entries["t1"] = {"createdAt": (NOW + timedelta(minutes=30)).isoformat(), "peerVerification": {"status": "ongoing"}}
     assert w.tasks.poll(NOW + timedelta(minutes=40)) == 0 and w.rows()[0]["status"] == "submitted"

@@ -46,6 +46,11 @@ VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
 _OPEN = ("offered", "assigned", "submitted")
 # Chores whose RESULT a photo can show (reviewers compare the photo with the text and the code). Plain, like the spot checks' texts.
+def _chaster_text(chore: str) -> str:
+    """Owner, 2026-11-15: what the voters see; brief, no "Show:", no code mention."""
+    return f"{chore[:1].upper()}{chore[1:]}."
+
+
 CHORES = (
     "your bathroom sink, cleaned",
     "your desk, cleared and tidy",
@@ -137,7 +142,7 @@ class RecoveryTasks:
         lock_id = self._ports.lock_id(now)
         if lock_id is None or self._ports.halted() or self._ports.slot_taken() or self._chaster.current_task(lock_id) is not None:
             return "I can't put a task on your lock right now (another task is open, or Chaster isn't reachable). Try again in a bit."
-        task_id = self._chaster.assign(lock_id, f"Show: {row['chore']}")
+        task_id = self._chaster.assign(lock_id, _chaster_text(row["chore"]))
         deadline = now + TASK_DEADLINE
         self._plans.accept_task(row["recovery_task_id"], now=now)
 
@@ -149,7 +154,7 @@ class RecoveryTasks:
 
         apply_transition(self._core, write=write)
         decision("recovery_tasks", "A recovery task was taken and assigned in Chaster.", recovery_chaster_task_id=row_id, deadline=_iso(deadline))
-        return (f"It's in Chaster now: \"Show: {row['chore']}\". Send the photo with Chaster's code there by {self._ports.local_clock(deadline)}. "
+        return (f"It's in Chaster now: \"{_chaster_text(row['chore'])}\". Send the photo with Chaster's code there by {self._ports.local_clock(deadline)}. "
                 f"When the community verifies it, {CREDIT_HOURS:g} hours come off your Penalty Window.")
 
     # ------------------------------------------------------------------ poll

@@ -159,7 +159,7 @@ class TestOnPaper:
         assign(s, db, "penalty_warning.recorded")
         assert "by hand on paper" in rows(db, "SELECT text FROM notifications WHERE kind = 'lines'")[0]["text"]
         s.paper_tick(NOW)
-        assert chaster.assigned == ["Show: 20 handwritten lines: I use hygiene breaks only for hygiene."]
+        assert chaster.assigned == ['20 handwritten lines: "I use hygiene breaks only for hygiene." Photo of the sheet only.']
         assert s.is_lines_task("t1") and s.has_open_task()
         s.paper_tick(NOW)                                                   # nothing submitted yet: still open
         assert s.open_lines(U) == 20

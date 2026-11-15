@@ -490,6 +490,53 @@ def run_release_test_override(args, *, out, now, factory) -> int:
     return 0
 
 
+def run_obedience_extra(args, *, out, now) -> int:
+    """Owner, 2026-11-15: ONE extra erotic obedience task today at --at (local HH:MM), beside the day's own task (obedience.plan_extra_task)."""
+    import hmac
+    from datetime import datetime as _dt
+    from datetime import time as _time
+
+    from core.config import Config
+    from infrastructure.database import Database as CoreDatabase
+    from obedience.service import plan_extra_task
+    from system.composition import window_config_from
+
+    config = Config.load()
+    owner = getattr(config, "owner_user_id", None)
+    if not owner or not hmac.compare_digest(str(args.owner_id).encode("utf-8"), str(owner).encode("utf-8")):
+        print("Refused: --owner-id must match OWNER_USER_ID.", file=out)
+        return 3
+    try:
+        at = _dt.strptime(args.at, "%H:%M").time()
+    except ValueError:
+        print("Refused: --at must be HH:MM (your local time).", file=out)
+        return 3
+    core = CoreDatabase(config.db_path)
+    cfg = window_config_from(config)
+    current = now()
+    day = cfg.local(current).date()
+    planned = cfg.to_utc(day, _time(at.hour, at.minute))
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT user_id FROM obedience_tasks ORDER BY created_at DESC LIMIT 1")
+    if row is None:
+        print("Refused: no obedience task was ever given, so there is no wearer to task.", file=out)
+        return 3
+    print(f"This files ONE extra obedience task for today ({day.isoformat()}) at {args.at}: the usual \"Are you alone right now?\", a Chaster task "
+          "once its task slot is free, photo and community review, the usual consequences. Skipped without consequence if your free time ends first.",
+          file=out)
+    if not args.yes:
+        print("Refused: add --yes to file it.", file=out)
+        return 3
+    if planned < current:
+        planned = current
+    ident = plan_extra_task(core, row["user_id"], day, planned, current)
+    if ident is None:
+        print("Nothing to do: an extra task already exists for today.", file=out)
+        return 3
+    print(f"Filed. [task={ident}]", file=out)
+    return 0
+
+
 def build_trust_domain_admin():
     from core.config import Config
     from trust_manager.domain_admin import TrustDomainAdmin
@@ -1003,6 +1050,10 @@ def main(argv: list[str], *, out: TextIO | None = None,
                                                        "penalty window; the running bot carries it out only with a confirmed barrier in free time.")
     rt.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     rt.add_argument("--yes", action="store_true", help="confirm that this really spends a token and releases the live lock")
+    ox = sub.add_parser("obedience-extra", help="Owner, 2026-11-15: file ONE extra erotic obedience task for today at a local time (the running bot gives it).")
+    ox.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    ox.add_argument("--at", required=True, help="local time HH:MM")
+    ox.add_argument("--yes", action="store_true", help="confirm")
     tenants = sub.add_parser("tenants", help="Multi-wearer tenant administration (owner only; list is read-only).")
     tsub = tenants.add_subparsers(dest="tenant_command", required=True)
     ideas = sub.add_parser("ai-ideas", help="Owner: review the model's private suggestions from every tenant (read across databases).")
@@ -1216,6 +1267,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
     if args.command == "setup":
         return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory, review_factory=review_factory,
                          lock_tasks=lock_tasks_reader(config_factory, now) if args.setup_command == "check" else None)
+    if args.command == "obedience-extra":
+        return run_obedience_extra(args, out=out, now=now)
     if args.command == "release-test-override":
         return run_release_test_override(args, out=out, now=now, factory=release_test_factory)
     if args.command == "freeze-lock":

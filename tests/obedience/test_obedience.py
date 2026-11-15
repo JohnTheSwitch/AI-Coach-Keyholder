@@ -53,9 +53,8 @@ def test_the_catalogue_respects_the_limits() -> None:
              "eyes closed", "harness")
     for task in _all_texts():
         text = task.text.lower()
-        assert len(task.text) <= 200, task.key
-        if task.key != "workout_log":       # owner, 2026-11-15: the workout task is brief for voters, no "Show:", no code mention
-            assert "code beside it" in text and task.text.startswith("Show: "), task.key
+        # Owner, 2026-11-15: voters see this, so brief: no "Show:", no mention of the code.
+        assert len(task.text) <= 200 and "show:" not in text and "code" not in text and task.text[:1] == task.text[:1].upper(), task.key
         assert "only" in text or "no face" in text, task.key                   # the photo names what it shows and only that
         assert not any(word in text for word in ("face visible", "outside", "outdoor", "public", "balls", " gag")), task.key
         assert any(word in text for word in owned), task.key
@@ -432,3 +431,32 @@ class TestLimitsTalk:
         for t in EXTRAS:
             if any(w in t.text for w in ("cuff", "clipped", "tied")):
                 assert int(re.search(r"(\d+) minutes", t.text).group(1)) <= 30, t.key
+
+
+class TestExtraTask:
+    """Owner, 2026-11-15 (migration 077): one extra erotic task on a day that already has its own (e.g. a training day), run the usual way."""
+
+    def test_it_waits_for_the_days_own_task_then_asks_and_runs(self, tmp_path) -> None:
+        from obedience.service import plan_extra_task
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        own = w.row()
+        evening = MORNING.replace(hour=19)
+        assert plan_extra_task(w.core, U, MORNING.date(), evening, MORNING) is not None
+        assert plan_extra_task(w.core, U, MORNING.date(), evening, MORNING) is None          # one extra a day
+        w.tasks.tick(MORNING + timedelta(minutes=5))
+        with w.core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks ORDER BY slot")]
+        assert [r["slot"] for r in rows] == [0, 1] and rows[0]["id"] == own["id"]            # the day's own plan is untouched
+        w.slot = True                                                                         # Chaster's one task slot is taken
+        w.tasks.tick(evening)
+
+        def extra():
+            with w.core.transaction() as tx:
+                return dict(tx.fetch_one("SELECT * FROM obedience_tasks WHERE slot = 1"))
+        assert extra()["status"] == "planned"
+        w.slot = False
+        w.tasks.tick(evening + timedelta(minutes=2))
+        assert extra()["status"] == "asking"
+        w.tasks.press(user_id=U, row_id=extra()["id"], action="alone", now=evening + timedelta(minutes=3))
+        assert extra()["status"] == "assigned" and extra()["text"] in w.chaster.assigned

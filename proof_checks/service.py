@@ -79,7 +79,7 @@ class Settle:
 def task_text(commitment_text: str) -> str:
     """Owner, 2026-11-13: short and plain, so the reviewers know what to look for ("Show your lockbox")."""
     text = " ".join(commitment_text.split())
-    return f"Show: {text[:180]}"
+    return f"Done: {text[:180]}"                 # owner, 2026-11-15: voters see this; brief, no "Show:", no code mention
 
 
 def challenge_text(commitment_text: str, deadline_local: str) -> str:
