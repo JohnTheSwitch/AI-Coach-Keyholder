@@ -148,8 +148,12 @@ class TestCatalog:
         assert "planned" in cat.get("HYGIENE_PICTURE_MISSING").description
 
     def test_emergency_and_mandatory_access_can_never_be_an_infraction(self) -> None:
+        # Philosophy v1.17 (owner, 2026-11-15): a genuine need never is; only a claim the judge confirmed was NOT a genuine need (G5).
         for v in cat.CATALOG:
             text = f"{v.code} {v.description}".lower()
+            if v.code == "FALSE_HEALTH_CLAIM":
+                assert "confirmed" in text and "not a genuine health or safety need" in text
+                continue
             assert "emergency" not in text and "mandatory" not in text and "health" not in text
 
     def test_goal_failures_are_not_violations(self) -> None:
@@ -158,4 +162,4 @@ class TestCatalog:
     def test_only_existing_modules_are_marked_detectable(self) -> None:
         assert {v.code for v in cat.CATALOG if v.detectable} == {
             "CHECKIN_MISSED_FIRST", "CHECKIN_INSUFFICIENT", "CHECKIN_REPEATED_NONCOMPLIANCE", "HYGIENE_MISUSE", "EPISTEMIC_MISREPRESENTATION", "DETECTION_UNANSWERED",
-            "EXEMPTION_OVERRIDE", "FALSE_REPORT", "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING"}
+            "EXEMPTION_OVERRIDE", "FALSE_REPORT", "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING", "FALSE_HEALTH_CLAIM"}

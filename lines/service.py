@@ -63,6 +63,7 @@ SENTENCES = {
     "OBEDIENCE_TASK_MISSED": "I obey my keyholder's tasks.",
     "HYGIENE_PICTURE_MISSING": "I send my relock picture every time.",
     "EPISTEMIC_MISREPRESENTATION": "I tell the truth about my lock.",
+    "FALSE_HEALTH_CLAIM": "I claim a health need only when it is real.",
 }
 _NUMBER = re.compile(r"^\s*\d{1,3}\s*[.):-]\s*")
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"'})

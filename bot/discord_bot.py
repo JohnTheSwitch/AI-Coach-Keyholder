@@ -1126,6 +1126,11 @@ def main() -> None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:
             exemption_dm.service.set_overrun_signal(overrun_signal(detectors.signals, trust_domain=domain))
+        # G5 (owner, 2026-11-15): a health opening or health exemption is reviewed afterwards when a stored fact puts it in doubt.
+        honesty = getattr(config, "honesty_trust_domain", None) or "honesty"
+        if TrustManager(config.db_path, core=core).get_domain_state(honesty) is not None:
+            from infractions.health_claims import claim_review_signal
+            exemption_dm.service.raise_claim = claim_review_signal(detectors.signals, trust_domain=honesty)
     # The bot keeps the owner's required lock settings true on Chaster by itself, never past a halt.
     extension_guard = build_extension_guard(config, core, notifications=notification_queue, token_manager=essential_tokens or chaster_token_manager, lock_client=chaster_lock_client,
                                             connections=chaster_connections, halt_source=platform.halt if platform is not None else None, clock=clock,

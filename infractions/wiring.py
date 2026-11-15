@@ -24,6 +24,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
 from infractions.excuses import Excuses
+from infractions.health_claims import EmergencyWatch
 from infractions.judge import ExplanationJudge
 from infractions.hygiene import HygieneWatch, OpeningNotAvailable
 from infractions.lock_claims import LockClaimWatch
@@ -42,6 +43,7 @@ class DetectorWiring:
     signals: InfractionSignals | None = None
     hygiene: HygieneWatch | None = None
     lock_claims: LockClaimWatch | None = None
+    emergencies: EmergencyWatch | None = None
     interval_seconds: int = 120
     notes: list[str] = field(default_factory=list)
     core: CoreDatabase | None = None
@@ -58,7 +60,7 @@ class DetectorWiring:
     def run(self, now: datetime) -> list[str]:
         """One pass. Each step on its own, so one failure never silences the other, and a read problem is only reported."""
         problems: list[str] = []
-        for watch in (self.hygiene, self.lock_claims):
+        for watch in (self.hygiene, self.lock_claims, self.emergencies):
             if watch is None:
                 continue
             try:
@@ -159,6 +161,15 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
             out.lock_claims = LockClaimWatch(config.db_path, core=core, user_id=account, owner_user_id=owner, trust_domain=domain, signals=out.signals,
                                              excuses=excuses, list_worn_locks=worn)
             out.notes.append(f"Lock-claim watch enabled: every {out.interval_seconds} s; a report that was false when made is asked about, then judged.")
+    # G5 (owner, 2026-11-15): a Chaster emergency unlock longer than 3 hours, or right after a declined request, is reviewed afterwards.
+    honesty = getattr(config, "honesty_trust_domain", None) or "honesty"
+    if trust.get_domain_state(honesty) is None:
+        out.notes.append(f"Emergency unlock review is NOT active: the Trust domain '{honesty}' (HONESTY_TRUST_DOMAIN) does not exist.")
+    else:
+        from exemptions.service import get_declined_requests
+        out.emergencies = EmergencyWatch(core, user_id=account, trust_domain=honesty, signals=out.signals, list_worn_locks=worn,
+                                         declined_between=lambda user, lo, hi: get_declined_requests(core, user, lo, hi))
+        out.notes.append("Emergency unlock review enabled: longer than 3 hours, or right after a declined request, is asked about afterwards.")
     return out
 
 

@@ -17,6 +17,11 @@ is the system's own role (philosophy 2.9), so the system asks the wearer, judges
 A model failure is never a verdict against the wearer: the answer waits as `judging` and is retried; after 3 days it is dropped (cleared). An Emergency
 Override, an approved exemption or a vacation that overlaps the finding clears it at every step. "It was a health or safety need" is a button that clears
 it at any point before it counts. The wearer's own words are kept for the audit and erased by `forget all`.
+
+G5 (owner, 2026-11-15; philosophy v1.17): `health_claim` reviews a health or emergency claim that stored facts put in doubt
+(infractions/health_claims.py). It takes the same path with three differences: there is no health button and no health shortcut (the claim is the
+health need; the judge gets its own instructions), nothing excuses it (the claim's own opening would), and a confirmed one is FALSE_HEALTH_CLAIM,
+a full Incident in the Honesty domain.
 """
 
 from __future__ import annotations
@@ -81,6 +86,7 @@ class SignalKind(StrEnum):
     CONTRADICTION = "contradiction"                  # owner, 2026-11-13 (slice 4): a fact contradicts a report (Honesty, warning only)
     RELOCK_PICTURE_MISSING = "relock_picture_missing"  # owner, 2026-11-15: no picture within 30 min of a hygiene relock (warning only)
     OBEDIENCE_MISSED = "obedience_missed"            # owner, 2026-11-14 (Q4b): the daily obedience task not done or its photo rejected (warning only)
+    HEALTH_CLAIM = "health_claim"                    # owner, 2026-11-15 (G5): a health or emergency claim that stored facts put in doubt (Honesty, full)
 
 
 RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
@@ -88,19 +94,21 @@ RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE
                SignalKind.CHECKIN_NONCOMPLIANCE: "CHECKIN_REPEATED_NONCOMPLIANCE", SignalKind.SELF_REPORT_HYGIENE: "HYGIENE_MISUSE",
                SignalKind.EXEMPTION_OVERRIDE: "EXEMPTION_OVERRIDE", SignalKind.PROOF_FAILED: "FALSE_REPORT",
                SignalKind.CONTRADICTION: "FALSE_REPORT", SignalKind.OBEDIENCE_MISSED: "OBEDIENCE_TASK_MISSED",
-               SignalKind.RELOCK_PICTURE_MISSING: "HYGIENE_PICTURE_MISSING"}
+               SignalKind.RELOCK_PICTURE_MISSING: "HYGIENE_PICTURE_MISSING", SignalKind.HEALTH_CLAIM: "FALSE_HEALTH_CLAIM"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious; a community vote is one weak signal.
 EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
             SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE,
             SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE, SignalKind.EXEMPTION_OVERRIDE: _MINOR_EVIDENCE, SignalKind.PROOF_FAILED: _MINOR_EVIDENCE,
             SignalKind.CONTRADICTION: _MINOR_EVIDENCE, SignalKind.OBEDIENCE_MISSED: _MINOR_EVIDENCE,
-            SignalKind.RELOCK_PICTURE_MISSING: _MINOR_EVIDENCE}
+            SignalKind.RELOCK_PICTURE_MISSING: _MINOR_EVIDENCE, SignalKind.HEALTH_CLAIM: _SEVERE_EVIDENCE}
 # Incidents another module registers UNCONFIRMED by itself; they are taken into this path instead of waiting for a button nobody presses.
 ADOPTED_RULE_GROUPS = {"CHECKIN_REPEATED_NONCOMPLIANCE": SignalKind.CHECKIN_NONCOMPLIANCE}
 _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIENE_FREQUENCY})
 
 ASK_TEXT = ("Press **Explain** and tell me what happened in your next message; you have twelve hours. If it was a health or safety need, press that button "
             "instead and that's the end of it.")
+CLAIM_ASK_TEXT = ("Press **Explain** and tell me in your next message what the health or safety need was and why it took that long; you have "
+                  "twelve hours. A genuine need is never held against you.")
 _EXPLAINED = "Thank you, that explains it. It doesn't count."
 _FOLLOW_UP = "I need a little more to go on. What exactly happened, and when? Tell me in your next message."
 _UNCERTAIN = "Thank you. I can't be sure either way, so it doesn't count."
@@ -206,8 +214,10 @@ class InfractionSignals:
             return False
         decision("infractions", "Detector finding: the wearer is asked to explain.", kind=kind.value, detail=detail, facts=facts,
                  answer_by=_iso(now + GRACE))
-        enqueue_in_transaction(tx, user_id=user_id, kind="infraction_wearer", dedupe_key=f"infraction:wearer:{signal_id}", text=f"{wearer_text}\n\n{ASK_TEXT}",
-                               now=now, actions=_explain_buttons(signal_id))
+        claim = kind is SignalKind.HEALTH_CLAIM
+        enqueue_in_transaction(tx, user_id=user_id, kind="infraction_wearer", dedupe_key=f"infraction:wearer:{signal_id}",
+                               text=f"{wearer_text}\n\n{CLAIM_ASK_TEXT if claim else ASK_TEXT}", now=now,
+                               actions=_explain_buttons(signal_id)[:1] if claim else _explain_buttons(signal_id))
         return True
 
     def offer_self_report(self, *, user_id: str, statement: str, trust_domain: str, now: datetime) -> str | None:
@@ -252,6 +262,8 @@ class InfractionSignals:
         row = self._row(signal_id)
         if row is None or row["user_id"] != user_id:
             return OutgoingMessage(text="This isn't yours to answer.")
+        if action == "health" and row["kind"] == SignalKind.HEALTH_CLAIM.value:
+            action = "explain"                       # G5: the claim is the health need; there is no shortcut past the review
         if action == "health":
             return OutgoingMessage(text=_HEALTH if self.clear_as_health(user_id=user_id, signal_id=signal_id, now=now) else "This one is already settled.")
         if action == "explain":
@@ -317,9 +329,9 @@ class InfractionSignals:
         return self._judge_now(row["id"], now)
 
     def clear_as_health(self, *, user_id: str, signal_id: str, now: datetime) -> bool:
-        """The wearer's word is enough (3.9), at any point before it counts."""
+        """The wearer's word is enough (3.9), at any point before it counts. Not for a claim under review (G5): that is judged."""
         row = self._row(signal_id)
-        if row is None or row["user_id"] != user_id:
+        if row is None or row["user_id"] != user_id or row["kind"] == SignalKind.HEALTH_CLAIM.value:
             return False
         return self._clear(signal_id, "wearer_health", now)
 
@@ -415,7 +427,7 @@ class InfractionSignals:
                 "SELECT explanation FROM infraction_signals WHERE user_id = ? AND kind = ? AND id != ? AND explanation IS NOT NULL AND explanation_at >= ? "
                 "ORDER BY explanation_at DESC LIMIT 3", (row["user_id"], row["kind"], signal_id, _iso(now - timedelta(days=3)))))
         judgement = self._judge.judge(detail=row["detail"], facts=row["facts"] or "", explanation=text or "", earlier=earlier, appeal=stage == "appeal",
-                                      related=related)
+                                      related=related, claim=row["kind"] == SignalKind.HEALTH_CLAIM.value)
         if judgement is None:
             if now - parse_iso(row["judge_pending_since"]) > JUDGE_GIVE_UP:
                 self._clear(signal_id, "unjudged", now)
@@ -517,8 +529,8 @@ class InfractionSignals:
         return 1 if counted else 0
 
     def _excused(self, row, signal: Signal, window_of) -> str | None:
-        if signal.kind in (SignalKind.SELF_REPORT_HYGIENE, SignalKind.EXEMPTION_OVERRIDE):
-            return None                              # it happened during an approved opening by definition: that cannot excuse it
+        if signal.kind in (SignalKind.SELF_REPORT_HYGIENE, SignalKind.EXEMPTION_OVERRIDE, SignalKind.HEALTH_CLAIM):
+            return None                              # it happened during an approved opening (or is the claim itself) by definition: that cannot excuse it
         if row["window_start"] and row["window_end"]:
             start, end = parse_iso(row["window_start"]), parse_iso(row["window_end"])
         elif window_of is not None:

@@ -57,6 +57,10 @@ CATALOG: tuple[Violation, ...] = (
     _v("LOCK_RENEWAL_DELAYED", "integrity", S.MODERATE, None, "Delayed lock renewal after session completion", detectable=False),
     _v("EPISTEMIC_MISREPRESENTATION", "integrity", S.SEVERE, None,
        "Claimed locked while the provider reports unlocked"),
+    # G5 (owner, 2026-11-15; philosophy v1.17): a health or emergency claim that stored facts put in doubt, judged on the wearer's explanation
+    # and confirmed as not a genuine health or safety need. A full Incident (it may open or extend a Penalty Window). A genuine need never is.
+    _v("FALSE_HEALTH_CLAIM", "integrity", S.SEVERE, None,
+       "A health opening, health exemption or emergency unlock confirmed by the judge as not a genuine health or safety need"),
 )
 
 _BY_CODE = {v.code: v for v in CATALOG}

@@ -34,14 +34,16 @@ over the interval).
 - **`excuses.py`**: Emergency Override, exemption, vacation. A failed read excuses too.
 - **`hygiene.py`**: `HYGIENE_MISUSE`, from Chaster's `temporary-opening` state and the wearer's own answer.
 - **`lock_claims.py`**: `EPISTEMIC_MISREPRESENTATION`, from `lock_reports` and `unlockedAt`.
+- **`health_claims.py`**: G5, `FALSE_HEALTH_CLAIM` (see below); also the only writer of `emergency_unlocks` (migration 076).
 - **`wiring.py`**: the configuration and the loop.
 
 ## What it never does
 
 - It never touches a token, a window or a lock, and imports nothing that could (guard test). It reads Chaster, writes local records and queues notices;
   the Trust Manager is reached only through the two callables the wiring passes in.
-- Mandatory Health Access and the Emergency Override never reach an Incident, and never depend on a model.
-- A health need is never measured or counted. Neither is ever a basis for scrutiny (philosophy 3.9).
+- Mandatory Health Access and the Emergency Override are never delayed, refused or made conditional, and never depend on a model. A genuine
+  need never reaches an Incident; only a claim reviewed afterwards and confirmed false does (G5, philosophy v1.17).
+- Frequency alone is never a basis for scrutiny (philosophy 3.9): it is counted and asked about (`system/health_pattern.py`), never evidence.
 - Limits derived from Trust are shown to the judge only, never to the wearer.
 - It never creates a Trust domain, and a hygiene finding is never filed under another domain (3.7).
 
@@ -80,3 +82,22 @@ explanation always gets the same answer: an appeal cannot win by being asked aga
 
 `record_override_in_transaction` files kind `exemption_override` (rule group `EXEMPTION_OVERRIDE`, warning only) in the exemption's own
 transaction: decided at once as self-reported and admitted, confirmed on the next pass with self-disclosed cooperation, never excused.
+
+## Health and emergency claims reviewed afterwards (G5, owner 2026-11-15; migration 076)
+
+A health opening, a health exemption or a Chaster emergency unlock is granted at once, as always. Afterwards (`health_claims.py`) it is reviewed
+when a stored fact puts it in doubt, and only then:
+
+- it lasted longer than **3 hours** (the owner's limit: always reviewed, with or without anything else), counted to Chaster's relock or, for an
+  emergency unlock, to the first pass that sees a lock locked again; still open after 24 hours is reviewed without waiting;
+- a request for a break or an exemption was **declined within 12 hours before** it (a request declined because the model failed does not count).
+
+The review is a `health_claim` question on the path above, with three differences: no health button and no health shortcut (the claim is the
+health need, so `judge.py` gets its claim instructions: a genuine need is the default, length alone is never proof, only an explanation that shows
+it was not a health or safety need, or gives none, is `not_explained`); nothing excuses it (its own opening would); and a confirmed one is
+`FALSE_HEALTH_CLAIM`, a full Incident in the Honesty domain (catalogue severity SEVERE, not warning-only). Still unclear after one follow-up
+clears it (2.12); silence is the usual `DETECTION_UNANSWERED` warning. One review per claim. An emergency unlock first seen more than 48 hours
+after it happened (an old lock on the first run) is never reviewed. Needs the `honesty` Trust domain (`HONESTY_TRUST_DOMAIN`).
+
+**Bug fixed with it:** `proof_failed`, `contradiction`, `relock_picture_missing` and `obedience_missed` were never in the table's kind CHECK, and
+`INSERT OR IGNORE` dropped them silently. Migration 076 widens it; `tests/infractions/test_health_claims.py` stores every `SignalKind`.

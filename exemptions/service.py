@@ -52,7 +52,7 @@ from penalty_engine.models import FreezeReason
 
 logger = logging.getLogger("ai_coach_keyholder.exemptions")
 
-__all__ = ["ExemptionService", "ExemptionDecision", "is_exemption_request", "is_hygiene_request", "HEALTH_MINUTES", "CATEGORIES", "DURATIONS", "SAFETY_LINE"]
+__all__ = ["ExemptionService", "ExemptionDecision", "is_exemption_request", "is_hygiene_request", "HEALTH_MINUTES", "CATEGORIES", "get_declined_requests", "DURATIONS", "SAFETY_LINE"]
 
 CATEGORIES = {"family": "Family event", "social": "Social occasion", "work_school": "Work or school", "health": "Health", "travel": "Travel", "other": "Something else"}
 DURATIONS = (3, 6, 12, 24, 72, 168)         # hours; a longer absence is what a vacation is for. 3 and 12: live, 2026-11-13, "till evening" had to be 24
@@ -128,6 +128,27 @@ def _span(row) -> timedelta:
     return timedelta(minutes=row["minutes"]) if row["minutes"] else timedelta(hours=row["hours"])
 
 
+_HEALTH_LIKE = "(kind = 'hygiene_health' OR (kind = 'exemption' AND (category = 'health' OR decided_by = 'judge_health')))"
+DECLINED_LOOKBACK = timedelta(hours=12)     # G5: a request declined this soon before a health claim is a fact the claim is reviewed on
+
+
+def _health_like(row) -> bool:
+    return row["kind"] == "hygiene_health" or (row["kind"] == "exemption" and (row["category"] == "health" or row["decided_by"] == "judge_health"))
+
+
+def _declined_in(tx: Transaction, user_id: str, lo: str, hi: str) -> list[str]:
+    rows = tx.fetch_all("SELECT kind, category, decided_at FROM wear_exemptions WHERE user_id = ? AND status = 'declined' AND decided_by != 'unjudged' "
+                        "AND decided_at >= ? AND decided_at < ? ORDER BY decided_at", (user_id, lo, hi))
+    return [f"{'an extra hygiene opening' if r['kind'] == 'hygiene' else 'an exemption (' + CATEGORIES.get(r['category'] or '', 'something else') + ')'} "
+            f"declined at {r['decided_at']}" for r in rows]
+
+
+def get_declined_requests(core: CoreDatabase, user_id: str, lo: str, hi: str) -> list[str]:
+    """Read-only (G5, owner 2026-11-15): the requests declined in [lo, hi), described for a claim review."""
+    with core.transaction() as tx:
+        return _declined_in(tx, user_id, lo, hi)
+
+
 def get_health_uses(core: CoreDatabase, user_id: str, lo: str, hi: str) -> list[tuple[str, str]]:
     """Read-only (G2, owner 2026-11-15): (approved at, "opening" | "exemption") for health openings and health exemptions approved in [lo, hi)."""
     with core.transaction() as tx:
@@ -158,6 +179,9 @@ class ExemptionService:
         # Owner, 2026-11-13: the hygiene Trust domain. A planned opening relocked on time then emits `hygiene_opening.relocked_on_time`, which earns
         # hygiene Trust (it had no way up at all). None: no event.
         self.hygiene_trust_domain: str | None = None
+        # G5 (owner, 2026-11-15): raise_claim(tx, row, ended_at, declined, now) -> bool reviews a health opening or health exemption afterwards
+        # (infractions/health_claims.py decides whether a fact puts it in doubt). Never consulted before or during the opening. None: no review.
+        self.raise_claim = None
         self._record_override = None                # (tx, row, now) -> bool: records "taken anyway" as a self-disclosed incident; None: not offered
 
     def set_override_signal(self, record_override: Callable[[Transaction, dict, datetime], bool]) -> None:
@@ -716,6 +740,7 @@ class ExemptionService:
             self._settle(row, status.relocked_at, now)
             return
         if row["kind"] == "hygiene_health":
+            self._review_claim_still_open(row, now)
             return                                  # a health need is not chased
 
         def remind(tx: Transaction, _s: object) -> None:
@@ -734,6 +759,8 @@ class ExemptionService:
         def record(tx: Transaction, _s: object) -> None:
             tx.execute("UPDATE wear_exemptions SET relocked_at = ? WHERE id = ?", (_iso(relocked_at) if relocked_at else None, row["id"]))
             filed = late and self._raise_overrun is not None and self._raise_overrun(tx, dict(row), relocked_at, now)
+            if relocked_at is not None and self.raise_claim is not None and _health_like(row):
+                self._review_claim(tx, row, relocked_at, now)
             if reason == "relocked_on_time" and row["kind"] == "hygiene" and self.hygiene_trust_domain:
                 write_event(tx, DomainEvent(event_type="hygiene_opening.relocked_on_time", source_module="exemptions",
                                             payload={"exemption_id": row["id"], "trust_domain": self.hygiene_trust_domain}, occurred_at=now))
@@ -757,6 +784,22 @@ class ExemptionService:
         if row["kind"] != "exemption":
             return "Thanks, Chaster shows you're relocked."
         return "Welcome back. Chaster confirms you relocked in time, and your exemption has ended." if relocked_at else "Welcome back. Your exemption has ended."
+
+    def _review_claim(self, tx: Transaction, row, ended_at: datetime | None, now: datetime) -> bool:
+        """G5: afterwards only, in the caller's transaction. A failure here never touches the opening itself."""
+        try:
+            asked = parse_iso(row["requested_at"] or row["created_at"])
+            declined = _declined_in(tx, row["user_id"], _iso(asked - DECLINED_LOOKBACK), _iso(asked))
+            return bool(self.raise_claim(tx, dict(row), ended_at, declined, now))
+        except Exception:
+            logger.exception("A health claim could not be put up for review.")
+            return False
+
+    def _review_claim_still_open(self, row, now: datetime) -> None:
+        from infractions.health_claims import STILL_OPEN
+        if self.raise_claim is None or row["opened_at"] is None or now - parse_iso(row["opened_at"]) < STILL_OPEN:
+            return
+        apply_transition(self._core, write=lambda tx, _s: self._review_claim(tx, row, None, now))
 
     def _queue_restore(self, row, now: datetime) -> None:
         if self._owner:
