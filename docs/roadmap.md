@@ -46,7 +46,8 @@ here are part of the approval.
 | Q4c | **His training plan in the bot** (done 2026-11-15) (owner, 2026-11-15: "I built it to help me workout") | The plan from the workout chat (2026-11-14): Saturday full leg day (A and B alternate), Sunday full upper (supersets), one short session on Monday or Thursday (odd ISO week legs, even week upper; no legs Friday or Sunday). The session is that day's obedience task (it replaces the erotic one): exercises, sets and his current weights in the DM, proof = a Chaster photo of the day's training log with the code. **Full sessions are mandatory** (missed = asked to explain, unexplained = Warning and 20 lines); **the short session is optional** (the plan: "skip it and continue at the weekend"). **Short day:** the bot asks on Monday morning (Monday or Thursday); Thursday if he doesn't answer. **Progression tracked:** he sends top sets in the DM (`log squat 105 4x9`); every set at the top of the range = +2.5 kg next time (incline press to 22.5 kg); a deload week (half the sets) every 7 weeks; the return-from-break rule (squat 95 kg, -10 %, one set fewer) for the first two leg days |
 | Q4d | **Gear tags and "Are you alone?"** (done 2026-11-15) | Every obedience task names the gear it needs, also gear not owned yet (blindfold, collar, clamps, leather cuffs, padlocks, Gildo, Plug & Joy); variations when a piece is missing (eyes closed instead of the blindfold, fluffy cuffs instead of leather); only owned gear is used; he keeps the list in the DM (`gear`, `gear add blindfold`, `gear remove blindfold`). Before an erotic task the bot asks "Are you alone right now?": alone = the full version (up to 30 minutes, two add-ons, self-bondage with locked cuffs), not alone = a discreet one (one add-on, 15 minutes at most, quiet); both mandatory; no answer in 15 minutes = discreet. Safety in both: never blindfolded while restrained, nothing around the neck but a collar that is never tied or locked to anything, key and shears within reach, clamps 10 minutes at most |
 | Q4e | **Task limits talk** (done 2026-11-15) | The owner's own hard limits stay: nothing public, nothing identifying, no strong pain. Safety rules changed with him: **blindfolded in cuffs** allowed with the cuffs in front (hands can always reach the blindfold), 20 minutes at most, incl. cuffs + blindfold + the vibrating Deep Diver; **cuffs behind the back** start with the fluffy cuffs (release lever tested first), blindfolded behind the back only after 3 verified behind-back tasks; **restraint time** 30 minutes at most, **wear tasks** (plug, collar, rope harness under a shirt) 60 minutes to 2 hours while he does something else; **gag tasks** told only in the DM, never in Chaster's text, hands always free, 20 minutes at most; **rope**: a decorative chest harness may be blindfolded, rope on the limbs never; **Hidden Desire bondage harness** (his choice): cuffs clip only to the waist rings, never to the collar ring, velcro rips open; blindfolded in it only after 3 verified harness tasks; its collar counts for collar tasks. Still never: anything that can pull on the neck, a gag with restraints, ice or timer releases |
-| Q4f | **Training earns tokens** (done 2026-11-15) | A training session verified in Chaster adds **+0.15** (full) or **+0.08** (short) to the token pool on a day without a confirmed incident (a perfect day adds about 0.27), and on a day with goals it counts as one more kept item. On a training day the coach proposes no separate workout commitment. Unverified (a vote that never ended) earns nothing |
+| Q4f | **Training earns tokens** (done 2026-11-15) | A training session verified in Chaster adds **+0.15** (full) or **+0.08** (short) to the token pool on a day without a confirmed incident (a perfect day adds about 0.27), and on a day with goals it counts as one more kept item. On a training day the coach proposes no separate workout commitment. Unverified (a vote that never ended) earns nothing. **Week bonus +0.10** on Sunday when every planned session of the week was verified (health-cancelled or slotless ones excused, at least two). **Progression +0.05** per weight increase earned through `log`, only on a day with a verified session, one per exercise, never at a lighter weight than before, at most +0.10 a day (owner, 2026-11-15: "it needs to actually reward me") |
+| Q4g | **Tokens harder; conditioning on** (done 2026-11-15) | Progressive Conditioning switched on for the owner's database. Base thresholds 1.5 (standard) / 3.0 (advanced), factor +0.05 per token release up to 2.0. Days per token, gym / no gym: standard about 3.8 / 5.2 at first, 7.6 / 10.5 at the cap; advanced 7.6 / 10.5, then 15 / 21. No minimum gap between releases (owner's choice) |
 | G1 | **Relock picture checked** (done 2026-11-15) | 30 minutes after a planned hygiene relock, while the picture is required: none = asked to explain, unexplained = HYGIENE_PICTURE_MISSING (Warning, 20 lines) |
 | G2 | **Health openings and the task's health button** (owner, 2026-11-15) | The relock picture is checked after health openings too (it restricts nothing). Health openings and the obedience task's "health or safety" button are counted; from the 3rd in a rolling week the keyholder asks about the pattern, and the weekly review shows the counts. Never a penalty by itself |
 | G3 | **Consent switches ask again after 24 h** (owner, 2026-11-15) | While locked, switching photo check-ins (and similar opt-outs) off is not done at once: after 24 hours the bot asks "Do you still want it off?" and only a yes switches it off. Halt, leave, health and emergency stay immediate |
@@ -67,16 +68,25 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
 
 ## Approved, not built yet (in order)
 
-1. **G2-G5** above (health openings and the task's health button counted, consent switches ask again after 24 h, settings changes
+1. **Health shortcuts capped** (owner, 2026-11-15): health access stays immediate; a wear exemption auto-approved for health lasts at most
+   24 hours, anything longer goes to the judge; a health answer to a detector question still excuses at once but is recorded, counted
+   (from the 3rd in a week asked about) and reviewable under G5. Built together with G2-G5.
+2. **G2-G5** above (health openings and the task's health button counted, consent switches ask again after 24 h, settings changes
    visible, false health / emergency claims).
-2. **Judge on long emergencies** (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
+3. **Judge on long emergencies** (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
    without a contradicting fact. Limit: **3 hours** (owner, 2026-11-15).
-3. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
+4. **Earn the release** (owner, 2026-11-15): after a token is spent, the release is scheduled only once a release task is verified in
+   Chaster (20 lines "I earn my release", a short obedience task, or on a training day the session itself). Rejected or missed: the token
+   is kept and the task comes again the next day. Health and emergencies bypass it.
+5. **Morning report** (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
+   after the bot comes back if it was offline that morning (whichever is later); the bot asks for it on his first message of the day; none
+   by the deadline = a missed check-in. Suspended during a wear exemption, a vacation or a halt. Code checks only that it arrived.
+6. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
 
 ## Ideas (not approved; each needs the owner's yes)
 
-- **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; Windows needs a Cambridge Silicon Radio Bluetooth
-  dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
+- **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; first try the PC's built-in Bluetooth, the owner will
+  test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
 - **Typing Lines** extension: only after desk research shows the bot could keep rewriting the lock's extensions with it on.
@@ -101,7 +111,9 @@ Tasks for each piece are already in the catalogue; after buying, send `gear add 
 
 "Loosening is hard" governance, the random rule check, capped time-adding (from the core-mcp README); the hygiene debrief question,
 "answer or freeze", the non-negotiating keyholder; a smaller cage as a punishment (smaller is more comfortable for him); the electro cage
-and other session-only gear the bot cannot use; ManCage one-time locks (they don't fit his cage).
+and other session-only gear the bot cannot use; ManCage one-time locks (they don't fit his cage). 2026-11-15: begging pushes the next
+release back (could spiral); a spent token not always meaning an orgasm (ruined / cleaning only); a stronger penalty for a missed training
+session (an unexplained miss already costs the whole day's pool progress, never below zero); a minimum gap between releases.
 
 **Standing goal (owner, 2026-11-13): make this system the best version of itself.** Between slices, Claude reads the logs and the bot's chat
 history for bugs and design gaps, and proposes them with a recommendation; approved ones are added here.

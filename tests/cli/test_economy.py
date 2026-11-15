@@ -20,7 +20,7 @@ def test_the_report_from_daily_evaluations(tmp_path) -> None:
     out = io.StringIO()
     assert run_economy(out=out, now=lambda: datetime(2026, 11, 14, tzinfo=timezone.utc), factory=lambda: (w.core, "u", date(2026, 11, 14))) == 0
     text = out.getvalue()
-    assert "Last 7 days: 3 evaluated (0 on vacation), 1 token(s) earned, average progress 0.150 a day -> 6.7 days per token." in text
+    assert "Last 7 days: 3 evaluated (0 on vacation), 1 token(s) earned, average progress 0.150 a day -> 10.0 days per token." in text
     assert "1 day(s) zeroed by a confirmed incident; check-ins 4/6 answered" in text
 
 

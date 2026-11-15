@@ -19,3 +19,5 @@ Tables (written only by `service.py`): `training_sessions`, `training_weights`, 
 buttons through `system/dm_actions.TrainingDm` (scope `training`); `log ...` is read in `ApplicationService` before any model.
 
 **Training earns tokens (owner, 2026-11-15).** A session verified in Chaster adds +0.15 (full) or +0.08 (short) to the token pool on a day without a confirmed incident (`system/daily_evaluation.TRAINING_BONUS`, read through `obedience.service.get_verified_training`), and on a day with goals it counts as one more kept item. `TrainingPlan.is_training_day` tells the coach not to propose a separate workout commitment that day.
+
+**Week and progression bonuses (owner, 2026-11-15).** Sunday: +0.10 when every session the plan gave that week (`get_planned_sessions`) was verified; one cancelled for health or an exemption, or skipped for lack of a free slot, is excused; at least two must count. Each logged top set that earned a weight increase (`get_raises`) adds +0.05, at most +0.10 a day, only on a day with a verified session, one per exercise and never at a lighter weight than an earlier log.

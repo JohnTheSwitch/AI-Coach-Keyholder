@@ -17,7 +17,7 @@ Owner, 2026-11-13 (before, the pool filled on bad days and one incident spoiled 
 - A day without an assigned goal uses the share of check-ins answered as its goal ratio (1.0 only when nothing was due either), and a day
   with a confirmed incident in any domain adds nothing to the pool.
 - Owner, 2026-11-15: a training session verified in Chaster adds TRAINING_BONUS["full"] (0.15) or ["short"] (0.08) to the pool on an
-  earning day, and on a day with goals it also counts as one more goal met (a kept commitment).
+  earning day, and on a day with goals it also counts as one more goal met.
 - `violations` (clean day, probation) counts only incidents of this evaluation's own Trust domain, and never the repeated-missed-check-ins
   incident: it is created the morning after, and its misses already spoiled their own day.
 
@@ -50,6 +50,9 @@ __all__ = ["DailyEvaluationTask", "DayFacts", "MAX_CATCH_UP_DAYS", "get_daily_ev
 
 MAX_CATCH_UP_DAYS = 7
 TRAINING_BONUS = {"full": Decimal("0.15"), "short": Decimal("0.08")}     # owner, 2026-11-15
+WEEK_BONUS = Decimal("0.10")            # owner, 2026-11-15: every planned session of the week verified (paid on Sunday)
+RAISE_BONUS = Decimal("0.05")           # owner, 2026-11-15: each weight increase earned through `log`
+RAISE_BONUS_MAX = Decimal("0.10")       # a day's cap for raises
 _CHECK_IN_CONCLUDED = ("answered", "answered_uncertain", "insufficient", "missed")
 # Its misses already spoil their own day; the incident itself is created the next morning (owner, 2026-11-13: no double count).
 _NOT_A_DAY_VIOLATION = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE"})
@@ -65,10 +68,13 @@ class DayFacts:
     any_violations: int = 0     # confirmed incidents of the day in ANY domain (still without the repeated-misses one): no pool progress
     training_full: int = 0      # training sessions verified in Chaster that day (owner, 2026-11-15)
     training_short: int = 0
+    week_complete: bool = False   # Sunday: every planned session of the week verified (health-cancelled or slotless ones excused)
+    raises: int = 0               # weight increases earned through `log` that day
 
     @property
     def training_bonus(self) -> Decimal:
-        return TRAINING_BONUS["full"] * self.training_full + TRAINING_BONUS["short"] * self.training_short
+        return (TRAINING_BONUS["full"] * self.training_full + TRAINING_BONUS["short"] * self.training_short
+                + (WEEK_BONUS if self.week_complete else Decimal(0)) + min(RAISE_BONUS * self.raises, RAISE_BONUS_MAX))
 
 
 def get_daily_evaluations(core: CoreDatabase, user_id: str, start: date, end: date) -> list[dict]:
@@ -150,7 +156,32 @@ class DailyEvaluationTask:
             check_ins_ok=sum(1 for c in check_ins if c["status"] in ("answered", "answered_uncertain")),
             violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
             training_full=len(training) - short, training_short=short,
+            week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training else 0,   # raises only with a verified session
         )
+
+    def _week_complete(self, day: date) -> bool:
+        """On a Sunday: every session the plan gave Monday..Sunday was verified; one cancelled (health or an exemption) or skipped for lack of
+        a free slot is excused (never counts against him); at least two must remain."""
+        if day.weekday() != 6:
+            return False
+        from obedience.service import get_training_outcomes
+        from training.service import get_planned_sessions
+        monday = (day - timedelta(days=6)).isoformat()
+        planned = get_planned_sessions(self._core, self._user, monday, day.isoformat())
+        outcomes = get_training_outcomes(self._core, self._user, monday, day.isoformat())
+        counted = 0
+        for local_date in planned:
+            o = outcomes.get(local_date)
+            if o is not None and (o["status"] == "cancelled" or (o["status"] == "skipped" and o["outcome"] == "no_free_slot")):
+                continue
+            if o is None or (o["status"], o["outcome"]) != ("passed", "verified"):
+                return False
+            counted += 1
+        return counted >= 2
+
+    def _raises(self, lo: str, hi: str) -> int:
+        from training.service import get_raises
+        return get_raises(self._core, self._user, lo, hi)
 
     def _evaluate(self, day: date, now: datetime) -> bool:
         state = self._trust.get_domain_state(self._domain)

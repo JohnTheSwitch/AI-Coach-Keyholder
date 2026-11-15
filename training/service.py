@@ -54,6 +54,25 @@ class TrainingDay:
     optional: bool
 
 
+def get_planned_sessions(core, user_id: str, start: str, end: str) -> dict[str, str]:
+    """Read-only: local date -> session key of the sessions the plan gave from `start` to `end` (inclusive local dates)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT local_date, session_key FROM training_sessions WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+                            (user_id, start, end))
+    return {r["local_date"]: r["session_key"] for r in rows}
+
+
+def get_raises(core, user_id: str, lo: str, hi: str) -> int:
+    """Read-only: how many exercises earned a weight increase between the UTC instants `lo` and `hi` (owner, 2026-11-15: getting stronger
+    pays). One per exercise, and only at a weight no lower than any earlier log of that exercise (a lighter weight with top reps is not
+    progress)."""
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT COUNT(DISTINCT l.exercise) AS n FROM training_logs l WHERE l.user_id = ? AND l.raised_to IS NOT NULL "
+                           "AND l.logged_at >= ? AND l.logged_at < ? AND NOT EXISTS (SELECT 1 FROM training_logs e WHERE e.user_id = l.user_id "
+                           "AND e.exercise = l.exercise AND e.logged_at < l.logged_at AND e.weight > l.weight)", (user_id, lo, hi))
+    return int(row["n"])
+
+
 class TrainingPlan:
     def __init__(self, core: CoreDatabase, *, user_id: str, free_time: Callable[[datetime], bool], today: Callable[[datetime], date]) -> None:
         self._core = core

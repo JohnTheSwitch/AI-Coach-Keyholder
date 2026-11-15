@@ -296,11 +296,11 @@ class TestCrossTenantAuditPhaseF:
         registry = build_consumer_registry(TrustManager(ra.db_path, core=ra.core), PenaltyEngine(ra.db_path, core=ra.core),
                                            RecoveryPlanManager(ra.db_path, core=ra.core), conditioning=cond)
         process_pending_events(ra.core, registry, claimant="t", now=target + timedelta(minutes=1))
-        assert str(cond.factor(ra.wearer_user_id)) == "1.025"
+        assert str(cond.factor(ra.wearer_user_id)) == "1.050"
 
         text_a, text_b, text_main = self._all_text(ra.db_path), self._all_text(rb.db_path), self._all_text(w.main_path)
         assert "ALEXGOAL" in text_a and "ALEXIDEA" in text_a and "BOGOAL" in text_b and "BOIDEA" in text_b      # the data really exists
-        for marker in ("ALEXGOAL", "ALEXIDEA", ra.wearer_user_id, auth, "1.025"):
+        for marker in ("ALEXGOAL", "ALEXIDEA", ra.wearer_user_id, auth, "1.050"):
             assert marker not in text_b and marker not in text_main, marker
         for marker in ("BOGOAL", "BOIDEA", rb.wearer_user_id):
             assert marker not in text_a and marker not in text_main, marker
@@ -310,7 +310,7 @@ class TestCrossTenantAuditPhaseF:
         # Prompts: Bo's model calls never contain Alex's memory or idea; nobody's idea is ever in any prompt.
         for request in model.prompts:
             content = "\n".join(m.content for m in request.messages)
-            assert "ALEXIDEA" not in content and "BOIDEA" not in content and "1.025" not in content
+            assert "ALEXIDEA" not in content and "BOIDEA" not in content and "1.050" not in content
         later_bo = [r for r in model.prompts if any("BOGOAL" in m.content for m in r.messages)]
         assert later_bo == [] or all("ALEXGOAL" not in m.content for r in later_bo for m in r.messages)
         w.say(rb, "3000003", "what do you remember?")

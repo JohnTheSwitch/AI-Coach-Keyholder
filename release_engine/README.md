@@ -121,3 +121,5 @@ themselves refresh the reading when they need it and treat an old one as unknown
 `LOCK_DATA_MAX_AGE`, `"lock_reading": "stale: ..."`.
 
 **Pool bonus (owner, 2026-11-15).** `apply_day(..., bonus=)` adds a non-negative bonus to an earning day's progress; used for verified training sessions (+0.15 full, +0.08 short). A day with a confirmed incident still adds nothing.
+
+**Harder (owner, 2026-11-15).** Base thresholds are now 1.5 (standard) and 3.0 (advanced), the factor rises by 0.05 per confirmed token release up to 2.0 (20 releases, as before). Without training that is about 5.2 -> 10.5 days per token in standard and 10.5 -> 21 in advanced at full performance; verified training cuts it by about a third. The owner switch for tenant_0 was turned on the same day. The research export bands the factor only up to 1.50 (its contract with the receiver); a higher factor is left out of the export.

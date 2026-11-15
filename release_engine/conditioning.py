@@ -50,9 +50,10 @@ class ConditioningPreferences:
 # =====================================================================================================================================
 
 FACTOR_START = Decimal("1.000")
-FACTOR_STEP = Decimal("0.025")
-FACTOR_CAP = Decimal("1.500")
-BASE_THRESHOLD = {"standard": Decimal("1.0"), "advanced": Decimal("2.0")}   # about 3.5 days / 7.0 days per token at full performance
+# Owner, 2026-11-15 ("make the whole thing harder"; was 0.025 / 1.500 and 1.0 / 2.0): 20 confirmed token releases still reach the cap.
+FACTOR_STEP = Decimal("0.050")
+FACTOR_CAP = Decimal("2.000")
+BASE_THRESHOLD = {"standard": Decimal("1.5"), "advanced": Decimal("3.0")}   # about 5.2 / 10.5 days per token at full performance without training
 
 
 class IncrementOutcome(StrEnum):

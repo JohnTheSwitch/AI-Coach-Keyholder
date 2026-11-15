@@ -46,7 +46,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
+__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
@@ -360,6 +360,14 @@ def get_verified_training(core: CoreDatabase, user_id: str, local_date: str) -> 
         rows = tx.fetch_all("SELECT catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date = ? AND status = 'passed' "
                             "AND outcome = 'verified' AND catalog_key LIKE 'training:%'", (user_id, local_date))
     return [r["catalog_key"] for r in rows]
+
+
+def get_training_outcomes(core: CoreDatabase, user_id: str, start: str, end: str) -> dict[str, dict]:
+    """Read-only: local date -> {catalog_key, status, outcome} of the training sessions from `start` to `end` (inclusive local dates)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT local_date, catalog_key, status, outcome FROM obedience_tasks WHERE user_id = ? AND local_date BETWEEN ? AND ? "
+                            "AND catalog_key LIKE 'training:%'", (user_id, start, end))
+    return {r["local_date"]: {"catalog_key": r["catalog_key"], "status": r["status"], "outcome": r["outcome"]} for r in rows}
 
 
 class ObedienceTasks:

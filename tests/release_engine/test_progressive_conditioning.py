@@ -101,13 +101,13 @@ def w(tmp_path):
 class TestThreshold:
     def test_base_times_factor_in_both_modes(self, w) -> None:
         with w.core.transaction() as tx:
-            assert w.cond.threshold_in(tx, U) == D("1.0") * FACTOR_START
+            assert w.cond.threshold_in(tx, U) == D("1.5") * FACTOR_START
         w.advanced()
         with w.core.transaction() as tx:
-            assert w.cond.threshold_in(tx, U) == D("2.0")
+            assert w.cond.threshold_in(tx, U) == D("3.0")
             tx.execute("INSERT INTO training_state (user_id, factor, updated_at) VALUES (?, '1.250', 'x')", (U,))
-            assert w.cond.threshold_in(tx, U) == D("2.500")
-        assert BASE_THRESHOLD == {"standard": D("1.0"), "advanced": D("2.0")}
+            assert w.cond.threshold_in(tx, U) == D("3.750")
+        assert BASE_THRESHOLD == {"standard": D("1.5"), "advanced": D("3.0")}                  # owner, 2026-11-15: harder
 
     @pytest.mark.parametrize("threshold,tokens_per_week", [(D("1.0"), 2), (D("2.0"), 1), (D("1.5"), 1)])
     def test_the_threshold_scales_the_payout(self, threshold, tokens_per_week) -> None:
@@ -126,8 +126,8 @@ class TestThreshold:
                 pool = result.pool_after
                 if result.tokens_earned:
                     return days
-        assert days_per_token(D("1.0")) == 4 and days_per_token(D("2.0")) == 7                 # 0.286/day: ~3.5 and exactly 7.0 days
-        assert days_per_token(D("2.0") * FACTOR_CAP) == 11
+        assert days_per_token(BASE_THRESHOLD["standard"]) == 6 and days_per_token(BASE_THRESHOLD["advanced"]) == 11   # 0.286/day: ~5.2 / ~10.5
+        assert days_per_token(BASE_THRESHOLD["standard"] * FACTOR_CAP) == 11 and days_per_token(BASE_THRESHOLD["advanced"] * FACTOR_CAP) == 21
 
     def test_the_daily_evaluation_uses_the_threshold(self, tmp_path) -> None:
         from system.daily_evaluation import DailyEvaluationTask
@@ -140,7 +140,7 @@ class TestThreshold:
         task = DailyEvaluationTask(w.core.db_path, core=w.core, window_config=CFG, user_id=U, trust_domain="routine", engine=w.engine,
                                    trust=tm, conditioning=w.cond)
         task.run(local(MON + timedelta(days=1), 1))
-        assert w.engine.get_balance(U) == 0                                                 # 0.9 + ~0.2 < 1.5
+        assert w.engine.get_balance(U) == 0                                                 # 0.9 + ~0.2 < 1.5 * 1.5
         plain = DailyEvaluationTask(w.core.db_path, core=w.core, window_config=CFG, user_id=U, trust_domain="routine", engine=w.engine, trust=tm)
         plain.run(local(MON + timedelta(days=2), 1))
         assert w.engine.get_balance(U) == 1                                                 # without conditioning the threshold is 1.0
@@ -159,7 +159,7 @@ class TestTrigger:
             tx.execute("UPDATE domain_events SET published_at = NULL WHERE event_type = 'release.provider_confirmed'")
             tx.execute("DELETE FROM domain_event_consumers")
         w.drain()
-        assert w.cond.factor(U) == D("1.025") and len(w.outcomes()) == 1
+        assert w.cond.factor(U) == FACTOR_START + FACTOR_STEP and len(w.outcomes()) == 1
 
     def test_the_backstop_never_counts(self, w) -> None:
         w.release(kind="backstop")
@@ -187,7 +187,7 @@ class TestTrigger:
 
     def test_the_cap(self, w) -> None:
         with w.core.transaction() as tx:
-            tx.execute("INSERT INTO training_state (user_id, factor, updated_at) VALUES (?, '1.475', 'x')", (U,))
+            tx.execute("INSERT INTO training_state (user_id, factor, updated_at) VALUES (?, '1.950', 'x')", (U,))
         w.release(day_offset=0)
         w.drain()
         w.release(day_offset=1)
@@ -198,7 +198,7 @@ class TestTrigger:
         for i in range(21):
             w.release(day_offset=i)
             w.drain()
-        assert w.cond.factor(U) == D("1.500") and w.outcomes().count("increased") == 20 and w.outcomes()[-1] == "capped"
+        assert w.cond.factor(U) == D("2.000") and w.outcomes().count("increased") == 20 and w.outcomes()[-1] == "capped"
 
 
 class TestConsentAndSwitches:
@@ -209,11 +209,11 @@ class TestConsentAndSwitches:
         for i in (1, 2):
             w.release(day_offset=i)
             w.drain()
-        assert w.cond.factor(U) == D("1.025") and w.outcomes() == ["increased", "wearer_off", "wearer_off"]   # frozen, not reset
+        assert w.cond.factor(U) == D("1.050") and w.outcomes() == ["increased", "wearer_off", "wearer_off"]   # frozen, not reset
         w.prefs.set_enabled(U, True, now=NOW)
         w.release(day_offset=3)
         w.drain()
-        assert w.cond.factor(U) == D("1.050")
+        assert w.cond.factor(U) == D("1.100")
 
     def test_the_owner_switch_is_required(self, w) -> None:
         w.cond.set_owner_enabled(False, now=NOW)
@@ -259,8 +259,8 @@ class TestSecrecy:
             w.drain()
         with w.core.transaction() as tx:
             payloads = " ".join(r["payload_json"] for r in tx.fetch_all("SELECT payload_json FROM domain_events"))
-        assert "1.025" not in payloads and "1.050" not in payloads and "factor" not in payloads
-        assert "1.025" not in caplog.text and "1.050" not in caplog.text
+        assert "1.050" not in payloads and "1.100" not in payloads and "factor" not in payloads
+        assert "1.050" not in caplog.text and "1.100" not in caplog.text
 
     def test_the_model_facing_release_phase_is_unchanged(self, w) -> None:
         w.release()

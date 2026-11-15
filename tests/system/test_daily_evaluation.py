@@ -392,3 +392,73 @@ class TestVerifiedTraining:
         assert apply_day(0, 0, 0, 1, bonus=Decimal("0.15")).progress == apply_day(0, 0, 0, 1).progress + Decimal("0.15")
         with pytest.raises(ValueError):
             apply_day(0, 0, 0, 1, bonus=-1)
+
+
+class TestTrainingStreakAndRaises:
+    """Owner, 2026-11-15: a fully done training week pays +0.10 on Sunday; each earned weight increase +0.05 (at most +0.10 a day)."""
+
+    SAT, SUN = date(2026, 10, 17), date(2026, 10, 18)
+
+    def _plan(self, w, d: date, key: str, status="passed", outcome="verified") -> None:
+        with w.core.transaction() as tx:
+            tx.execute("INSERT INTO training_sessions (user_id, local_date, session_key, created_at) VALUES (?, ?, ?, ?)",
+                       (U, d.isoformat(), key.split(":")[-1], iso(local(d, 8))))
+        TestVerifiedTraining()._session(w, d, key, outcome=outcome, status=status)
+
+    def _progress(self, w, d: date) -> Decimal:
+        with w.core.transaction() as tx:
+            tx.execute("INSERT OR REPLACE INTO daily_evaluations (user_id, local_date, goals_assigned, goals_met, check_ins_due, check_ins_ok, "
+                       "violations, trust_used, progress, pool_after, tokens_earned, clean, streak_after, bonus, created_at) "
+                       "VALUES (?, ?, 0, 0, 0, 0, 0, '0.5', '0', '0', 0, 1, 0, '0', ?)", (U, (d - timedelta(days=1)).isoformat(), iso(local(d))))
+        w.task.run(local(d + timedelta(days=1), 1))
+        return Decimal(next(r for r in w.rows() if r["local_date"] == d.isoformat())["progress"])
+
+    def test_a_full_week_pays_its_bonus_on_sunday(self, tmp_path) -> None:
+        plain = World(tmp_path / "plain")
+        TestVerifiedTraining()._session(plain, self.SUN, "training:upper")
+        base = self._progress(plain, self.SUN)
+        w = World(tmp_path)
+        self._plan(w, self.SAT, "training:legs_a")
+        self._plan(w, self.SUN, "training:upper")
+        assert self._progress(w, self.SUN) == base + Decimal("0.10")
+
+    def test_a_missed_session_breaks_the_week_but_a_health_cancel_does_not(self, tmp_path) -> None:
+        plain = World(tmp_path / "plain")
+        TestVerifiedTraining()._session(plain, self.SUN, "training:upper")
+        base = self._progress(plain, self.SUN)
+        w = World(tmp_path / "missed")
+        self._plan(w, self.SAT, "training:legs_a", status="failed", outcome="missed")
+        self._plan(w, self.SUN, "training:upper")
+        assert self._progress(w, self.SUN) == base                              # no week bonus (the failed day itself is not evaluated here)
+        h = World(tmp_path / "health")
+        self._plan(h, date(2026, 10, 15), "training:short:upper_short", status="cancelled", outcome="health_or_safety")
+        self._plan(h, self.SAT, "training:legs_a")
+        self._plan(h, self.SUN, "training:upper")
+        assert self._progress(h, self.SUN) == base + Decimal("0.10")
+
+    def test_weight_increases_pay_up_to_the_daily_cap(self, tmp_path) -> None:
+        base = World(tmp_path / "plain")
+        b = self._progress(base, MON)
+        plain = World(tmp_path / "p2")
+        b = self._progress(plain, TUE)
+        session_only = World(tmp_path / "p3")
+        TestVerifiedTraining()._session(session_only, TUE, "training:legs_a")
+        with_session = self._progress(session_only, TUE)
+
+        def logs(world, rows):
+            with world.core.transaction() as tx:
+                for i, (ex, weight, hh) in enumerate(rows):
+                    tx.execute("INSERT INTO training_logs (id, user_id, logged_at, exercise, weight, reps, all_top, raised_to) "
+                               "VALUES (?, ?, ?, ?, ?, '9,9,9,9', 1, ?)", (f"l{i}", U, iso(local(TUE, hh)), ex, weight, weight + 2.5))
+
+        w = World(tmp_path)                                                  # no verified session that day: logs pay nothing
+        logs(w, [("squat", 100, 18), ("bench", 60, 18)])
+        assert self._progress(w, TUE) == b
+        w2 = World(tmp_path / "s")                                           # three exercises with a session: capped at +0.10
+        TestVerifiedTraining()._session(w2, TUE, "training:legs_a")
+        logs(w2, [("squat", 100, 18), ("rdl", 80, 18), ("press", 40, 18), ("squat", 100, 19)])
+        assert self._progress(w2, TUE) == with_session + Decimal("0.10")
+        w3 = World(tmp_path / "light")                                       # one exercise twice, then lighter: one raise only
+        TestVerifiedTraining()._session(w3, TUE, "training:legs_a")
+        logs(w3, [("squat", 100, 17), ("squat", 90, 18)])
+        assert self._progress(w3, TUE) == with_session + Decimal("0.05")

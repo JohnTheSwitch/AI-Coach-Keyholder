@@ -70,5 +70,6 @@ def render_economy(windows: list[EconomyWindow], pool: Decimal, threshold: Decim
         lines.append(f"  Held back by: {w.zeroed_by_incident} day(s) zeroed by a confirmed incident; check-ins {w.check_ins_ok}/{w.check_ins_due} "
                      f"answered; goals {w.goals_met}/{w.goals_assigned} met.")
     lines.append("")
-    lines.append("Design pace: about 2 tokens a week at 100 % and Trust 1.0 (3.5 days per token at threshold 1.0).")
+    lines.append("Design pace (owner, 2026-11-15): at 100 % and Trust 1.0 about 0.29 a day, so about 5.2 days per token at threshold 1.5 (standard) "
+                 "and 10.5 at 3.0 (advanced), before verified training bonuses.")
     return "\n".join(lines)
