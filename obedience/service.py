@@ -46,7 +46,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.obedience")
 
-__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "credit_training", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
+__all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "credit_training", "plan_board_task", "get_obedience_state", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
 VOTE_LIMIT = timedelta(hours=12)
@@ -408,6 +408,25 @@ def plan_extra_task(core: CoreDatabase, user_id: str, day: date, planned_at: dat
         return None
     decision("obedience", "An extra obedience task was filed by the owner.", day=day.isoformat(), planned_at=_iso(planned_at))
     return row_id
+
+
+def plan_board_task(core: CoreDatabase, user_id: str, day: date, key: str, text: str, now: datetime) -> str | None:
+    """The task board (owner, 2026-11-15): a board task he starts now becomes an obedience task (slot 2 of the day; one a day), run the usual
+    way: Chaster task, photo, community vote, the usual consequences. None when today's board slot is already used."""
+    row_id = str(uuid.uuid4())
+
+    def write(tx: Transaction, _s: object) -> bool:
+        return tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, slot) "
+                          "VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, 2)", (row_id, user_id, day.isoformat(), f"board:{key}", text, _iso(now), _iso(now))).rowcount == 1
+
+    return row_id if apply_transition(core, write=write) else None
+
+
+def get_obedience_state(core: CoreDatabase, row_id: str) -> tuple[str, str | None] | None:
+    """Read-only: (status, outcome) of one obedience task."""
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT status, outcome FROM obedience_tasks WHERE id = ?", (row_id,))
+    return None if row is None else (row["status"], row["outcome"])
 
 
 def credit_training(core: CoreDatabase, user_id: str, local_date: str, now: datetime) -> bool:

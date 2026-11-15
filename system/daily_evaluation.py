@@ -70,11 +70,12 @@ class DayFacts:
     training_short: int = 0
     week_complete: bool = False   # Sunday: every planned session of the week verified (health-cancelled or slotless ones excused)
     raises: int = 0               # weight increases earned through `log` that day
+    board: Decimal = Decimal(0)   # P1 (owner, 2026-11-15): rewards of task-board tasks verified that day
 
     @property
     def training_bonus(self) -> Decimal:
         return (TRAINING_BONUS["full"] * self.training_full + TRAINING_BONUS["short"] * self.training_short
-                + (WEEK_BONUS if self.week_complete else Decimal(0)) + min(RAISE_BONUS * self.raises, RAISE_BONUS_MAX))
+                + (WEEK_BONUS if self.week_complete else Decimal(0)) + min(RAISE_BONUS * self.raises, RAISE_BONUS_MAX) + self.board)
 
 
 def get_daily_evaluations(core: CoreDatabase, user_id: str, start: date, end: date) -> list[dict]:
@@ -157,7 +158,16 @@ class DailyEvaluationTask:
             violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
             training_full=len(training) - short, training_short=short,
             week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training else 0,   # raises only with a verified session
+            board=self._board(lo, hi),
         )
+
+    def _board(self, lo: str, hi: str) -> Decimal:
+        try:
+            from task_board.service import get_board_rewards
+            return get_board_rewards(self._core, self._user, lo, hi)
+        except Exception:
+            logger.exception("Board rewards could not be read; the day counts without them.")
+            return Decimal(0)
 
     def _week_complete(self, day: date) -> bool:
         """On a Sunday: every session the plan gave Monday..Sunday was verified; one cancelled (health or an exemption) or skipped for lack of

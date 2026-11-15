@@ -173,6 +173,7 @@ class CoachKeyholderBot(discord.Client):
         self.settings_watch_loop = None          # settings_watch.service.SettingsWatch.loop: changed settings asked about (G4)
         self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
+        self.task_board_loop = None              # task_board.service.TaskBoard.loop: the weekly task board (P1, owner 2026-11-15)
         self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
         self._extension_guard_task: asyncio.Task | None = None
         self.dm_actions: dict = {}               # scope -> facade behind bot.action_buttons.DmActionButton
@@ -238,6 +239,8 @@ class CoachKeyholderBot(discord.Client):
             self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
         if self.obedience_loop is not None:
             self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
+        if self.task_board_loop is not None:
+            self._task_board_task = asyncio.create_task(self.task_board_loop, name="task-board")
         if self.settings_watch_loop is not None:
             self._settings_watch_task = asyncio.create_task(self.settings_watch_loop, name="settings-watch")
         if self.opt_outs_loop is not None:
@@ -1048,6 +1051,10 @@ def main() -> None:
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
         application_service.gear_command = obedience.gear_command
+        from system.obedience_wiring import build_task_board               # P1 (owner, 2026-11-15): the weekly task board
+        task_board = build_task_board(core, obedience, window_config_from(config))
+        bot.dm_actions["board"] = ObedienceDm(task_board, resolve_user=resolve_user, now=clock.now)
+        bot.task_board_loop = task_board.loop(clock)
         training_plan = getattr(obedience, "training", None)
         if training_plan is not None:
             from system.dm_actions import TrainingDm

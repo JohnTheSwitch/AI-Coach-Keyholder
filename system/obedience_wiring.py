@@ -14,10 +14,41 @@ from infractions.signals import SignalKind
 from obedience.service import ObedienceTasks, Ports
 from schedule_windows.windows import WindowKind, classify
 
-__all__ = ["build_obedience"]
+__all__ = ["build_obedience", "build_task_board"]
 
 _REASONS = {"missed": "no photo arrived by the deadline", "late": "the photo came after the deadline",
             "rejected": "the community rejected the photo"}
+
+
+def build_task_board(core, obedience: ObedienceTasks, window_cfg):
+    """P1, the task board (owner, 2026-11-15), on top of the obedience tasks: the same wearer, free time, gear, Chaster path and miss path."""
+    from datetime import time, timedelta
+    from obedience.service import ALONE, effective, get_obedience_state, plan_board_task
+    from task_board.service import EROTIC_DAYS, BoardTask, TaskBoard, erotic_reward
+    p = obedience._ports
+
+    def day_end(d):
+        """The last free-time moment of local day `d` (a board deadline)."""
+        start, at = window_cfg.to_utc(d, time(0, 0)), window_cfg.to_utc(d, time(23, 45))
+        while at > start and not p.free_time(at):
+            at -= timedelta(minutes=15)
+        return at
+
+    def erotic_pick(day):
+        """One task from the obedience catalogue, the full (alone) version; never one whose instructions live only in the DM (the gag)."""
+        for _ in range(8):
+            task = obedience._pick(day, ALONE)
+            if task.kind == "erotic" and not task.dm_note:
+                return BoardTask(f"e:{task.key}", task.text, erotic_reward(task.key, task.needs), EROTIC_DAYS, "erotic", task.needs)
+        return None
+
+    training = getattr(obedience, "training", None)
+    return TaskBoard(core, user_id=obedience.user_id, erotic_pick=erotic_pick,
+                     training_today=(lambda now: training.is_training_day_now(now)) if training is not None else (lambda now: False), owned=lambda: effective(obedience.owned_gear()), free_time=p.free_time, today=p.today,
+                     day_end=day_end, local_clock=p.local_clock, paused=p.paused,
+                     start_task=lambda row, now: plan_board_task(core, obedience.user_id, p.today(now), row["task_key"], row["text"], now),
+                     task_state=lambda ident: get_obedience_state(core, ident),
+                     raise_missed=lambda row, now: p.raise_failure(row, "missed", now))
 
 
 def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: list, exemptions=None) -> ObedienceTasks | None:

@@ -1,6 +1,6 @@
 # Ideas from the owner's favourite stories (2026-11-15)
 
-**Owner's decisions (2026-11-15):** P1 not approved yet: he asked for the task list first, to approve it with the tasks. P2 approved ("I strongly agree"; part of protocol rung 4). P3 and P10 declined ("you can't
+**Owner's decisions (2026-11-15):** P1 approved with its task list (chores, fitness, discipline, the whole erotic catalogue; no study tasks) and built (`task_board/`). P2 approved ("I strongly agree"; part of protocol rung 4). P3 and P10 declined ("you can't
 change the bot's mind by begging, unlike a human's"). P4 approved with a longer window (length to be set). P5 approved, also given now and
 then as a free treat. P6 approved but on hold for engineering (Intiface pairing). P7 asked to be explained. P8 approved. P9 approved in
 principle, NOT built now: only where the system already does it (G3); remind him of the full version when the system is more mature.
