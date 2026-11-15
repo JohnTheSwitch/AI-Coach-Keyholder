@@ -553,3 +553,46 @@ class TestCleanUpHeadsUp:
                        (U, MORNING.date().isoformat(), (MORNING + timedelta(hours=1)).isoformat(), MORNING.isoformat()))
         w.tasks.tick(MORNING + timedelta(hours=1) - PREP_AHEAD + timedelta(minutes=1))
         assert self._notes(w) == []
+
+
+def test_a_verified_task_sometimes_carries_a_surprise_reward(tmp_path) -> None:
+    """Research a (owner, 2026-11-15): about 1 in 5 verified tasks adds +0.05, announced only when it happens; it counts in the day's bonus."""
+    from decimal import Decimal
+    from obedience.service import SURPRISE_REWARD, get_surprise_rewards
+    from system.daily_evaluation import DayFacts
+
+    class Always(random.Random):
+        def random(self):
+            return 0.0
+
+    w = World(tmp_path)
+    w.tasks._rng = Always(1)
+    w.tasks.tick(MORNING)
+    due = w.due()
+    w.start(due)
+    row = w.row()
+    w.chaster.entries[row["task_id"]] = {"createdAt": (due + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "verified"}}
+    w.tasks.tick(due + timedelta(minutes=25))
+    assert w.row()["status"] == "passed" and w.row()["surprise"] == SURPRISE_REWARD
+    with w.core.transaction() as tx:
+        note = tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:decided:%'")
+    assert "surprise: +0.05" in note["text"]
+    assert get_surprise_rewards(w.core, U, "2026-11-15T00:00", "2026-11-16T00:00") == Decimal("0.05")
+    facts = DayFacts(goals_assigned=0, goals_met=0, check_ins_due=0, check_ins_ok=0, violations=0, surprise=Decimal("0.05"))
+    assert facts.training_bonus == Decimal("0.05")
+
+
+def test_no_surprise_when_the_roll_misses(tmp_path) -> None:
+    class Never(random.Random):
+        def random(self):
+            return 0.99
+
+    w = World(tmp_path)
+    w.tasks._rng = Never(1)
+    w.tasks.tick(MORNING)
+    due = w.due()
+    w.start(due)
+    row = w.row()
+    w.chaster.entries[row["task_id"]] = {"createdAt": (due + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "verified"}}
+    w.tasks.tick(due + timedelta(minutes=25))
+    assert w.row()["status"] == "passed" and w.row()["surprise"] is None

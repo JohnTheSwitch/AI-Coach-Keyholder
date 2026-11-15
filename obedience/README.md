@@ -84,3 +84,9 @@ task and never past free time; after that the task is done or it fails. No gag t
 - **Clean-up heads-up** (owner, 2026-11-15): 30 minutes (`PREP_AHEAD`) before an erotic task (it may use a plug or a dildo; the task itself is
   chosen only at the alone question), a DM to use the toilet and rinse (plain lukewarm water, no soap; a douche not required). Once per task;
   none before a training session; never during an exemption (no task runs then).
+
+## Surprise rewards (owner, 2026-11-15; research item a; migration 080)
+
+About 1 in 5 verified obedience tasks (`SURPRISE_SHARE`) carries a surprise +0.05 (`SURPRISE_REWARD`), announced only in the "verified"
+message. It is stored in `obedience_tasks.surprise` in the same transaction as the verdict and read by `get_surprise_rewards`; the daily
+evaluation adds it to the day's bonus. Training and board tasks never draw one: they pay their own rewards.

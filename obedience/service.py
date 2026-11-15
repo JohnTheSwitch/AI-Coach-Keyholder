@@ -59,6 +59,8 @@ DISCRETION = "Do it in your room with the door closed, keep it quiet, and leave 
 SAFETY = ("Stop at once if anything hurts, bleeds, goes numb or feels wrong; that never counts against you. Never numbing lube, never "
           "overnight.")
 ALONE, DISCREET = "alone", "discreet"
+SURPRISE_SHARE = 0.2                     # owner, 2026-11-15 (research a): about 1 in 5 verified tasks...
+SURPRISE_REWARD = "0.05"                 # ...adds this to the token pool, unannounced until it happens
 PREP_AHEAD = timedelta(minutes=30)      # owner, 2026-11-15: the clean-up heads-up comes this long before an erotic task
 PREP_TEXT = ("Heads-up: your task comes in about 30 minutes, and it may use a plug or a dildo. Use the toilet now and clean up in the "
              "shower: lukewarm plain water, no soap. Without a douche, a thorough rinse is enough.")
@@ -369,6 +371,15 @@ def get_training_verified_since(core: CoreDatabase, user_id: str, since: str) ->
     with core.transaction() as tx:
         return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
                             "AND catalog_key LIKE 'training:%' AND decided_at >= ?", (user_id, since)) is not None
+
+
+def get_surprise_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str):
+    """Read-only (research a, owner 2026-11-15): the surprise rewards of tasks verified in [lo, hi), as a Decimal."""
+    from decimal import Decimal
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT surprise FROM obedience_tasks WHERE user_id = ? AND surprise IS NOT NULL AND decided_at >= ? AND decided_at < ?",
+                            (user_id, lo, hi))
+    return sum((Decimal(r["surprise"]) for r in rows), Decimal(0))
 
 
 def get_training_outcomes(core: CoreDatabase, user_id: str, start: str, end: str) -> dict[str, dict]:
@@ -806,7 +817,12 @@ class ObedienceTasks:
         if row["status"] == "assigned" or row["review_status"] != status:
             self._update(row["id"], status="submitted", submitted_at=_iso(submitted) if submitted else None, review_status=status)
         if status == "verified":
-            self._close(row, "passed", "verified", now, text="Your task was verified. Good.")
+            # Training and board tasks pay their own rewards, so they never draw a surprise.
+            surprise = (not row["catalog_key"].startswith(("training:", "board:"))) and self._rng.random() < SURPRISE_SHARE
+            text = ("Your task was verified. Good. And a surprise: +" + SURPRISE_REWARD + " toward your next token."
+                    if surprise else "Your task was verified. Good.")
+            if self._close(row, "passed", "verified", now, text=text, surprise=SURPRISE_REWARD if surprise else None) and surprise:
+                decision("obedience", "Surprise reward for a verified task.", task=row["catalog_key"])
             return 1
         if status == "rejected":
             return self._fail(row, "rejected", now)
@@ -903,10 +919,11 @@ class ObedienceTasks:
             row = tx.fetch_one("SELECT * FROM obedience_tasks WHERE id = ?", (row_id,))
         return None if row is None else dict(row)
 
-    def _close(self, row: dict, status: str, outcome: str, now: datetime, *, text: str | None = None) -> bool:
+    def _close(self, row: dict, status: str, outcome: str, now: datetime, *, text: str | None = None, surprise: str | None = None) -> bool:
         def write(tx: Transaction, _s: object) -> bool:
-            done = tx.execute("UPDATE obedience_tasks SET status = ?, outcome = ?, decided_at = ? WHERE id = ? AND status IN ('planned', 'asking', 'assigned', 'submitted')",
-                              (status, outcome, _iso(now), row["id"])).rowcount
+            done = tx.execute("UPDATE obedience_tasks SET status = ?, outcome = ?, decided_at = ?, surprise = COALESCE(?, surprise) "
+                              "WHERE id = ? AND status IN ('planned', 'asking', 'assigned', 'submitted')",
+                              (status, outcome, _iso(now), surprise, row["id"])).rowcount
             if done:
                 write_event(tx, DomainEvent(event_type="obedience.task_decided", source_module="obedience", occurred_at=now,
                                             payload={"obedience_task_id": row["id"], "status": status, "outcome": outcome}))
