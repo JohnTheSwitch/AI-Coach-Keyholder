@@ -1212,6 +1212,16 @@ def main() -> None:
         release_task = getattr(wiring, "release_task", None)
         if release_task is not None and getattr(release_task, "user_id", None) == notice_user:
             release_task.release_debt = lambda: line_service.open_lines(notice_user)     # roadmap B4: owed lines hold a release
+            # Earn the release (owner, 2026-11-15): a token alone no longer plans a release; the day's training session or release lines first.
+            training_for_release = getattr(obedience, "training", None) if obedience is not None else None
+            from obedience.service import get_training_verified_since
+            from release_earning.service import ReleaseEarning
+            earning = ReleaseEarning(
+                user_id=notice_user, last_spend_at=lambda rt=release_task: rt.engine.get_last_spend_at(rt.user_id),
+                training_verified_since=lambda since: get_training_verified_since(core, notice_user, since),
+                training_today=(lambda now, tp=training_for_release: tp.is_training_day_now(now)) if training_for_release is not None else (lambda now: False),
+                release_lines_done_since=line_service.release_done_since, assign_release_lines=line_service.assign_release)
+            release_task.release_earned = earning.hold
         logger.info("Lines are active: every confirmed incident gets lines in the DM.")
     try:
         quiet_windows = quiet_config_from(config)

@@ -364,6 +364,13 @@ def get_verified_training(core: CoreDatabase, user_id: str, local_date: str) -> 
     return [r["catalog_key"] for r in rows]
 
 
+def get_training_verified_since(core: CoreDatabase, user_id: str, since: str) -> bool:
+    """Read-only (earn the release, owner 2026-11-15): a training session verified (or credited) at or after `since`."""
+    with core.transaction() as tx:
+        return tx.fetch_one("SELECT 1 FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
+                            "AND catalog_key LIKE 'training:%' AND decided_at >= ?", (user_id, since)) is not None
+
+
 def get_training_outcomes(core: CoreDatabase, user_id: str, start: str, end: str) -> dict[str, dict]:
     """Read-only: local date -> {catalog_key, status, outcome} of the training sessions from `start` to `end` (inclusive local dates)."""
     with core.transaction() as tx:

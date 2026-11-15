@@ -38,10 +38,13 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.lines")
 
-__all__ = ["LineService", "PaperPort", "LINES_WARNING", "LINES_WINDOW", "SENTENCES", "sentence_for", "normalize", "FALLBACK_AFTER"]
+__all__ = ["LineService", "PaperPort", "RELEASE_GROUP", "RELEASE_SENTENCE", "RELEASE_LINES", "LINES_WARNING", "LINES_WINDOW", "SENTENCES", "sentence_for", "normalize", "FALLBACK_AFTER"]
 
 LINES_WARNING = 20              # owner, 2026-11-14
 LINES_WINDOW = 40               # owner, 2026-11-14
+RELEASE_GROUP = "RELEASE"          # owner, 2026-11-15 (earn the release): lines that earn a release, not a punishment
+RELEASE_SENTENCE = "I am grateful to my keyholder for every release I earn."
+RELEASE_LINES = 20
 FALLBACK_AFTER = timedelta(hours=3)    # a sheet that waited this long for Chaster's task slot may be typed in the DM instead
 
 
@@ -121,14 +124,45 @@ class LineService:
     def open_lines(self, user_id: str) -> int:
         """How many lines are still owed (0 when none)."""
         with self._core.transaction() as tx:
-            row = tx.fetch_one("SELECT COALESCE(SUM(required - done), 0) AS n FROM line_assignments WHERE user_id = ? AND status = 'open'", (user_id,))
-        return int(row["n"])
+            row = tx.fetch_one("SELECT COALESCE(SUM(required - done), 0) AS n FROM line_assignments WHERE user_id = ? AND status = 'open' "
+                               "AND COALESCE(rule_group_id, '') != ?", (user_id, RELEASE_GROUP))
+        return int(row["n"])             # release lines are not owed consequences: they never hold hygiene or count as debt
 
     def get_lines_between(self, start, end) -> list[dict]:
         """Work queue Q4 (weekly review): assignments created on local dates start..end (UTC dates are close enough for a weekly count)."""
         with self._core.transaction() as tx:
             return [dict(r) for r in tx.fetch_all("SELECT required, done, status FROM line_assignments WHERE user_id = ? AND substr(created_at, 1, 10) "
-                                                  "BETWEEN ? AND ?", (self.user_id, start.isoformat(), end.isoformat()))]
+                                                  "BETWEEN ? AND ? AND COALESCE(rule_group_id, '') != ?",
+                                                  (self.user_id, start.isoformat(), end.isoformat(), RELEASE_GROUP))]
+
+    def assign_release(self, since: str, now: datetime) -> bool:
+        """Earn the release (owner, 2026-11-15): RELEASE_LINES release lines, unless some were assigned since `since` (the last spent token).
+        True when they were assigned now. On paper like any lines when `paper` is wired."""
+        def write(tx: Transaction, _s: object) -> bool:
+            if tx.fetch_one("SELECT 1 FROM line_assignments WHERE user_id = ? AND rule_group_id = ? AND created_at >= ?",
+                            (self.user_id, RELEASE_GROUP, since)) is not None:
+                return False
+            line_id, key = str(uuid.uuid4()), f"release:{uuid.uuid4()}"
+            tx.execute("INSERT INTO line_assignments (id, user_id, incident_id, rule_group_id, sentence, required, done, status, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 0, 'open', ?)", (line_id, self.user_id, key, RELEASE_GROUP, RELEASE_SENTENCE, RELEASE_LINES, _iso(now)))
+            write_event(tx, DomainEvent(event_type="lines.assigned", source_module="lines", occurred_at=now,
+                                        payload={"line_assignment_id": line_id, "incident_id": key, "required": RELEASE_LINES}))
+            how = ("by hand on paper. A Chaster task will ask for a photo of the sheet" if self.paper is not None else "one per line, here in our chat")
+            enqueue_in_transaction(tx, user_id=self.user_id, kind="lines", dedupe_key=f"lines:{key}", now=now,
+                                   text=(f"A release is within reach, but you earn it first: write this {RELEASE_LINES} times, {how}:\n"
+                                         f"\"{RELEASE_SENTENCE}\"\nOnce they're verified, your release is planned."))
+            return True
+
+        done = apply_transition(self._core, write=write)
+        if done:
+            decision("lines", "Release lines assigned: a token is ready, the release waits for them.")
+        return bool(done)
+
+    def release_done_since(self, since: str) -> bool:
+        """Read-only: release lines assigned since `since` and completed."""
+        with self._core.transaction() as tx:
+            return tx.fetch_one("SELECT 1 FROM line_assignments WHERE user_id = ? AND rule_group_id = ? AND created_at >= ? AND status = 'done'",
+                                (self.user_id, RELEASE_GROUP, since)) is not None
 
     def get_open_assignments(self, user_id: str) -> list[dict]:
         with self._core.transaction() as tx:

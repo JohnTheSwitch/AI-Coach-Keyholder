@@ -134,6 +134,13 @@ class ReleaseEngine:
         return insert_entry(tx, user_id=user_id, delta=amount, entry_type=LedgerEntryType.EARN,
                             reason_code=reason_code, now=now, source_event_id=source_event_id)
 
+    def get_last_spend_at(self, user_id: str) -> str | None:
+        """Read-only (earn the release, owner 2026-11-15): when the last token was spent on a release that was not refunded; None: never."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT t.created_at FROM token_ledger t WHERE t.user_id = ? AND t.entry_type = 'spend' AND NOT EXISTS "
+                               "(SELECT 1 FROM token_ledger r WHERE r.reverses_entry_id = t.id) ORDER BY t.created_at DESC LIMIT 1", (user_id,))
+        return None if row is None else row["created_at"]
+
     def get_balance(self, user_id: str) -> int:
         with self._core.transaction() as tx:
             return balance(tx, user_id)

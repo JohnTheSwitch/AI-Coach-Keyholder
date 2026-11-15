@@ -105,6 +105,10 @@ class TrainingPlan:
                            text=f"Workout done: {name}. Photo of the gym only.",           # owner, 2026-11-15: voters see this; brief, no code mention
                            details="\n".join(lines), optional=optional)
 
+    def is_training_day_now(self, now: datetime) -> bool:
+        """Read-only: today (local) has a session (earn the release: the session is then the release task)."""
+        return self.is_training_day(self._today(now))
+
     def is_training_day(self, day: date) -> bool:
         """Read-only: the plan has a session that day (owner, 2026-11-15: the coach then proposes no separate workout)."""
         return self._session_for(day) is not None

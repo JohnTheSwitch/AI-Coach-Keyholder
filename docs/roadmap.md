@@ -76,7 +76,7 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
    visible, false health / emergency claims).
 3. **Judge on long emergencies** (done 2026-11-15, with G5) (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
    without a contradicting fact. Limit: **3 hours** (owner, 2026-11-15).
-4. **Earn the release** (owner, 2026-11-15): after a token is spent, the release is scheduled only once a release task is verified in
+4. **Earn the release** (done 2026-11-15; `release_earning/`; release lines: "I am grateful to my keyholder for every release I earn.") (owner, 2026-11-15): after a token is spent, the release is scheduled only once a release task is verified in
    Chaster (20 lines "I earn my release", a short obedience task, or on a training day the session itself). Rejected or missed: the token
    is kept and the task comes again the next day. Health and emergencies bypass it.
 5. **Morning report** (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
@@ -96,7 +96,7 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
    f. **Skin-check reminder** in every hygiene opening; redness, numbness or broken skin means staying unlocked to heal, no consequence.
 7. **Submissive lines** (done 2026-11-15) (owner, 2026-11-15): every line sentence reworded, e.g. "I obey my keyholder without excuses.", "I never use my health to escape my keyholder."; counts unchanged; an open assignment keeps its own sentence. Release lines (with earn the release): "I am grateful to my keyholder for every release I earn."
 8. **Clean-up heads-up** (done 2026-11-15) (owner, 2026-11-15): 30 minutes before an erotic task, a DM to clean up, douche or not.
-9. **From his favourite stories** (owner, 2026-11-15; designs in docs/research/story_ideas.md): **P1 task board**, **P2 title in every DM** (with rung 4), **P4 the release as a timed window** (longer than 45 minutes; length to be set), **P5 temptations that cost** (sometimes free as a treat; the session itself waits for P6), **P8 monthly review**. On hold: P6 Deep Diver control (engineering: pairing). Deferred: P9 one-way strictness beyond G3 (remind him when the system is more mature).
+9. **From his favourite stories** (owner, 2026-11-15; designs in docs/research/story_ideas.md): **P2 title in every DM** (with rung 4), **P4 the release as a timed window** (2 hours from the unlock to the relock picture), **P7 prostate training** (a task, never counted as an orgasm for the tokens), **a written request as an alternative to the release lines** (the bot keeps what he says he'll do better), **waiting at the door on a leash** (harness waist ring to the door handle; needs the harness and a leash), **sensory deprivation** (blindfold + his noise-cancelling AirPods), **swats instead of lines** (his choice each time: one light swat per two lines, photo of the skin only), **P5 temptations that cost** (sometimes free as a treat; the session itself waits for P6), **P8 monthly review**. On hold: P6 Deep Diver control (engineering: pairing). Waiting for his approval with the task list: P1 task board. Deferred: P9 one-way strictness beyond G3 (remind him when the system is more mature).
 10. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
 
 ## Ideas (not approved; each needs the owner's yes)
@@ -123,8 +123,9 @@ Tasks for each piece are already in the catalogue; after buying, send `gear add 
    `gear add padlocks`.
 6. **Gildo No. 27** (about 589 Kč, plug ladder 4.5 cm): `gear add gildo`.
 7. **Plug & Joy medium** (about 255 Kč, plug ladder 5.5 cm): `gear add plug joy`.
-8. **CSR Bluetooth dongle**: only if the Deep Diver control idea is approved.
-9. **Satisfyer Top Secret** (about 1,299 Kč): only after the Deep Diver test works.
+8. **A leash** (waiting at the door; clips to the harness waist ring): `gear add leash`.
+9. **CSR Bluetooth dongle**: only if the Deep Diver control idea is approved.
+10. **Satisfyer Top Secret** (about 1,299 Kč): only after the Deep Diver test works.
 
 ## Declined (2026-11-14; not to be proposed again without new reasons)
 

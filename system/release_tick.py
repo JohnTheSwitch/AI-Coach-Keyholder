@@ -91,6 +91,7 @@ class ReleaseEnginePeriodicTask:
         self._halted = is_halted
         self._can_execute = can_execute
         self._max_hold = max_hold
+        self.release_earned: Callable[[datetime], str | None] | None = None   # earn the release (owner, 2026-11-15): a reason it waits, or None
         self.release_debt: Callable[[], object] | None = None    # roadmap B4 (owner, 2026-11-14): () -> what is still owed (lines); truthy holds a release
         self._backstop_refreshed_at: datetime | None = None
         self._first_sight_at: datetime | None = None
@@ -173,6 +174,13 @@ class ReleaseEnginePeriodicTask:
 
         balance = self._engine.get_balance(self._user)
         planned = self._engine.has_planned_release(self._user)
+
+        if not planned and balance >= 1 and self.release_earned is not None:
+            hold = self.release_earned(now)                      # never raises; a read failure holds nothing
+            if hold:
+                report.add(hold)
+                self._maybe_backstop(now, report)
+                return report
 
         if not planned and balance >= 1:
             obs = self._fresh_observation(now)
