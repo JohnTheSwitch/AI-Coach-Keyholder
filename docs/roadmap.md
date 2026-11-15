@@ -62,6 +62,33 @@ Between items, the standing goal applies: read the logs and the bot chat for bug
 action), the live trial or anything involving another person, any rule or number not written here, anything touching the philosophy's hard
 limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines on a test lock).
 
+## Approved, not built yet (in order)
+
+1. **Gear tags** (owner, 2026-11-15): every obedience task tagged with the gear it needs (also gear not owned yet), variations when a
+   piece is missing, and an owned-gear list kept in the DM (`gear`, `gear add blindfold`); tasks use only owned gear. The blindfold is
+   broken: off the list, its tasks kept.
+2. **G2-G5** above (health openings and the task's health button counted, consent switches ask again after 24 h, settings changes
+   visible, false health / emergency claims).
+3. **Judge on long emergencies** (owner, 2026-11-15): a health opening or emergency longer than a limit always goes to the judge, even
+   without a contradicting fact. The limit is to be proposed (about 60 minutes) and confirmed by the owner.
+4. **Q5-Q10** above (parity for additional wearers, slice 8, Typing Lines desk research).
+
+## Ideas (not approved; each needs the owner's yes)
+
+- **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; Windows needs a Cambridge Silicon Radio Bluetooth
+  dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
+  First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
+- **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
+- **Collar tasks** once he has one (chin-down photos; only inside a task, never visible at home).
+- **Clamp and leather-cuff tasks** once he has them (timed, photo of the chest / wrists only).
+- **Typing Lines** extension: only after desk research shows the bot could keep rewriting the lock's extensions with it on.
+
+## Declined (2026-11-14; not to be proposed again without new reasons)
+
+"Loosening is hard" governance, the random rule check, capped time-adding (from the core-mcp README); the hygiene debrief question,
+"answer or freeze", the non-negotiating keyholder; a smaller cage as a punishment (smaller is more comfortable for him); the electro cage
+and other session-only gear the bot cannot use; ManCage one-time locks (they don't fit his cage).
+
 **Standing goal (owner, 2026-11-13): make this system the best version of itself.** Between slices, Claude reads the logs and the bot's chat
 history for bugs and design gaps, and proposes them with a recommendation; approved ones are added here.
 
