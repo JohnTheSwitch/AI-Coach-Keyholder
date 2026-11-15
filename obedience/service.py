@@ -231,7 +231,7 @@ WORKOUTS: tuple[Task, ...] = (
     Task("workout_incline", "Show: 20 minutes of incline walking on the treadmill. Photo of the treadmill display only, code beside it.", "workout"),
     Task("workout_calves", "Show: 4 sets of calf raises with the bar. Photo of the bar and your calves only, code beside it.", "workout"),
     Task("workout_cable", "Show: 4 sets of cable rows on the Laubr. Photo of the stack and the handle only, code beside it.", "workout"),
-    Task("workout_log", "Show: today's workout written down, set by set. Photo of the page only, code beside it.", "workout"),
+    Task("workout_log", "Workout done. Photo of the gym only.", "workout"),
 )
 CATALOG: tuple[Task, ...] = EXTRAS + WORKOUTS                # the fixed tasks (composed and ladder tasks are built when picked)
 _BY_KEY = {t.key: t for t in CATALOG}

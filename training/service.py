@@ -14,7 +14,7 @@ session becomes that day's obedience task (obedience/service.py asks `day_task`)
 - `log squat 105 4x9` or `log squat 105 10,10,9,10` (pull-ups and other body-weight work: `log pullups 8,8,7`): when every set reaches the
   top of the range, the next session gets +step (2.5 kg on the bar, one plate on the machines).
 
-Proof: a Chaster photo of the day's training log with the code. Nothing here changes lock time or acts on the lock.
+Proof: a Chaster photo of the gym after the session (owner, 2026-11-15; Chaster's code shown as usual). Nothing here changes lock time or acts on the lock.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class TrainingPlan:
             lines.append("This short session is optional: if it doesn't fit today, skip it and go again at the weekend.")
         name = title.split(":")[0]
         return TrainingDay(key=f"training:{'short:' if optional else ''}{session}",
-                           text=f"Show: today's training log ({name}), every set and weight written. Photo of the page only, code beside it.",
+                           text=f"Workout done: {name}. Photo of the gym only.",           # owner, 2026-11-15: voters see this; brief, no code mention
                            details="\n".join(lines), optional=optional)
 
     def is_training_day(self, day: date) -> bool:

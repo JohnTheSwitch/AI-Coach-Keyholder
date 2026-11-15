@@ -23,7 +23,7 @@ def test_the_week(tmp_path) -> None:
     assert p.day_task(FRIDAY) is None and p.day_task(date(2026, 11, 17)) is None          # no session Tuesday or Friday
     sat = p.day_task(SATURDAY)
     assert sat.key == "training:legs_a" and not sat.optional and "Back squat" in sat.details
-    assert "training log" in sat.text and len(sat.text) <= 200
+    assert sat.text.startswith("Workout done:") and "Photo of the gym only." in sat.text and "code" not in sat.text and len(sat.text) <= 200
     sun = p.day_task(SUNDAY)
     assert sun.key == "training:upper" and "Warm-up: one set of bench with 60 kg." in sun.details
     assert p.day_task(SATURDAY + timedelta(days=7)).key == "training:legs_b"              # A and B alternate

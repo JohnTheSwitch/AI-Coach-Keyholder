@@ -53,7 +53,9 @@ def test_the_catalogue_respects_the_limits() -> None:
              "eyes closed", "harness")
     for task in _all_texts():
         text = task.text.lower()
-        assert len(task.text) <= 200 and "code beside it" in text and task.text.startswith("Show: "), task.key
+        assert len(task.text) <= 200, task.key
+        if task.key != "workout_log":       # owner, 2026-11-15: the workout task is brief for voters, no "Show:", no code mention
+            assert "code beside it" in text and task.text.startswith("Show: "), task.key
         assert "only" in text or "no face" in text, task.key                   # the photo names what it shows and only that
         assert not any(word in text for word in ("face visible", "outside", "outdoor", "public", "balls", " gag")), task.key
         assert any(word in text for word in owned), task.key
