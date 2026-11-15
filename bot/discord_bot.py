@@ -170,6 +170,7 @@ class CoachKeyholderBot(discord.Client):
         self.weekly_review_loop = None           # weekly_review.service.WeeklyReview.loop coroutine: Sunday 19:00 review (roadmap slice 5)
         self.recovery_tasks_loop = None          # system.recovery_wiring.recovery_loop coroutine: verified recovery tasks (brat taming B3)
         self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
+        self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
         self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
         self._extension_guard_task: asyncio.Task | None = None
@@ -236,6 +237,8 @@ class CoachKeyholderBot(discord.Client):
             self._lines_paper_task = asyncio.create_task(self.lines_paper_loop, name="lines-paper")
         if self.obedience_loop is not None:
             self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
+        if self.opt_outs_loop is not None:
+            self._opt_outs_task = asyncio.create_task(self.opt_outs_loop, name="opt-outs")
         if self.health_pattern_loop is not None:
             self._health_pattern_task = asyncio.create_task(self.health_pattern_loop, name="health-pattern")
         if self.dm_actions:
@@ -1047,6 +1050,18 @@ def main() -> None:
         if peer.watch is not None:
             before_obedience = peer.watch.is_spot_check
             peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)
+    # G3 (owner, 2026-11-15): while locked, switching off photo check-ins, conditioning or the weekly review waits 24 hours and is asked about.
+    from opt_outs.service import SWITCHES, OptOuts
+    from system.coach_dm import goal_targets_frozen
+    from system.dm_actions import OptOutDm
+    opt_cfg = window_config_from(config)
+    opt_outs = OptOuts(core, locked=goal_targets_frozen(wiring.iron_contract),
+                       local_clock=lambda t, cfg=opt_cfg: cfg.local(t).strftime("%a %d %b %H:%M"))
+    for key in SWITCHES:
+        opt_outs.register(key, lambda user, now, k=key: application_service.apply_off(k, user, now))
+    application_service.opt_outs = opt_outs
+    bot.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=resolve_user, now=clock.now)
+    bot.opt_outs_loop = opt_outs.loop(clock)
     # G2 (owner, 2026-11-15): health uses counted; from the 3rd in 7 days the keyholder asks once a week; never restricts anything.
     from system.health_pattern import HealthPattern, health_uses, week_label
     health_user = getattr(proof_checks, "user_id", None) or getattr(config, "check_in_user_id", None)

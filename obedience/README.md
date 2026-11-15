@@ -54,6 +54,8 @@ safety)" works while being asked too. A training day is not asked. Safety lines 
 within reach and never blindfolded while restrained; the collar loose enough for two fingers and never tied, clipped or locked to anything;
 clamps off after 10 minutes at most. Events: `obedience.alone_asked`, `obedience.alone_answered`.
 
+**No writing on his body (owner, 2026-11-15):** the "'locked' written on your thigh" add-on was removed.
+
 **Limits talk (owner, 2026-11-15).** His own hard limits are unchanged (nothing public, nothing identifying, no strong pain); the
 safety rules were agreed with him: blindfolded in cuffs only with the cuffs in front, 20 minutes at most (`blind_cuffs_vibe`: cuffs,
 blindfold and the vibrating Deep Diver); behind the back (`cuffs_back`) only in the fluffy cuffs with the release lever tested first, and

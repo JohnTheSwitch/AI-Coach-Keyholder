@@ -129,6 +129,21 @@ class ObedienceDm:
         return OutgoingMessage(text=self._tasks.press(user_id=user, row_id=ident, action=action, now=self._now()))
 
 
+class OptOutDm:
+    """G3 (owner, 2026-11-15): "Yes, switch it off" / "Keep it on" after a switch-off waited 24 hours while locked."""
+
+    def __init__(self, opt_outs, *, resolve_user: Callable[[str], str | None], now: Callable[[], datetime]) -> None:
+        self._opt_outs = opt_outs
+        self._resolve = resolve_user
+        self._now = now
+
+    def press(self, *, discord_user_id: str, action: str, ident: str) -> OutgoingMessage:
+        user = self._resolve(discord_user_id)
+        if user is None:
+            return _NOT_YOURS
+        return OutgoingMessage(text=self._opt_outs.press(user_id=user, row_id=ident, action=action, now=self._now()))
+
+
 class RecoveryDm:
     """The wearer's two buttons on a recovery task offer (owner, 2026-11-14; brat taming B3): "Take it" and "Not now"."""
 

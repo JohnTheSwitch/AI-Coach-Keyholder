@@ -148,7 +148,6 @@ ADDONS: dict[str, tuple[tuple[frozenset, str, frozenset], ...]] = {
     # Owner, 2026-11-15: gag tasks, told by the bot only (never in Chaster's text); hands always free with it.
     "gag": ((frozenset({"gag"}), "", ALONE_ONLY),),
     "thighs": ((frozenset({"rope_cotton"}), "thighs tied with the red rope, shears within reach", BOTH),),
-    "word": ((frozenset(), "'locked' written on your thigh", BOTH),),
     "collar": ((frozenset({"collar"}), "wearing your collar", BOTH),),
     "clamps": ((frozenset({"clamps"}), "clamps on your nipples", BOTH),),
 }

@@ -186,6 +186,7 @@ class ApplicationService:
         self.lines = None
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
+        self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
@@ -1319,8 +1320,39 @@ class ApplicationService:
     def _handle_conditioning_off(self, ctx: RequestContext) -> OutgoingMessage:
         if self._conditioning is None:
             return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
-        self._conditioning.set_enabled(ctx.user.id, False, now=ctx.now)
-        return OutgoingMessage(text="Progressive Conditioning is off. It stays at its current level and will not increase.")
+        return OutgoingMessage(text=self._wait_or(ctx, "conditioning"))
+
+    def _wait_or(self, ctx: RequestContext, key: str) -> str:
+        """G3 (owner, 2026-11-15): while locked a switch-off waits 24 hours and is then asked about; otherwise it applies now."""
+        if getattr(self, "opt_outs", None) is not None:
+            try:
+                waiting = self.opt_outs.request_off(ctx.user.id, key, ctx.now)
+            except Exception:
+                logger.exception("The switch-off could not be deferred; it applies now.")
+                waiting = None
+            if waiting is not None:
+                return waiting
+        return self.apply_off(key, ctx.user.id, ctx.now)
+
+    def _withdraw(self, ctx: RequestContext, key: str) -> None:
+        if getattr(self, "opt_outs", None) is not None:
+            try:
+                self.opt_outs.withdraw(ctx.user.id, key, ctx.now)
+            except Exception:
+                logger.exception("A waiting switch-off could not be withdrawn.")
+
+    def apply_off(self, key: str, user_id: str, now) -> str:
+        """The switch-off itself (also called by opt_outs on the wearer's "Yes, switch it off")."""
+        if key == "conditioning" and self._conditioning is not None:
+            self._conditioning.set_enabled(user_id, False, now=now)
+            return "Progressive Conditioning is off. It stays at its current level and will not increase."
+        if key == "photo_check_ins" and self.photo_check_ins is not None:
+            self.photo_check_ins.consent.set(user_id, False, now=now)
+            return "Photo check-ins are off. An open one is closed and never counts as missed."
+        if key == "weekly_review" and self.weekly_review is not None:
+            self.weekly_review.set(user_id, False, now=now)
+            return "The weekly review is off. `weekly review on` starts it again."
+        return "That isn't available on this bot."
 
     def _photo_switch(self, ctx: RequestContext):
         switch = self.photo_check_ins
@@ -1339,14 +1371,14 @@ class ApplicationService:
         if switch is None:
             return OutgoingMessage(text=PHOTO_UNAVAILABLE)
         switch.consent.set(ctx.user.id, True, now=ctx.now)
+        self._withdraw(ctx, "photo_check_ins")
         return OutgoingMessage(text=PHOTO_ON)
 
     def _handle_photo_off(self, ctx: RequestContext) -> OutgoingMessage:
         switch = self._photo_switch(ctx)
         if switch is None:
             return OutgoingMessage(text=PHOTO_UNAVAILABLE)
-        switch.consent.set(ctx.user.id, False, now=ctx.now)
-        return OutgoingMessage(text="Photo check-ins are off. An open one is closed and never counts as missed.")
+        return OutgoingMessage(text=self._wait_or(ctx, "photo_check_ins"))
 
     def _weekly(self, ctx: RequestContext):
         review = self.weekly_review
@@ -1365,19 +1397,20 @@ class ApplicationService:
         if review is None:
             return OutgoingMessage(text=WEEKLY_UNAVAILABLE)
         review.set(ctx.user.id, True, now=ctx.now)
+        self._withdraw(ctx, "weekly_review")
         return OutgoingMessage(text="The weekly review is on: Sunday at 19:00, your week in plain numbers.")
 
     def _handle_weekly_off(self, ctx: RequestContext) -> OutgoingMessage:
         review = self._weekly(ctx)
         if review is None:
             return OutgoingMessage(text=WEEKLY_UNAVAILABLE)
-        review.set(ctx.user.id, False, now=ctx.now)
-        return OutgoingMessage(text="The weekly review is off. `weekly review on` starts it again.")
+        return OutgoingMessage(text=self._wait_or(ctx, "weekly_review"))
 
     def _handle_conditioning_on(self, ctx: RequestContext) -> OutgoingMessage:
         if self._conditioning is None:
             return OutgoingMessage(text="Progressive Conditioning is not available on this bot.")
         self._conditioning.set_enabled(ctx.user.id, True, now=ctx.now)
+        self._withdraw(ctx, "conditioning")
         return OutgoingMessage(text="Progressive Conditioning is on again.")
 
     def _handle_channel_status(self, ctx: RequestContext) -> OutgoingMessage:
