@@ -363,6 +363,12 @@ class TestAloneQuestion:
         assert w.row()["status"] == "asking"
         w.tasks.tick(due + ASK_WAIT)
         assert (w.row()["status"], w.row()["mode"]) == ("assigned", "discreet") and w.row()["catalog_key"] != "ask"
+        # Owner, 2026-11-16 22:40: a late "I'm alone" swaps the discreet task for the full version while no photo is in
+        first = w.row()["task_id"]
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due + ASK_WAIT).startswith("Alone: the full version instead.")
+        assert (w.row()["status"], w.row()["mode"]) == ("assigned", "alone") and w.row()["task_id"] != first
+        with w.core.transaction() as tx:
+            assert tx.fetch_one("SELECT 1 FROM notifications WHERE dedupe_key LIKE 'obedience:task:%:full'") is not None
         assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due + ASK_WAIT) == "Already answered."
 
     def test_not_alone_answer_and_a_second_answer(self, tmp_path) -> None:
@@ -370,7 +376,8 @@ class TestAloneQuestion:
         w.tasks.tick(MORNING)
         assert w.start(answer="discreet") == "Not alone: a discreet version. It's in Chaster now."
         assert w.row()["mode"] == "discreet"
-        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=w.due()) == "Already answered."
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=w.due()).startswith("Alone: the full version instead.")
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="discreet", now=w.due()) == "Already answered."   # never back down
 
     def test_cannot_while_being_asked_and_an_exemption_cancels_the_question(self, tmp_path) -> None:
         w = World(tmp_path)

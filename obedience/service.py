@@ -958,7 +958,7 @@ class ObedienceTasks:
                 if not row.get("details") and full:
                     from reminders.service import mark_in_transaction
                     mark_in_transaction(tx, self.user_id, "obedience_safety", now)
-                enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}", now=now, immediate=True,
+                enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:task:{row['id']}" + (":full" if '"upgraded"' in (row.get("prepared") or "") else ""), now=now, immediate=True,
                                        text=message, actions=actions)
             return bool(done)
 
@@ -1008,6 +1008,8 @@ class ObedienceTasks:
             decision("obedience", "The wearer was asked whether he is alone before today's task.", day=row["local_date"])
 
     def _answer(self, row: dict, mode: str, now: datetime) -> str:
+        if mode == ALONE and row["status"] == "assigned" and row.get("mode") == DISCREET and not row.get("details"):
+            return self._upgrade(row, now)
         if row["status"] != "asking" or row.get("mode"):
             return "Already answered."
 
@@ -1028,6 +1030,46 @@ class ObedienceTasks:
             logger.exception("The obedience task could not start after the answer; it is retried.")
         head = "Alone: the full version." if mode == ALONE else "Not alone: a discreet version."
         return f"{head} It's in Chaster now." if started else f"{head} It comes as soon as Chaster's task slot is free."
+
+    def _upgrade(self, row: dict, now: datetime) -> str:
+        """Owner, 2026-11-16 22:40: the discreet version went out because the alone question went unanswered for 15 minutes; a late "I'm alone"
+        swaps it for the full version while no photo has been sent. The discreet task is taken back in Chaster and the full one goes out with
+        its own fresh deadline. Never the other way round (alone -> discreet stays as answered)."""
+        if self._ports.halted():
+            return "Already answered."
+        try:
+            current = self._chaster.current_task(row["lock_id"]) if row["task_id"] else None
+            if current is None or current.get("id") != row["task_id"]:
+                return "Already answered."                              # a photo is in, or Chaster no longer shows it: nothing to swap
+            self._chaster.unassign(row["lock_id"])
+        except Exception:
+            logger.exception("The discreet task could not be taken back in Chaster; no swap.")
+            return "I couldn't swap it right now. Do the discreet version."
+
+        import json
+        try:
+            marked = json.dumps({**json.loads(row["prepared"]), "upgraded": True}) if row.get("prepared") else json.dumps({"upgraded": True})
+        except (ValueError, TypeError):
+            marked = json.dumps({"upgraded": True})
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET status = 'asking', mode = ?, catalog_key = ?, task_id = NULL, deadline = NULL, prepared = ? "
+                              "WHERE id = ? AND status = 'assigned' AND mode = ?", (ALONE, ASK_KEY, marked, row["id"], DISCREET)).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.alone_answered", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"], "mode": ALONE, "late": True}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return "Already answered."
+        decision("obedience", "A late 'I'm alone' swapped the discreet task for the full version.", task=row["catalog_key"])
+        started = False
+        try:
+            started = self._start(self._row(row["id"]), now)
+        except Exception:
+            logger.exception("The full version could not start after the swap; it is retried.")
+        return ("Alone: the full version instead. It's in Chaster now." if started
+                else "Alone: the full version instead. It comes as soon as Chaster's task slot is free.")
 
     # ------------------------------------------------------------------ gear list (owner, 2026-11-15)
 
