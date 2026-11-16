@@ -148,3 +148,13 @@ def test_a_fixed_protocol_reply_still_answers_a_check_in(core, tmp_path) -> None
     assert len(calls) == 1 and calls[0][1] == "this is unfair"
     assert service.handle_message(_incoming("hi there", "m2")).text == "Address me properly."
     assert len(calls) == 1
+
+
+def test_an_explanation_that_argues_is_still_captured(core, tmp_path) -> None:  # noqa: F811
+    """Bug fix 2026-11-16: the explanation of a detector finding goes first; the protocol gate never swallows it."""
+    from types import SimpleNamespace
+    from application.models import OutgoingMessage
+    service = build(core, tmp_path, lambda *a: False)
+    service.protocol_gate = lambda user_id, text, now: "The rules stand. Arguing changes nothing."
+    service.explanations = SimpleNamespace(capture=lambda user_id, text, now: OutgoingMessage(text="Thank you, that explains it."))
+    assert service.handle_message(_incoming("this is unfair, I was at the doctor", "m1")).text == "Thank you, that explains it."

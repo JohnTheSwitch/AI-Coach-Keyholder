@@ -341,20 +341,6 @@ class ApplicationService:
                 if lines_reply is not None:
                     return lines_reply
 
-            if self.protocol_gate is not None:
-                try:
-                    fixed = self.protocol_gate(user.id, incoming.text, incoming.received_at)
-                except Exception:
-                    logger.exception("The protocol gate failed; the message is handled normally.")
-                    fixed = None
-                if fixed is not None:
-                    # Bug fix 2026-11-16: a fixed reply (pushback, asking properly, the calm check) still answers an open check-in, or arguing
-                    # would quietly become a missed check-in. Only "Address me properly." does not: a manner rung acts when redone properly.
-                    from protocol.service import ADDRESS_ME
-                    if fixed != ADDRESS_ME:
-                        self._notify_check_in(user.id, incoming.text, incoming.received_at)
-                    return OutgoingMessage(text=fixed)
-
             # Deterministic guardrail, BEFORE any model: a natural-language
             # question about the user's Chaster lock is answered by the
             # same read-only path as `chaster status` (embed, or a clear
@@ -377,6 +363,22 @@ class ApplicationService:
                 answered = self.explanations.capture(user.id, incoming.text, incoming.received_at)
                 if answered is not None:
                     return answered
+
+            # Bug fix 2026-11-16: the protocol gate comes after a detector explanation is captured (an explanation that argues must still be
+            # recorded, or the incident would be confirmed for silence) and before hygiene / exemption requests (rung 2 asks properly).
+            if self.protocol_gate is not None:
+                try:
+                    fixed = self.protocol_gate(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The protocol gate failed; the message is handled normally.")
+                    fixed = None
+                if fixed is not None:
+                    # Bug fix 2026-11-16: a fixed reply (pushback, asking properly, the calm check) still answers an open check-in, or arguing
+                    # would quietly become a missed check-in. Only "Address me properly." does not: a manner rung acts when redone properly.
+                    from protocol.service import ADDRESS_ME
+                    if fixed != ADDRESS_ME:
+                        self._notify_check_in(user.id, incoming.text, incoming.received_at)
+                    return OutgoingMessage(text=fixed)
 
             if self._exemption_reply is not None:
                 exemption = self._exemption_reply(user.id, incoming.text, incoming.received_at)
