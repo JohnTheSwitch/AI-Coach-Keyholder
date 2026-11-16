@@ -69,12 +69,13 @@ def test_a_contradiction_is_warning_only_in_honesty() -> None:
     assert RULE_GROUPS[SignalKind.CONTRADICTION] == "FALSE_REPORT"
 
 
-def test_lock_claims_are_filed_under_honesty_by_default_but_not_for_additional_wearers(tmp_path) -> None:
+def test_lock_claims_are_filed_under_honesty_for_everyone(tmp_path) -> None:
+    """Slice 8 (work queue Q9): additional wearers have an Honesty domain too."""
     from system.tenant_factory import tenant_config
     from tests.system.test_tenant_factory import World as TenantWorld
     assert Config.lock_claim_trust_domain == "honesty"
     base = TenantWorld(tmp_path).factory._shared.config
-    assert tenant_config(base, db_path=tmp_path / "t.sqlite", wearer_user_id="u").lock_claim_trust_domain == "routine"
+    assert tenant_config(base, db_path=tmp_path / "t.sqlite", wearer_user_id="u").lock_claim_trust_domain == "honesty"
 
 
 def test_the_desk_lists_kept_bedtime_commitments_only(tmp_path) -> None:

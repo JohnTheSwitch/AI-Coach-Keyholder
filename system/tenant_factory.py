@@ -102,6 +102,8 @@ class TenantRuntime:
     chat_adapter: object | None = None
     notifications: object | None = None               # notifications.dispatcher.NotificationDispatcher over THIS tenant's queue (parity 3)
     penalty_notices: dict | None = None               # system.penalty_notices handlers for THIS tenant's wearer (parity 3)
+    proof_checks: object | None = None                # proof_checks.service.ProofChecks for THIS wearer (slice 8, work queue Q9)
+    proof_tick: int = 0
     detectors: object | None = None                   # infractions.wiring.DetectorWiring for THIS wearer (parity 6, work queue Q6)
     exemptions: object | None = None                  # exemptions.service.ExemptionService for THIS wearer (parity 5, work queue Q5)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
@@ -118,6 +120,18 @@ class TenantRuntime:
                 self.detectors.run(self.clock.now())        # parity 6: the wearer's own detectors and questions, in this tenant only
             except Exception:
                 logger.exception("A detector pass of tenant %s failed; will retry next cycle.", self.tenant_id)
+        if self.proof_checks is not None:
+            try:                                            # slice 8: the same rhythm as the owner's proof loop, once per cycle
+                now = self.clock.now()
+                self.proof_checks.start_pending(now)
+                if self.proof_tick % 2 == 0 and self.proof_checks.get_open_check() is not None:
+                    self.proof_checks.poll(now)
+                contradictions = getattr(self.proof_checks, "contradictions", None)
+                if contradictions is not None and self.proof_tick % 30 == 0:
+                    contradictions.run(now)
+            except Exception:
+                logger.exception("A spot-check pass of tenant %s failed; will retry next cycle.", self.tenant_id)
+            self.proof_tick += 1
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
             release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry, penalty_notices=self.penalty_notices,
@@ -171,9 +185,7 @@ def tenant_config(base: Config, *, db_path: Path, wearer_user_id: str, locale: W
     return dataclasses.replace(
         base, db_path=db_path, chaster_execution_wearer_user_id=wearer_user_id, check_in_user_id=None,
         enable_chaster_messaging=False, chaster_llm_tools_enabled=False, enable_multi_wearer=False,
-        enable_proof_checks=False,      # owner, 2026-11-13: only once the invitation discloses spot checks and the wearer can turn them off
-        lock_claim_trust_domain="routine",      # no Honesty domain for an additional wearer yet (roadmap slice 8)
-        **zone, **days)
+        **zone, **days)     # slice 8 (Q9): spot checks and the Honesty domain now that the invitation discloses them and `proof checks off` exists
 
 
 class TenantFactory:
@@ -261,6 +273,10 @@ class TenantFactory:
         coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(s.config, path, core)
         if memory_provider is not None:
             providers = providers + (memory_provider,)
+        coach_dm = self._coach(cfg, core, wiring, task_runtime, task_catalog, coaching)       # slice 8 (Q9)
+        if coach_dm is not None:
+            from conversation_engine.context_providers.coach_provider import CoachContextProvider
+            providers = providers + (CoachContextProvider(read=coach_dm.context),)
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
                                     queue=SubjectConversationQueue(), providers=providers, tool_executor=None,
                                     structured_output=s.config.conversation_structured_output, structured_sink=memory_sink,
@@ -273,7 +289,7 @@ class TenantFactory:
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
             channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning,
             telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
-            exemption_reply=exemption_reply)
+            exemption_reply=exemption_reply, coach=coach_dm)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
         detectors = self._detectors(path, core, cfg, wearer.id, tokens, connections, wiring)
@@ -303,6 +319,10 @@ class TenantFactory:
             service.self_reports = offer_self_report
             service.confession_check = is_hygiene_confession
         self._photo_check_ins(runtime, service, wiring, wearer.id, tokens, connections)
+        if coach_dm is not None:
+            if wiring.check_ins is not None:
+                wiring.check_ins.prompt_suffix = coach_dm.prompt_suffix
+            self._proof_checks(tenant.id, runtime, service, cfg, core, coach_dm, wiring)
         if exemptions is not None:
             from system.dm_actions import ExemptionDm, discord_user_resolver
             runtime.exemptions = exemptions
@@ -317,6 +337,49 @@ class TenantFactory:
             runtime.chat_adapter, runtime.chat_poller = chat[1], chat[2]
         logger.info("Tenant %s is ready (%d note(s)).", tenant.id, len(runtime.notes))
         return runtime
+
+    # ------------------------------------------------------------------ slice 8: the coach and the spot checks (work queue Q9)
+
+    def _coach(self, cfg, core: CoreDatabase, wiring, task_runtime, task_catalog, coaching):
+        if not getattr(cfg, "enable_coach", False):
+            return None
+        from datetime import time as dt_time, timedelta
+        from system.coach_dm import active_task_reader, build_coach, goal_targets_frozen
+        from system.composition import window_config_from
+        window = window_config_from(cfg)
+        return build_coach(cfg, core, clock=self._shared.clock, targets_frozen=goal_targets_frozen(wiring.iron_contract), paused=wiring.vacation.is_paused,
+                           today=lambda now: window.local(now).date(), local_now=window.local,
+                           active_task=active_task_reader(task_runtime, task_catalog), memory=coaching,
+                           day_bounds=lambda d: (window.to_utc(d, dt_time(0, 0)), window.to_utc(d + timedelta(days=1), dt_time(0, 0))),
+                           to_utc=window.to_utc, quiet=(window.quiet_start, window.quiet_end))
+
+    def _proof_checks(self, tenant_id: str, runtime, service, cfg, core: CoreDatabase, coach_dm, wiring) -> None:
+        """Spot checks on THIS wearer's confirmed paired lock (a Chaster task through the platform keyholder), on by default once disclosed,
+        `proof checks off` at any time. Needs the detector questions (a failed check is asked about first)."""
+        detectors = runtime.detectors
+        if detectors is None or detectors.signals is None:
+            runtime.notes.append("Spot checks are NOT active for this wearer: they need the detector questions (the wearer's Chaster connection).")
+            return
+        from system.composition import window_config_from
+        from system.dm_actions import ProofDm, discord_user_resolver
+        from system.proof_wiring import build_proof_checks
+        s = self._shared
+
+        class _TenantLock:
+            def current(self, now=None, tid=tenant_id, registry=self._registry):
+                tenant = registry.get(tid)
+                return tenant.lock_id if tenant is not None and tenant.lock_ready else None
+
+        notes: list[str] = []
+        checks = build_proof_checks(dataclasses.replace(cfg, release_lock_id="auto"), core, coach_dm=coach_dm, signals=detectors.signals,
+                                    keyholder_tokens=s.keyholder_background_tokens or s.keyholder_token_manager, lock_client=s.lock_client,
+                                    owner_lock=_TenantLock(), vacation=wiring.vacation, window_cfg=window_config_from(cfg), clock=s.clock, notes=notes)
+        runtime.notes.extend(notes)
+        if checks is None:
+            return
+        runtime.proof_checks = checks
+        runtime.dm_actions["proof"] = ProofDm(checks, resolve_user=discord_user_resolver(core), now=s.clock.now)
+        service.proof_switch = checks.set_switch
 
     # ------------------------------------------------------------------ parity 7: photo check-ins (work queue Q7)
 

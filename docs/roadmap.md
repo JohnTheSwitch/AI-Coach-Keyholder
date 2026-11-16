@@ -58,8 +58,8 @@ here are part of the approval.
 | Q6 | **Parity 6: detectors and the judge for additional wearers** (done 2026-11-16) | Hygiene misuse, missed check-ins and lock claims through their own signals and the same judge; incidents go to their own Penalty Engine |
 | Q7 | **Parity 7: photo check-ins for additional wearers** (done 2026-11-16) | Off until the wearer sends `photo check-ins on` themselves |
 | Q8 | **Parity 8: confession handling for additional wearers** (done 2026-11-16) | Same deterministic path as the owner's |
-| Q9 | **Roadmap slice 8: Honesty 5 and the coach for additional wearers** | As written in slice 8 above (the invitation discloses the coach and spot checks; `proof checks off`; Honesty domain at acceptance) |
-| Q10 | **Typing Lines: desk research only** | Read Chaster's and the partner's public documentation to find out whether a partner extension can be resent unchanged or driven by API. No write to any lock; the result is a written proposal |
+| Q9 | **Roadmap slice 8: Honesty 5 and the coach for additional wearers** (done 2026-11-16, migration 085) | As written in slice 8 above (the invitation discloses the coach and spot checks; `proof checks off`; Honesty domain at acceptance) |
+| Q10 | **Typing Lines: desk research only** (done 2026-11-16: `docs/research/typing_lines.md`; the bot can't configure or drive it, it only coexists; recommendation: keep lines in the bot) | Read Chaster's and the partner's public documentation to find out whether a partner extension can be resent unchanged or driven by API. No write to any lock; the result is a written proposal |
 
 Between items, the standing goal applies: read the logs and the bot chat for bugs; a bug fix that changes no rule is made without asking.
 
@@ -138,7 +138,7 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
   test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
-- **Typing Lines** extension: only after desk research shows the bot could keep rewriting the lock's extensions with it on.
+- **Typing Lines** extension: desk research done (2026-11-16, `docs/research/typing_lines.md`): the bot can keep rewriting the lock's extensions with it installed (sent back unchanged), but cannot configure or drive it; recommendation: not worth integrating.
 - **Ideas from his favourite stories (2026-11-15), P1-P10 + his kink ideas 1-5:** task board, title in every DM, the release as a timed
   session, temptations that cost, Deep Diver edge sessions, relief without a release, a monthly review, one-way strictness, quiet after
   begging. Designs and conflicts with earlier decisions: `docs/research/story_ideas.md`.

@@ -100,7 +100,7 @@ class TestFactory:
         runtime = w.factory.build(t.id)
         assert runtime.db_path == w.platform.tenant_dir / f"{t.id}.sqlite" and runtime.db_path.exists()
         with runtime.core.transaction() as tx:
-            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 84
+            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 85
             identity = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = '2000002'")
         assert identity["user_account_id"] == runtime.wearer_user_id
 
@@ -112,7 +112,8 @@ class TestFactory:
         assert trust.get_domain_state("routine") is not None and trust.get_domain_state("hygiene") is not None
         with runtime.core.transaction() as tx:
             consents = tx.fetch_all("SELECT target_id, user_comment FROM consent_log WHERE target_id LIKE 'trust_domain:%'")
-        assert {c["target_id"] for c in consents} == {"trust_domain:routine", "trust_domain:hygiene"}
+        # Slice 8 (Q9): the Honesty domain too, now that the invitation discloses the spot checks.
+        assert {c["target_id"] for c in consents} == {"trust_domain:routine", "trust_domain:hygiene", "trust_domain:honesty"}
         assert all(c["user_comment"] == "tenant: accepted invitation" for c in consents)
         daily = runtime.wiring.daily
         assert daily is not None
@@ -120,7 +121,7 @@ class TestFactory:
         assert daily.run(NOW + timedelta(days=1)) != []                  # the daily evaluation now runs for this wearer
         w.factory.build(runtime.tenant_id)                               # a rebuild creates nothing twice
         with runtime.core.transaction() as tx:
-            assert tx.fetch_one("SELECT COUNT(*) AS n FROM consent_log WHERE target_id LIKE 'trust_domain:%'")["n"] == 2
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM consent_log WHERE target_id LIKE 'trust_domain:%'")["n"] == 3
 
     def test_tenant_zero_is_never_touched(self, w) -> None:
         before = w.fingerprint(w.main_path)
@@ -455,7 +456,7 @@ class TestImportBoundaries:
         assert offenders == []
 
     def test_the_main_database_schema_is_unchanged_by_phase_e2(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 84
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 85
 
 
 class TestParity5Exemptions:
@@ -525,3 +526,25 @@ class TestParity7Photos:
         assert runtime.wiring.check_ins.photo_times is not None and runtime.application_service.photo_check_ins is not None
         assert runtime.wiring.check_ins.photo_consent.is_on(runtime.wearer_user_id) is False
         assert runtime.wiring.check_ins.photo_suspended(None) is False
+
+
+class TestSlice8:
+    """Work queue Q9: the invitation discloses the coach and the spot checks; `proof checks off` for the wearer."""
+
+    def test_the_invitation_discloses_them(self) -> None:
+        from system.tenant_gateway import invitation_text
+        text = invitation_text("Alex")
+        assert "coach proposes goals" in text and "spot-checked" in text and "`proof checks off`" in text
+
+    def test_the_switch_turns_spot_checks_off_and_on(self, w) -> None:
+        from types import SimpleNamespace as NS
+        from proof_checks.service import ProofChecks
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        checks = ProofChecks(runtime.core, user_id=runtime.wearer_user_id, honesty_domain='honesty', chaster=NS(), ports=NS(honesty_score=lambda: 0.5))
+        assert checks.switched_off() is False
+        assert "off" in checks.set_switch(runtime.wearer_user_id, True, NOW) and checks.switched_off() is True
+        assert checks.select("c1", "something", NOW) is False
+        assert "on again" in checks.set_switch(runtime.wearer_user_id, False, NOW) and checks.switched_off() is False
+        assert checks.set_switch("someone-else", True, NOW) == "That isn't available for you."
+        runtime.application_service.proof_switch = checks.set_switch

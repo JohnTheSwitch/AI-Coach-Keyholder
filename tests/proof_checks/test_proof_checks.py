@@ -267,14 +267,14 @@ class TestRules:
 class TestOnByDefault:
     """Owner, 2026-11-13: on by default through setup (with consent), at level 3; additional wearers only once their invitation says so."""
 
-    def test_setup_names_the_honesty_domain_and_tenants_do_not_get_it(self, tmp_path) -> None:
+    def test_setup_names_the_honesty_domain_for_owner_and_tenants(self, tmp_path) -> None:
         from types import SimpleNamespace
         from system.tenant_factory import tenant_config
         from tests.system.test_tenant_factory import World as TenantWorld
         from trust_manager.domain_admin import named_trust_domains
         base = TenantWorld(tmp_path).factory._shared.config
         assert base.enable_proof_checks is True and "honesty" in named_trust_domains(base)
-        assert "honesty" not in named_trust_domains(tenant_config(base, db_path=tmp_path / "t.sqlite", wearer_user_id="u"))
+        assert "honesty" in named_trust_domains(tenant_config(base, db_path=tmp_path / "t.sqlite", wearer_user_id="u"))   # slice 8 (Q9)
         assert "honesty" not in named_trust_domains(SimpleNamespace(enable_proof_checks=False, honesty_trust_domain="honesty"))
 
     def test_honesty_starts_at_level_3_and_the_consent_says_so(self, tmp_path) -> None:

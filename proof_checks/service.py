@@ -122,8 +122,34 @@ class ProofChecks:
 
     # ------------------------------------------------------------------ select (from the coach desk)
 
+    def switched_off(self) -> bool:
+        """Slice 8 (work queue Q9): an additional wearer switched spot checks off. A read failure means off (no check without certainty)."""
+        try:
+            with self._core.transaction() as tx:
+                row = tx.fetch_one("SELECT off FROM proof_check_switch WHERE user_id = ?", (self.user_id,))
+            return row is not None and bool(row["off"])
+        except Exception:
+            logger.exception("The spot-check switch could not be read; no spot check.")
+            return True
+
+    def set_switch(self, user_id: str, off: bool, now: datetime) -> str:
+        """`proof checks off` / `proof checks on`: immediate (their consent to a disclosed check)."""
+        if user_id != self.user_id:
+            return "That isn't available for you."
+
+        def write(tx, _s) -> None:
+            tx.execute("INSERT INTO proof_check_switch (user_id, off, changed_at) VALUES (?, ?, ?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET off = excluded.off, changed_at = excluded.changed_at", (user_id, 1 if off else 0, _iso(now)))
+            write_event(tx, DomainEvent(event_type="proof_checks.switched", source_module="proof_checks", occurred_at=now, payload={"off": off}))
+
+        apply_transition(self._core, write=write)
+        return ("Spot checks are off. No Done report will be checked from now on; `proof checks on` turns them back on." if off
+                else "Spot checks are on again: now and then a Done report is checked with a Chaster photo task.")
+
     def select(self, commitment_id: str, text: str, now: datetime) -> bool:
         """Whether this timely Kept is checked. Picked: a `selected` row exists and the desk records the Kept as `checking`."""
+        if self.switched_off():
+            return False
         try:
             score = self._ports.honesty_score()
         except Exception:

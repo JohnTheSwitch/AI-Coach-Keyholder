@@ -74,3 +74,7 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
    (the consent fails closed); none during their wear exemption.
 8. **Confessions (done 2026-11-16, Q8).** A hygiene confession takes the owner's deterministic path (offered as a self-report with the same
    buttons).
+9. **The coach and the spot checks (done 2026-11-16, roadmap slice 8 / Q9; migration 085).** The invitation now discloses the coach and the
+   spot checks (`COACH_DISCLOSURE`); the tenant gets the Honesty domain at acceptance, the coach (behind ENABLE_COACH, like the owner's) and
+   spot checks on its confirmed paired lock, on by default; `proof checks off` / `proof checks on` switch them immediately
+   (`proof_check_switch`). Spot checks need the detector questions, so the wearer's Chaster connection.

@@ -418,9 +418,10 @@ class TestWiring:
         config.owner_user_id = None
         assert self.build(core, config) is None and "NOT active" in caplog.text
 
-    def test_the_tenant_factory_does_not_wire_it(self) -> None:
+    def test_the_tenant_factory_wires_it_only_with_enable_coach(self) -> None:
+        """Roadmap slice 8 (work queue Q9): the coach for additional wearers, behind the same ENABLE_COACH as the owner's."""
         text = (ROOT / "system" / "tenant_factory.py").read_text(encoding="utf-8")
-        assert "coach_dm" not in text and "build_coach" not in text and "CoachContextProvider" not in text
+        assert "build_coach" in text and 'if not getattr(cfg, "enable_coach", False):' in text
 
     def test_the_active_task_reader_uses_the_exact_version(self) -> None:
         assignment = SimpleNamespace(id="a", template_id="t", template_version=3)
