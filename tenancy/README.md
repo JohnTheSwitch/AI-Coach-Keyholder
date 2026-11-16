@@ -78,3 +78,12 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
    spot checks (`COACH_DISCLOSURE`); the tenant gets the Honesty domain at acceptance, the coach (behind ENABLE_COACH, like the owner's) and
    spot checks on its confirmed paired lock, on by default; `proof checks off` / `proof checks on` switch them immediately
    (`proof_check_switch`). Spot checks need the detector questions, so the wearer's Chaster connection.
+10. **Feature switches and the 24-hour switch-off wait (done 2026-11-16, owner: multi-wearer first).** `TenantFactory._switches`: the
+    wearer's own `features` and G3's opt-out wait over their database; the opt-out question is ticked by the tenant cycle.
+11. **Lines (done 2026-11-16).** `TenantFactory._lines`: lines for every confirmed incident in the wearer's database, typed in the DM
+    (paper lines stay owner-only), swats or a written request instead; owed lines hold the next hygiene opening and a release; the
+    wearer's `lines` switch applies. The tenant cycle drains them as an extra outbox consumer.
+12. **Obedience tasks (done 2026-11-16).** `TenantFactory._obedience`: the daily task on the wearer's confirmed paired lock through their
+    spot checks, misses through their own detector questions. Their limits and gear are not known yet, so `erotic_tasks` and `workouts`
+    start OFF (seeded once, never over the wearer's own choice) and the gear list starts EMPTY (`gear add`). The training plan is the
+    owner's programme until onboarding sets the wearer's own (roadmap D8).

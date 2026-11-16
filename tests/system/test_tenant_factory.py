@@ -548,3 +548,81 @@ class TestSlice8:
         assert "on again" in checks.set_switch(runtime.wearer_user_id, False, NOW) and checks.switched_off() is False
         assert checks.set_switch("someone-else", True, NOW) == "That isn't available for you."
         runtime.application_service.proof_switch = checks.set_switch
+
+
+class TestParity10Switches:
+    """Owner, 2026-11-16 (multi-wearer first): an additional wearer gets `features` and the 24-hour switch-off wait in their own database."""
+
+    def test_features_and_opt_outs_live_in_the_wearers_database(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        assert runtime.features is not None and runtime.opt_outs is not None and "optout" in runtime.dm_actions
+        service = runtime.application_service
+        assert "Your features:" in service.features_command(runtime.wearer_user_id, "features", NOW)
+        reply = service.features_command(runtime.wearer_user_id, "lines off", NOW)
+        assert reply.startswith("Noted.") or reply.startswith("Lines is off.")      # locked or not, never an error
+        runtime.cycle()                                                                   # the opt-out tick runs in the tenant's cycle
+        with w.main.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM opt_out_requests")["n"] == 0
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM feature_switches")["n"] == 0
+
+
+class TestParity11Lines:
+    """Owner, 2026-11-16 (multi-wearer first): lines for an additional wearer, in their own database, behind their `lines` switch."""
+
+    def _event(self, incident_id):
+        from types import SimpleNamespace
+        return SimpleNamespace(payload={"incident_id": incident_id, "rule_group_id": "HYGIENE_MISUSE"}, occurred_at=NOW)
+
+    def test_a_confirmed_incident_assigns_lines_in_the_wearers_database_only(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        assert runtime.lines is not None and "lines" in runtime.extra_consumers and "lines" in runtime.dm_actions
+        assert runtime.application_service.lines is runtime.lines and runtime.exemptions.lines_open is not None
+        with runtime.core.transaction() as tx:
+            runtime.extra_consumers["lines"]["penalty_warning.recorded"](tx, self._event("inc-1"))
+        assert runtime.lines.open_lines(runtime.wearer_user_id) > 0
+        with w.main.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM line_assignments")["n"] == 0
+
+    def test_the_lines_switch_off_assigns_none(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        runtime.features.set(runtime.wearer_user_id, "lines", False, NOW)
+        with runtime.core.transaction() as tx:
+            runtime.extra_consumers["lines"]["penalty_warning.recorded"](tx, self._event("inc-2"))
+        assert runtime.lines.open_lines(runtime.wearer_user_id) == 0
+
+
+class TestParity12Obedience:
+    """Owner, 2026-11-16 (multi-wearer first): obedience tasks for an additional wearer start with erotic tasks and workouts off and no gear."""
+
+    def test_erotic_tasks_and_workouts_start_off_and_stay_the_wearers_choice(self, w) -> None:
+        from features.service import get_feature_on
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        assert not get_feature_on(runtime.core, runtime.wearer_user_id, "erotic_tasks")
+        assert not get_feature_on(runtime.core, runtime.wearer_user_id, "workouts")
+        assert get_feature_on(runtime.core, runtime.wearer_user_id, "lines")
+        runtime.features.set(runtime.wearer_user_id, "workouts", True, NOW)
+        assert runtime.features.seed_off(runtime.wearer_user_id, ("workouts",), NOW) == []          # a rebuild never overrides it
+        assert get_feature_on(runtime.core, runtime.wearer_user_id, "workouts")
+        assert runtime.obedience is None and any("obedience" in n for n in runtime.notes)           # no spot checks / detectors here
+
+    def test_with_spot_checks_and_detectors_the_gear_list_starts_empty(self, w) -> None:
+        from types import SimpleNamespace as NS
+        from system.tenant_factory import tenant_config
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        runtime.proof_checks = NS(user_id=runtime.wearer_user_id, chaster=NS(), get_open_check=lambda: None,
+                                  ports=NS(lock_id=lambda: None, halted=lambda: True, paused=lambda now: False, today=lambda now: now.date(),
+                                           local_clock=lambda t: "x"))
+        runtime.detectors = NS(signals=NS(raise_signal=lambda **kw: True))
+        cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
+        w.factory._obedience(runtime, runtime.application_service, cfg, runtime.core)
+        assert runtime.obedience is not None and runtime.obedience.owned_gear() == frozenset()
+        assert "obedience" in runtime.dm_actions and runtime.application_service.gear_command is not None
+        assert runtime.obedience.gear_command(runtime.wearer_user_id, "gear add collar", NOW).startswith("Added: collar")
+        assert runtime.obedience.owned_gear() == frozenset({"collar"})
+        with w.main.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM obedience_gear")["n"] == 0

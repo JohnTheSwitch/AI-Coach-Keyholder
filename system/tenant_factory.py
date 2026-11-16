@@ -106,6 +106,11 @@ class TenantRuntime:
     proof_tick: int = 0
     detectors: object | None = None                   # infractions.wiring.DetectorWiring for THIS wearer (parity 6, work queue Q6)
     exemptions: object | None = None                  # exemptions.service.ExemptionService for THIS wearer (parity 5, work queue Q5)
+    opt_outs: object | None = None                    # opt_outs.service.OptOuts for THIS wearer (parity 10, owner 2026-11-16)
+    features: object | None = None                    # features.service.Features for THIS wearer (parity 10)
+    lines: object | None = None                       # lines.service.LineService for THIS wearer (parity 11)
+    extra_consumers: dict | None = None               # further outbox consumers of THIS tenant (lines)
+    obedience: object | None = None                   # obedience.service.ObedienceTasks for THIS wearer (parity 12)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
@@ -115,6 +120,16 @@ class TenantRuntime:
     def cycle(self) -> bool:
         """One staggered periodic cycle of this tenant, under its own database lease. False when another instance holds the lease."""
         w = self.wiring
+        if self.opt_outs is not None:
+            try:
+                self.opt_outs.tick(self.clock.now())       # parity 10: switch-offs asked about after 24 h while locked, in this tenant only
+            except Exception:
+                logger.exception("An opt-out pass of tenant %s failed; will retry next cycle.", self.tenant_id)
+        if self.obedience is not None:
+            try:
+                self.obedience.tick(self.clock.now())      # parity 12: the daily task, on this wearer's paired lock only
+            except Exception:
+                logger.exception("An obedience pass of tenant %s failed; will retry next cycle.", self.tenant_id)
         if self.detectors is not None:
             try:
                 self.detectors.run(self.clock.now())        # parity 6: the wearer's own detectors and questions, in this tenant only
@@ -135,7 +150,7 @@ class TenantRuntime:
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
             release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry, penalty_notices=self.penalty_notices,
-            exemptions=self.exemptions)
+            exemptions=self.exemptions, extra_consumers=self.extra_consumers)
 
 
 def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
@@ -319,6 +334,7 @@ class TenantFactory:
             service.self_reports = offer_self_report
             service.confession_check = is_hygiene_confession
         self._photo_check_ins(runtime, service, wiring, wearer.id, tokens, connections)
+        self._switches(runtime, service, cfg, core, wiring)
         if coach_dm is not None:
             if wiring.check_ins is not None:
                 wiring.check_ins.prompt_suffix = coach_dm.prompt_suffix
@@ -329,6 +345,8 @@ class TenantFactory:
             service.exemption_reason = lambda user_id, text, now, ex=exemptions: ex.give_reason(user_id, text, now) if ex.awaiting_reason(user_id) else None
             resolve = discord_user_resolver(core)
             runtime.dm_actions["exemption"] = ExemptionDm(exemptions, resolve_user=resolve, now=s.clock.now)
+        self._lines(runtime, service, core, wiring, wearer.id)        # after the exemptions: owed lines hold an opening
+        self._obedience(runtime, service, cfg, core)                  # after the spot checks and the detectors it needs
         if dispatcher is not None:
             from system.penalty_notices import penalty_notice_handlers
             runtime.notifications, runtime.penalty_notices = dispatcher, penalty_notice_handlers(wearer.id)
@@ -337,6 +355,83 @@ class TenantFactory:
             runtime.chat_adapter, runtime.chat_poller = chat[1], chat[2]
         logger.info("Tenant %s is ready (%d note(s)).", tenant.id, len(runtime.notes))
         return runtime
+
+    # ------------------------------------------------------------------ parity 10: feature switches and the 24-hour switch-off wait
+
+    def _switches(self, runtime, service, cfg, core: CoreDatabase, wiring) -> None:
+        """Owner, 2026-11-16 (multi-wearer first): the wearer's own `features` switches and G3's wait (photo check-ins, conditioning, the
+        weekly review and every feature switch-off wait 24 hours while locked, then are asked about), over THIS tenant's database."""
+        from features.service import FEATURES, Features
+        from opt_outs.service import SWITCHES, OptOuts
+        from system.coach_dm import goal_targets_frozen
+        from system.composition import window_config_from
+        from system.dm_actions import OptOutDm, discord_user_resolver
+        window = window_config_from(cfg)
+        features = Features(core)
+        opt_outs = OptOuts(core, locked=goal_targets_frozen(wiring.iron_contract),
+                           local_clock=lambda t, c=window: c.local(t).strftime("%a %d %b %H:%M"))
+        for key in SWITCHES:
+            opt_outs.register(key, lambda user, now, k=key: service.apply_off(k, user, now))
+        opt_outs.register_features(features.apply_off, label=lambda key: FEATURES[key][0] if key in FEATURES else None)
+        features.request_off, features.withdraw = opt_outs.request_off, opt_outs.withdraw
+        service.opt_outs, service.features_command = opt_outs, features.command
+        runtime.opt_outs, runtime.features = opt_outs, features
+        runtime.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+
+    # ------------------------------------------------------------------ parity 12: obedience tasks
+
+    # A new wearer's limits and gear are unknown until onboarding asks (roadmap D8): these start off and the gear list starts empty.
+    SEEDED_OFF = ("erotic_tasks", "workouts")
+
+    def _obedience(self, runtime, service, cfg, core: CoreDatabase) -> None:
+        """Owner, 2026-11-16 (multi-wearer first): the daily obedience task for an additional wearer, on THEIR confirmed paired lock through
+        their spot checks' Chaster setup, missed ones through their own detector questions. Erotic tasks and workouts start OFF (their
+        limits and gear are not known yet; `erotic tasks on` / `workouts on` start them) and the gear list starts empty (`gear add`).
+        The training plan is the owner's own programme: a wearer who switches workouts on gets it as it is until onboarding sets theirs."""
+        if runtime.features is None:
+            return
+        runtime.features.seed_off(runtime.wearer_user_id, self.SEEDED_OFF, self._shared.clock.now())
+        if runtime.proof_checks is None or runtime.detectors is None or runtime.detectors.signals is None:
+            runtime.notes.append("Daily obedience tasks are NOT active for this wearer: they need the spot checks and the detector questions.")
+            return
+        from system.composition import window_config_from
+        from system.dm_actions import ObedienceDm, discord_user_resolver
+        from system.obedience_wiring import build_obedience
+        obedience = build_obedience(cfg, core, proof_checks=runtime.proof_checks, signals=runtime.detectors.signals,
+                                    window_cfg=window_config_from(cfg), notes=runtime.notes, exemptions=runtime.exemptions,
+                                    features=runtime.features)
+        if obedience is None:
+            return
+        obedience.default_owned = frozenset()
+        runtime.obedience = obedience
+        service.gear_command = obedience.gear_command
+        runtime.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+        if runtime.opt_outs is not None:
+            from obedience.service import GEAR
+            opt_outs = runtime.opt_outs
+            opt_outs.register_gear(lambda user, piece, now, ob=obedience: ob.set_gear(piece, 0, now, reason="asked_after_24h"),
+                                   label=lambda piece: GEAR.get(piece, piece))
+            obedience.remove_wait = lambda user, piece, now, o=opt_outs: o.request_off(user, f"gear:{piece}", now)
+            obedience.add_hook = lambda user, piece, now, o=opt_outs: o.withdraw(user, f"gear:{piece}", now)
+
+    # ------------------------------------------------------------------ parity 11: lines
+
+    def _lines(self, runtime, service, core: CoreDatabase, wiring, wearer_id: str) -> None:
+        """Owner, 2026-11-16 (multi-wearer first): lines for every confirmed incident, typed in the DM (paper lines stay owner-only), with
+        swats or a written request as the other choices; owed lines hold the next hygiene opening and a release. The wearer's `lines`
+        feature switch applies. Everything over THIS tenant's database."""
+        from features.service import get_feature_on_in_transaction
+        from lines.service import LineService
+        from system.dm_actions import ObedienceDm, discord_user_resolver
+        line_service = LineService(core, user_id=wearer_id)
+        line_service.enabled = lambda tx, u=wearer_id: get_feature_on_in_transaction(tx, u, "lines")
+        runtime.lines, runtime.extra_consumers = line_service, {"lines": line_service.consumers()}
+        service.lines = line_service
+        runtime.dm_actions["lines"] = ObedienceDm(line_service, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+        if runtime.exemptions is not None:
+            runtime.exemptions.lines_open = line_service.open_lines
+        if wiring.release_task is not None and getattr(wiring.release_task, "user_id", None) == wearer_id:
+            wiring.release_task.release_debt = lambda u=wearer_id: line_service.open_lines(u)
 
     # ------------------------------------------------------------------ slice 8: the coach and the spot checks (work queue Q9)
 

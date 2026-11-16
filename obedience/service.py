@@ -595,6 +595,8 @@ class ObedienceTasks:
         self._chaster = chaster
         self._ports = ports
         self._rng = rng or random.SystemRandom()
+        # Owner, 2026-11-16 (multi-wearer): DEFAULT_OWNED is the owner's inventory; an additional wearer starts with nothing and adds gear.
+        self.default_owned: frozenset = DEFAULT_OWNED
 
     # ------------------------------------------------------------------ plan and start
 
@@ -917,7 +919,7 @@ class ObedienceTasks:
         """His gear: DEFAULT_OWNED, changed by his own `gear add` / `gear remove`."""
         with self._core.transaction() as tx:
             rows = tx.fetch_all("SELECT gear, owned FROM obedience_gear WHERE user_id = ?", (self.user_id,))
-        owned = set(DEFAULT_OWNED)
+        owned = set(self.default_owned)
         for r in rows:
             (owned.add if r["owned"] else owned.discard)(r["gear"])
         return frozenset(owned & ALL_GEAR)

@@ -3,7 +3,8 @@
 Per-wearer feature switches (owner, 2026-11-16): "we should make a switch for working out and for all the other things that different users
 could prefer to be off"; the relock switch covers only "the relock after token spending, all other should be mandatory".
 
-Everything is on unless the wearer switched it off (no row = on, so nothing changed for the owner). In the DM: `features` lists them,
+Everything is on unless the wearer switched it off (no row = on, so nothing changed for the owner). An additional wearer starts with
+`erotic_tasks` and `workouts` off (`Features.seed_off`, only where no row exists), because their limits and gear are not known yet. In the DM: `features` lists them,
 `<feature> off` / `<feature> on` changes one. While locked a switch-off waits 24 hours and is asked about (`opt_outs/`, key
 `feature:<key>`); on is immediate and withdraws a waiting switch-off. A read that fails counts as on.
 

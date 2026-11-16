@@ -89,6 +89,23 @@ class Features:
             decision("features", f"A feature was switched {'on' if on else 'off'}.", feature=feature)
         return changed
 
+    def seed_off(self, user_id: str, features, now: datetime) -> list[str]:
+        """Owner, 2026-11-16 (multi-wearer): a new wearer starts with these off until they switch them on. Only where no row exists, so
+        a wearer's own choice is never overwritten. Returns the features seeded now."""
+        seeded: list[str] = []
+
+        def write(tx: Transaction, _s: object) -> None:
+            for feature in features:
+                assert feature in FEATURES
+                if tx.execute("INSERT OR IGNORE INTO feature_switches (user_id, feature, enabled, changed_at) VALUES (?, ?, 0, ?)",
+                              (user_id, feature, _iso(now))).rowcount:
+                    write_event(tx, DomainEvent(event_type="features.switched", source_module="features", occurred_at=now,
+                                                payload={"user_id": user_id, "feature": feature, "on": False, "seeded": True}))
+                    seeded.append(feature)
+
+        apply_transition(self._core, write=write)
+        return seeded
+
     def apply_off(self, user_id: str, feature: str, now: datetime) -> str:
         self.set(user_id, feature, False, now)
         return f"{FEATURES[feature][0].capitalize()} is off. `{FEATURES[feature][0]} on` starts it again."
