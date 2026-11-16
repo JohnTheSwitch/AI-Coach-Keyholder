@@ -75,7 +75,7 @@ def test_the_shared_core_believes_reports_and_invents_nothing() -> None:
 
 def test_the_iron_contract_is_described_exactly() -> None:
     from conversation_engine.prompt_builder import _render_contract
-    text = _render_contract({"state": "LOCKED"})
+    text = _render_contract({"state": "LOCKED"}, "What is the Iron Contract?")      # owner, 2026-11-16: only when he asks
     assert "nobody signed anything" in text and "real and in force" in text and "cannot lower the difficulty" in text and "nothing more" in text
     assert _render_contract({"state": "UNLOCKED"}) == ""
 

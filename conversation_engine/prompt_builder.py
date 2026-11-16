@@ -32,6 +32,7 @@ guessed at.
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from types import MappingProxyType
 
@@ -252,10 +253,20 @@ def _render_detector_questions(data: object) -> str:
     return "\n".join(lines)
 
 
-def _render_contract(data: object) -> str:
+# Owner, 2026-11-16: "The bot shouldn't drift into the iron contract" ("You're sticking to the Iron Contract, I know you can handle it" as a
+# reply to "the task is done"). The contract's content is given only when his message is about rules, the contract or what it covers.
+_ABOUT_RULES = re.compile(r"\b(contract\w*|rules?|iron|difficult\w*|standard mode|advanced mode|vacation\w*|holiday\w*|deadline\w*|negotiat\w*|"
+                          r"signed|sign|allowed|forbidden|kontrakt\w*|smlouv\w*|pravidl\w*|dovolen\w*|obtížnost\w*)\b", re.IGNORECASE)
+LOCKED_MARKER = ("[STATE: LOCKED] The user's lock is locked (guardrail rule 7). Do not bring up the Iron Contract, rules or the lock unless "
+                 "the user asks about them.")
+
+
+def _render_contract(data: object, user_message: str = "") -> str:
     # v0.39 Phase G6: a single fixed marker; the behaviour that goes with it is guardrail rule 7.
     if data["state"] != "LOCKED":
         return ""
+    if not _ABOUT_RULES.search(user_message or ""):
+        return LOCKED_MARKER
     # Owner, 2026-11-14: with only the marker, the model invented the rest ("you signed it", "orgasm control is part of it", "we have the
     # records"). It now gets the whole, exact content, so it can explain it truthfully and has nothing to fill in.
     return ("[STATE: LOCKED] The user's lock is locked and the Iron Contract is in force (guardrail rule 7). The Iron Contract is ONLY this: while "
@@ -314,7 +325,8 @@ _FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "todays_tasks", "rel
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:
     lines = [
-        _FRAGMENT_RENDERERS[namespace](snapshot.context_fragments[namespace].data)
+        _render_contract(snapshot.context_fragments[namespace].data, snapshot.current_user_message) if namespace == "contract"
+        else _FRAGMENT_RENDERERS[namespace](snapshot.context_fragments[namespace].data)
         for namespace in _FRAGMENT_ORDER
         if namespace in snapshot.context_fragments
     ]

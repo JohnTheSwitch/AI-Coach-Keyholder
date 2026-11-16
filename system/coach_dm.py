@@ -13,6 +13,7 @@ Multi-wearer tenants are not wired: a tenant's invitation does not disclose the 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from datetime import date, datetime, time
 from typing import Callable
@@ -31,6 +32,19 @@ from supervision.checkin_evaluator import mentions_safety_issue
 logger = logging.getLogger("ai_coach_keyholder.system.coach_dm")
 
 __all__ = ["CoachDm", "build_coach", "goal_targets_frozen", "COACH_GUIDANCE", "CHECK_IN_GUIDANCE", "OUTCOME_BUTTONS"]
+
+# Owner, 2026-11-16 ("Plan outfit for Saturday's ball" came from a remark that he has a ball): outside a check-in answer the model is offered
+# a proposal only when his own message says he needs, wants or plans to do something. An event he mentions is not a to-do.
+_TO_DO = re.compile(r"\b(need(s|ed)? to|have to|has to|had to|got to|gotta|must|should|want(s|ed)? to|i (really )?want|i'?d like|wanna|going to|gonna|plan(s|ning|ned)? to|"
+                    r"my plan|my goal|goal|to-?do|todo|deadline|homework|exam|assignment|project|finish|work on|learn|practi[cs]e|study|"
+                    r"help me|remind me|i'?ll (do|try|start|finish|get)|"
+                    r"musím|musim|chci|potřebuj\w*|potrebuj\w*|plánuj\w*|planuj\w*|cíl\w*|úkol\w*|dokončit|dodělat)\b", re.IGNORECASE)
+
+
+def has_something_to_do(text: str) -> bool:
+    """Read-only, code: his message names something he needs, wants or plans to do."""
+    return bool(_TO_DO.search(text or ""))
+
 
 COACH_GUIDANCE = (
     "GOALS AND COMMITMENTS. You help the user set their own goals and small daily commitments. Offer only what they said they want or could do, in their own "
@@ -147,6 +161,8 @@ class CoachDm:
     def guidance(self, user_id: str, text: str, now: datetime, *, check_in_reply: bool = False) -> str | None:
         if not self._desk.may_propose(user_id, text, now):
             return None
+        if not check_in_reply and not has_something_to_do(text):
+            return None                 # owner, 2026-11-16: small talk ("next Saturday I have a ball") gets no proposal field at all
         return f"{COACH_GUIDANCE}\n\n{CHECK_IN_GUIDANCE}" if check_in_reply else COACH_GUIDANCE
 
     def submit(self, subject_key: str, raw: object, now: datetime, user_message: str = "") -> SubmitResult:

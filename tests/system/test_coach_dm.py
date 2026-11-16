@@ -49,7 +49,7 @@ class Model:
 
     def generate(self, *, request) -> str:
         self.requests.append(request)
-        return "plain"
+        return self.text                    # owner, 2026-11-16: small talk is a plain turn (no proposal field); the model still speaks
 
     def generate_structured(self, *, request, schema) -> str:
         self.requests.append(request)
@@ -129,7 +129,7 @@ class TestTheConversation:
     def test_a_failing_coach_never_breaks_a_reply(self, core) -> None:  # noqa: F811
         w = World(core)
         w.service._coach = SimpleNamespace(guidance=lambda *a, **k: 1 / 0, present=lambda *a, **k: 1 / 0)
-        assert w.say().text == "plain"
+        assert w.say().text == "Sounds good."              # the plain turn: the model's own words, no card
 
     def test_forget_all_erases_the_coach_data(self, core) -> None:  # noqa: F811
         w = World(core, proposal=COMMIT)
