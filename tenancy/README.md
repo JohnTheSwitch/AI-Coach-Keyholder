@@ -61,4 +61,16 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
 4. **Buttons for additional wearers (done 2026-11-14).** The gateway now carries a reply's buttons and follow-up cards (before, with
    multi-wearer on, every button was dropped, the owner's too), and a DM button pressed by an additional wearer goes to the facade of the
    same scope in that wearer's runtime (`system/tenant_dm_actions.py`, `TenantRuntime.dm_actions`), never to the owner's.
-5. Next: exemptions and hygiene openings, the detectors and the judge, photo check-ins, the confession handling.
+5. **Exemptions and hygiene openings (done 2026-11-16, work queue Q5).** `TenantFactory._exemptions`: the owner's ExemptionService over
+   the wearer's database, decided by the same judge (no keyholder button), hygiene openings by the wearer's own hygiene Trust. An opening acts
+   only on the tenant's CONFIRMED paired lock (`Tenant.lock_ready`), held by the platform keyholder, and only after the owner cleared THIS
+   tenant's execution halt (`system.composition.build_tenant_exemption_opening`; the halt is seeded halted and fails closed). The relock
+   picture, lines and recovery tasks stay owner-only. Exemptions are ticked by the tenant's periodic cycle.
+6. **The detectors and the judge (done 2026-11-16, Q6).** `TenantFactory._detectors`: hygiene misuse, lock claims and emergency reviews
+   through the wearer's OWN Chaster connection (the watches list the locks the wearer wears), the same question-and-judge path, incidents in
+   the tenant's own Penalty Engine. Without the wearer's connection nothing is watched. Run once per tenant cycle; the infraction and
+   hygiene buttons route to them; a late exemption relock is raised through them.
+7. **Photo check-ins (done 2026-11-16, Q7).** Wired through the wearer's own connection; off until the wearer sends `photo check-ins on`
+   (the consent fails closed); none during their wear exemption.
+8. **Confessions (done 2026-11-16, Q8).** A hygiene confession takes the owner's deterministic path (offered as a self-report with the same
+   buttons).

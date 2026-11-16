@@ -222,6 +222,31 @@ def build_exemption_opening(config, core, *, token_manager, lock_client, halt_so
                             token_manager=token_manager, lock_client=lock_client, send=send_with_ordered_headers, clock=source)
 
 
+def build_tenant_exemption_opening(cfg, core, *, token_manager, lock_client, lock_of, halt_source=None, clock: Clock | None = None):
+    """Multi-wearer parity 5 (work queue Q5): an approval opens ONLY the tenant's confirmed paired lock (`lock_of()`; None = nothing to
+    open), held by the platform keyholder, and only while THIS tenant's own execution halt (its database, seeded halted, fails closed) and
+    the platform halt are clear. None when the keyholder side is not configured."""
+    from chaster._http import send_with_ordered_headers
+    from chaster.extension_config import LockConfigurationReader
+    from chaster_execution.temporary_opening import ExemptionOpening
+
+    account = getattr(cfg, "chaster_execution_keyholder_user_id", None)
+    if not account or token_manager is None or lock_client is None:
+        return None
+
+    class _TenantLock:
+        @staticmethod
+        def current():
+            return lock_of()
+
+    source = clock or SystemClock()
+    return ExemptionOpening(lock_id=None, resolver=_TenantLock(), account_user_id=account,
+                            control=_WithGlobalHalt(ExecutionControl(cfg.db_path, core=core), halt_source),
+                            reader=LockConfigurationReader(token_manager=token_manager, lock_client=lock_client),
+                            transport=ChasterHttpTransport(token_manager=token_manager, keyholder_user_id=account, clock=source),
+                            token_manager=token_manager, lock_client=lock_client, send=send_with_ordered_headers, clock=source)
+
+
 def _warning_notifier(notifications, sender, user_id: str, clock: Clock | None):
     """`notify(text) -> accepted`. With the queue, "accepted" means durably queued, and the queue owns the retries; without one (a tenant before parity 3) it sends directly."""
     if notifications is None:

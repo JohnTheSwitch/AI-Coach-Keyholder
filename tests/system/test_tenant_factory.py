@@ -456,3 +456,72 @@ class TestImportBoundaries:
 
     def test_the_main_database_schema_is_unchanged_by_phase_e2(self) -> None:
         assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 84
+
+
+class TestParity5Exemptions:
+    """Work queue Q5: exemptions and hygiene openings for an additional wearer, in their own database, judged, never on an unconfirmed lock."""
+
+    def test_an_additional_wearer_gets_exemptions_and_hygiene(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        assert runtime.exemptions is not None and "exemption" in runtime.dm_actions
+        reply = runtime.application_service._exemption_reply(runtime.wearer_user_id, "I need a wear exemption for tomorrow", NOW)
+        assert reply is not None and reply.text                          # the exemption path, not the conversation model
+        assert runtime.application_service._exemption_reply("someone-else", "I need a wear exemption", NOW) is None
+        with runtime.core.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM wear_exemptions")["n"] == 1
+        with w.main.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM wear_exemptions")["n"] == 0
+
+    def test_an_opening_never_targets_an_unconfirmed_lock(self, w) -> None:
+        from system.composition import build_tenant_exemption_opening
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        cfg = SimpleNamespace(chaster_execution_keyholder_user_id="kh", db_path=runtime.db_path)
+        opening = build_tenant_exemption_opening(cfg, runtime.core, token_manager=SimpleNamespace(), lock_client=SimpleNamespace(),
+                                                 lock_of=lambda: None, halt_source=w.platform.halt, clock=w.clock)
+        assert opening is not None and opening.lock_id is None
+        assert build_tenant_exemption_opening(SimpleNamespace(chaster_execution_keyholder_user_id=None, db_path=runtime.db_path), runtime.core,
+                                              token_manager=None, lock_client=None, lock_of=lambda: "x") is None
+
+
+class TestParity6Detectors:
+    """Work queue Q6: an additional wearer's detectors run only through their own Chaster connection, in their own database."""
+
+    def test_without_the_wearers_connection_nothing_is_watched(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        assert runtime.detectors is None and "infraction" not in runtime.dm_actions
+        assert runtime.cycle() in (True, False)                          # a cycle without detectors runs as before
+
+    def test_with_a_connection_the_detectors_are_built_for_the_wearer(self, w, monkeypatch) -> None:
+        from types import SimpleNamespace as NS
+        import infractions.wiring as iw
+        seen = {}
+
+        def fake_build(config, core, **kw):
+            seen.update(account=config.chaster_execution_keyholder_user_id, owner=config.owner_user_id, db=str(config.db_path))
+            return NS(signals=None, notes=["fake"], run=lambda now: [])
+
+        monkeypatch.setattr(iw, "build_detectors", fake_build)
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        from system.tenant_factory import tenant_config
+        cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
+        detectors = w.factory._detectors(runtime.db_path, runtime.core, cfg, runtime.wearer_user_id, NS(), NS(), runtime.wiring)
+        assert detectors is not None and seen == {"account": runtime.wearer_user_id, "owner": runtime.wearer_user_id, "db": str(runtime.db_path)}
+
+
+class TestParity7Photos:
+    """Work queue Q7: photo check-ins for an additional wearer are wired only with their own connection, and stay off without consent."""
+
+    def test_wired_through_the_wearers_connection_and_off_by_default(self, w) -> None:
+        from types import SimpleNamespace as NS
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        if runtime.wiring.check_ins is None:
+            return
+        w.factory._photo_check_ins(runtime, runtime.application_service, runtime.wiring, runtime.wearer_user_id, NS(), NS())
+        assert runtime.wiring.check_ins.photo_times is not None and runtime.application_service.photo_check_ins is not None
+        assert runtime.wiring.check_ins.photo_consent.is_on(runtime.wearer_user_id) is False
+        assert runtime.wiring.check_ins.photo_suspended(None) is False

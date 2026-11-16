@@ -23,12 +23,12 @@ def test_presses_go_to_the_presser_runtime(g) -> None:  # noqa: F811
     alex = g.member("2000002", "Alex")
     g.member("3000003", "Bo")
     owner = Facade("owner")
-    actions = TenantAwareActions({"exemption": owner}, router=TenantRouter(g.registry), supervisor=g.supervisor)
+    actions = TenantAwareActions({"recovery": owner}, router=TenantRouter(g.registry), supervisor=g.supervisor)
     alex_facade = Facade("alex")
-    g.supervisor.runtimes[alex.id] = SimpleNamespace(tenant_id=alex.id, dm_actions={"exemption": alex_facade})
-    press = lambda who: actions.get("exemption").press(discord_user_id=who, action="approve", ident="x").text  # noqa: E731
+    g.supervisor.runtimes[alex.id] = SimpleNamespace(tenant_id=alex.id, dm_actions={"recovery": alex_facade})
+    press = lambda who: actions.get("recovery").press(discord_user_id=who, action="approve", ident="x").text  # noqa: E731
     assert press(OWNER_DISCORD) == "owner" and press("9999999") == "owner"          # the owner, or a stranger (the owner's facade refuses them)
     assert press("2000002") == "alex" and alex_facade.presses == [("2000002", "approve", "x")]
-    assert press("3000003") == NOT_YET.text                                          # Bo has no runtime facade for it yet
+    assert press("3000003") == NOT_YET.text                                          # Bo has no runtime facade for it (recovery tasks stay owner-only)
     assert owner.presses == [(OWNER_DISCORD, "approve", "x"), ("9999999", "approve", "x")]
-    assert bool(actions) and actions["exemption"] is owner
+    assert bool(actions) and actions["recovery"] is owner

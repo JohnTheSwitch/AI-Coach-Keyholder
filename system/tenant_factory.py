@@ -102,6 +102,8 @@ class TenantRuntime:
     chat_adapter: object | None = None
     notifications: object | None = None               # notifications.dispatcher.NotificationDispatcher over THIS tenant's queue (parity 3)
     penalty_notices: dict | None = None               # system.penalty_notices handlers for THIS tenant's wearer (parity 3)
+    detectors: object | None = None                   # infractions.wiring.DetectorWiring for THIS wearer (parity 6, work queue Q6)
+    exemptions: object | None = None                  # exemptions.service.ExemptionService for THIS wearer (parity 5, work queue Q5)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
@@ -111,9 +113,15 @@ class TenantRuntime:
     def cycle(self) -> bool:
         """One staggered periodic cycle of this tenant, under its own database lease. False when another instance holds the lease."""
         w = self.wiring
+        if self.detectors is not None:
+            try:
+                self.detectors.run(self.clock.now())        # parity 6: the wearer's own detectors and questions, in this tenant only
+            except Exception:
+                logger.exception("A detector pass of tenant %s failed; will retry next cycle.", self.tenant_id)
         return run_periodic_cycle(
             self.core, self.process_id, self.clock, rules_engine=w.rules_engine, executor=w.executor, supervision=w.supervision,
-            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry, penalty_notices=self.penalty_notices)
+            release_task=w.release_task, check_ins=w.check_ins, daily=w.daily, telemetry=w.telemetry, penalty_notices=self.penalty_notices,
+            exemptions=self.exemptions)
 
 
 def coaching_memory_parts(config, db_path, core, *, coach: bool = False):
@@ -258,14 +266,49 @@ class TenantFactory:
                                     structured_output=s.config.conversation_structured_output, structured_sink=memory_sink,
                                     runtime_sink=wiring.telemetry_buffer.record)
         chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
+        exemptions, exemption_reply = self._exemptions(tenant.id, path, core, cfg, db, wearer.id)
         service = ApplicationService(
             path, core=core, conversation_engine=engine, lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
             chaster_connections=connections, chaster_oauth_client=s.oauth_client, chaster_token_manager=tokens,
             check_in_listener=(wiring.check_ins.on_user_message if wiring.check_ins is not None else None),
             channel_service=chat[0] if chat else None, coaching_memory=coaching, conditioning=conditioning,
-            telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation)
+            telemetry=wiring.telemetry_store, research=wiring.research_preferences, iron_contract=wiring.iron_contract, vacation=wiring.vacation,
+            exemption_reply=exemption_reply)
         runtime = TenantRuntime(tenant_id=tenant.id, db_path=path, core=core, wearer_user_id=wearer.id, application_service=service,
                                 wiring=wiring, process_id=process_id, clock=s.clock, notes=list(wiring.notes))
+        detectors = self._detectors(path, core, cfg, wearer.id, tokens, connections, wiring)
+        if detectors is not None and detectors.signals is not None:
+            from system.dm_actions import InfractionDm, discord_user_resolver as _resolver
+            runtime.detectors = detectors
+            service.explanations = detectors.signals
+            runtime.dm_actions["infraction"] = InfractionDm(detectors.signals, resolve_user=_resolver(core), now=s.clock.now)
+            if exemptions is not None:
+                from infractions.wiring import overrun_signal
+                exemptions.set_overrun_signal(overrun_signal(detectors.signals, trust_domain=cfg.hygiene_trust_domain or "hygiene"))
+            runtime.notes.extend(detectors.notes)
+            if detectors.hygiene is not None:
+                from system.dm_actions import HygieneDm
+                runtime.dm_actions["hygiene"] = HygieneDm(detectors.hygiene, resolve_user=_resolver(core), now=s.clock.now)
+            # Parity 8 (work queue Q8): a confession takes the same deterministic path as the owner's (a hygiene confession is offered as
+            # a self-report, with the same buttons; the model only adds its CONFESSION_NOTE tone).
+            from infractions.self_report import is_hygiene_confession
+            from infractions.signals import SELF_REPORT_QUESTION, self_report_buttons
+
+            def offer_self_report(user_id, text, now, signals=detectors.signals, domain=cfg.hygiene_trust_domain or "hygiene"):
+                if not is_hygiene_confession(text):
+                    return None
+                signal_id = signals.offer_self_report(user_id=user_id, statement=text, trust_domain=domain, now=now)
+                return (SELF_REPORT_QUESTION, self_report_buttons(signal_id)) if signal_id else None
+
+            service.self_reports = offer_self_report
+            service.confession_check = is_hygiene_confession
+        self._photo_check_ins(runtime, service, wiring, wearer.id, tokens, connections)
+        if exemptions is not None:
+            from system.dm_actions import ExemptionDm, discord_user_resolver
+            runtime.exemptions = exemptions
+            service.exemption_reason = lambda user_id, text, now, ex=exemptions: ex.give_reason(user_id, text, now) if ex.awaiting_reason(user_id) else None
+            resolve = discord_user_resolver(core)
+            runtime.dm_actions["exemption"] = ExemptionDm(exemptions, resolve_user=resolve, now=s.clock.now)
         if dispatcher is not None:
             from system.penalty_notices import penalty_notice_handlers
             runtime.notifications, runtime.penalty_notices = dispatcher, penalty_notice_handlers(wearer.id)
@@ -274,6 +317,106 @@ class TenantFactory:
             runtime.chat_adapter, runtime.chat_poller = chat[1], chat[2]
         logger.info("Tenant %s is ready (%d note(s)).", tenant.id, len(runtime.notes))
         return runtime
+
+    # ------------------------------------------------------------------ parity 7: photo check-ins (work queue Q7)
+
+    def _photo_check_ins(self, runtime, service, wiring, wearer_id: str, tokens, connections) -> None:
+        """Off until the wearer sends `photo check-ins on` themselves (the consent fails closed). The pictures are read from the locks THIS
+        wearer wears, through their own connection; none is sent during their wear exemption."""
+        if wiring.check_ins is None or tokens is None or connections is None:
+            return
+        from chaster.lock_directory import LockDirectory
+        from chaster.peer_reviews import PeerReviewReader
+        from supervision.photo_check_ins import PhotoCheckInSwitch
+        s = self._shared
+        directory = LockDirectory(token_manager=tokens, lock_client=s.lock_client, connections=connections)
+        reader = PeerReviewReader(token_manager=tokens, lock_client=s.lock_client)
+
+        def photo_times(now):
+            listing = directory.list_account_locks(user_id=wearer_id, now=now)
+            ids = [lock.lock_id for lock in listing.wearer_locks if lock.status == "locked"]
+            return reader.picture_times(user_id=wearer_id, lock_ids=ids, now=now) if ids else None
+
+        wiring.check_ins.photo_times = photo_times
+        wiring.check_ins.photo_suspended = (lambda now, rt=runtime, u=wearer_id:
+                                            rt.exemptions is not None and rt.exemptions.wear_exemption_in_force(u))
+        service.photo_check_ins = PhotoCheckInSwitch(consent=wiring.check_ins.photo_consent, user_id=wearer_id)
+
+    # ------------------------------------------------------------------ parity 6: detectors and the judge (work queue Q6)
+
+    def _detectors(self, path: Path, core: CoreDatabase, cfg, wearer_id: str, tokens, connections, wiring):
+        """Hygiene misuse, lock claims and the one question-and-judge path, through THIS wearer's own Chaster connection and signals;
+        incidents go to the tenant's own Penalty Engine. Needs the wearer's Chaster connection; without it nothing is watched (a note says so)."""
+        s = self._shared
+        if tokens is None or connections is None:
+            return None
+        from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
+        from infractions.wiring import build_detectors
+        complete = None
+        if s.model is not None:
+            def complete(system_prompt: str, user_message: str, model=s.model) -> str:
+                return model.generate(request=ModelGenerationRequest(
+                    messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt), ModelMessage(role=ModelMessageRole.USER, content=user_message)),
+                    max_output_characters=600, deterministic=True))
+        # The watches list the locks THIS wearer wears, through their own connection; the "owner" of a tenant's questions is the wearer.
+        own = dataclasses.replace(cfg, chaster_execution_keyholder_user_id=wearer_id, owner_user_id=wearer_id)
+        return build_detectors(own, core, token_manager=tokens, lock_client=s.lock_client, connections=connections,
+                               vacation=wiring.vacation, complete=complete)
+
+    # ------------------------------------------------------------------ parity 5: exemptions and hygiene openings (work queue Q5)
+
+    def _exemptions(self, tenant_id: str, path: Path, core: CoreDatabase, cfg, db, wearer_id: str):
+        """Same rules as the owner's, in THIS wearer's database: the judge decides requests (no keyholder button), hygiene openings follow the
+        wearer's own hygiene Trust, and an opening acts only on the tenant's CONFIRMED paired lock after the owner cleared this tenant's execution
+        halt. The relock picture, lines and recovery tasks stay owner-only (owner, 2026-11-14). (None, None) when exemptions are off."""
+        s = self._shared
+        if not getattr(s.config, "enable_exemptions", False):
+            return None, None
+        from datetime import timedelta
+        from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
+        from exemptions.judge import ExemptionJudge
+        from exemptions.service import ExemptionService, is_exemption_request, is_hygiene_request
+        from infractions.hygiene import policy_for
+        from system.composition import build_tenant_exemption_opening
+        from system.penalty_policy import make_penalty_engine
+        from trust_manager.repository import TrustManager
+
+        def lock_of(tid=tenant_id):
+            tenant = self._registry.get(tid)
+            return tenant.lock_id if tenant is not None and tenant.lock_ready else None
+
+        opening = build_tenant_exemption_opening(cfg, core, token_manager=s.keyholder_token_manager, lock_client=s.lock_client, lock_of=lock_of,
+                                                 halt_source=s.platform_halt, clock=s.clock)
+        domain = cfg.hygiene_trust_domain or "hygiene"
+
+        def allowance(trust=TrustManager(path, core=core)):
+            state = trust.get_domain_state(domain)
+            policy = policy_for(float(state.score) if state is not None else 0.0)
+            return policy.breaks_per_week, policy.session_minutes
+
+        service = ExemptionService(path, core=core, owner_user_id=None, penalties=make_penalty_engine(core), opening=opening, hygiene_allowance=allowance)
+        service.hygiene_trust_domain = domain
+        if s.model is not None:
+            def complete(system_prompt: str, user_message: str, model=s.model) -> str:
+                return model.generate(request=ModelGenerationRequest(
+                    messages=(ModelMessage(role=ModelMessageRole.SYSTEM, content=system_prompt), ModelMessage(role=ModelMessageRole.USER, content=user_message)),
+                    max_output_characters=600, deterministic=True))
+            service.set_judge(ExemptionJudge(complete))
+
+        def reply(user_id, text, now):
+            if user_id != wearer_id:
+                return None
+            if is_hygiene_request(text):
+                return service.start_hygiene(user_id, now)
+            if not is_exemption_request(text):
+                return None
+            try:
+                earlier = [t for t in db.get_user_texts_since(now - timedelta(minutes=15)) if t != text][-3:]
+            except Exception:
+                earlier = []
+            return service.start(user_id, now, said="\n".join([*earlier, text]))
+
+        return service, reply
 
     # ------------------------------------------------------------------ parity 3: the tenant's own notification queue
 
