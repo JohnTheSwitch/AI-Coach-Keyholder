@@ -918,8 +918,14 @@ class ObedienceTasks:
             (owned.add if r["owned"] else owned.discard)(r["gear"])
         return frozenset(owned & ALL_GEAR)
 
+    # Owner, 2026-11-16: "gear remove shouldn't work instantly". `remove_wait(user_id, piece, now)` returns the reply when the removal
+    # waits (opt_outs, while locked) or None to apply it at once; `add_hook(user_id, piece, now)` withdraws a waiting removal.
+    remove_wait: Callable[[str, str, datetime], str | None] | None = None
+    add_hook: Callable[[str, str, datetime], object] | None = None
+    _AT_ONCE = ("broken", "broke", "lost", "never_had", "never_owned", "dont_have", "don't_have", "not_mine")
+
     def gear_command(self, user_id: str, text: str, now: datetime) -> str | None:
-        """`gear`, `gear add <piece>`, `gear remove <piece>`; None for any other message."""
+        """`gear`, `gear add <piece>`, `gear remove <piece>` (`... broken` / `lost` / `never had`: at once); None for any other message."""
         words = (text or "").strip().lower().split()
         if not words or words[0] != "gear" or user_id != self.user_id:
             return None
@@ -927,21 +933,41 @@ class ObedienceTasks:
             return self._gear_list()
         if words[1] not in ("add", "remove") or len(words) < 3:
             return "Use `gear`, `gear add <piece>` or `gear remove <piece>`."
-        name = "_".join(words[2:]).replace("-", "_").replace("&", "and")
+        name = "_".join(words[2:]).replace("-", "_").replace("&", "and").replace("\u2019", "'")
+        reason = next((r for r in self._AT_ONCE if name.endswith("_" + r)), None) if words[1] == "remove" else None
+        if reason is not None:
+            name = name[: -len(reason) - 1]
         gear = name if name in GEAR else GEAR_ALIASES.get(name)
         if gear is None:
             return f"I don't know that piece. Pieces: {', '.join(sorted(GEAR))}."
         owned = 1 if words[1] == "add" else 0
+        if owned and self.add_hook is not None:
+            try:
+                self.add_hook(user_id, gear, now)
+            except Exception:
+                logger.exception("A waiting gear removal could not be withdrawn; the piece is added anyway.")
+        if not owned and reason is None and gear in self.owned_gear() and self.remove_wait is not None:
+            try:
+                waiting = self.remove_wait(user_id, gear, now)
+            except Exception:
+                logger.exception("Could not read whether the removal waits; it waits (never a loophole by accident).")
+                waiting = "That can't be changed right now. Try again later."
+            if waiting is not None:
+                return waiting
+        return self.set_gear(gear, owned, now, reason=reason)
+
+    def set_gear(self, gear: str, owned: int, now: datetime, *, reason: str | None = None) -> str:
+        """The change itself (also opt_outs' "Yes, remove it")."""
 
         def write(tx: Transaction, _s: object) -> None:
             tx.execute("INSERT INTO obedience_gear (user_id, gear, owned, changed_at) VALUES (?, ?, ?, ?) "
                        "ON CONFLICT (user_id, gear) DO UPDATE SET owned = excluded.owned, changed_at = excluded.changed_at",
                        (self.user_id, gear, owned, _iso(now)))
             write_event(tx, DomainEvent(event_type="obedience.gear_changed", source_module="obedience", occurred_at=now,
-                                        payload={"user_id": self.user_id, "gear": gear, "owned": bool(owned)}))
+                                        payload={"user_id": self.user_id, "gear": gear, "owned": bool(owned), "reason": reason}))
 
         apply_transition(self._core, write=write)
-        decision("obedience", "The wearer changed his gear list.", gear=gear, owned=bool(owned))
+        decision("obedience", "The wearer changed his gear list.", gear=gear, owned=bool(owned), reason=reason)
         if owned:
             return f"Added: {GEAR[gear]}. Tasks that need it can come now."
         return f"Removed: {GEAR[gear]}. Tasks that need it wait until you add it back."

@@ -7,7 +7,8 @@ While the wearer is locked (fails closed: not KNOWN to be unlocked counts as loc
 once. The request waits COOLING; then the keyholder asks "Do you still want it off?" with two buttons, and only "Yes, switch it off" applies it.
 "Keep it on", or no answer within ANSWER_WINDOW, leaves it on. Switching it back on while a request waits withdraws the request.
 
-Covered switches (SWITCHES): photo check-ins, Progressive Conditioning, the weekly review. Never covered, always immediate: the runtime halt,
+Covered switches (SWITCHES): photo check-ins, Progressive Conditioning, the weekly review. Owner, 2026-11-16: removing a piece from the
+gear list too (key `gear:<piece>`, registered with `register_gear`): "gear remove shouldn't work instantly". Never covered, always immediate: the runtime halt,
 leaving, health, the emergency option, and research sharing (a privacy right: `research off` also asks for erasure).
 
 Table `opt_out_requests` (migration 074), written only here. Events: `opt_outs.requested`, `opt_outs.asked`, `opt_outs.decided`.
@@ -39,6 +40,13 @@ ANSWER_WINDOW = timedelta(hours=24)
 SWITCHES = {"photo_check_ins": "photo check-ins", "conditioning": "Progressive Conditioning", "weekly_review": "the weekly review"}
 
 
+GEAR_PREFIX = "gear:"
+
+
+def _gear(key: str) -> bool:
+    return key.startswith(GEAR_PREFIX)
+
+
 @dataclass(frozen=True)
 class Switch:
     key: str
@@ -52,20 +60,40 @@ class OptOuts:
         self._locked = locked
         self._clock = local_clock
         self.switches: dict[str, Switch] = {}
+        self._gear_apply: Callable[[str, str, datetime], str] | None = None      # (user_id, piece, now) -> the reply after removing it
+        self._gear_label: Callable[[str], str] = lambda piece: piece
 
     def register(self, key: str, apply_off: Callable[[str, datetime], str]) -> None:
         assert key in SWITCHES
         self.switches[key] = Switch(key, apply_off)
 
+    def register_gear(self, apply_remove: Callable[[str, str, datetime], str], label: Callable[[str], str]) -> None:
+        """Owner, 2026-11-16: `gear remove <piece>` waits like a switch-off while locked."""
+        self._gear_apply, self._gear_label = apply_remove, label
+
+    def _covered(self, key: str) -> bool:
+        return (self._gear_apply is not None) if _gear(key) else key in self.switches
+
+    def _name(self, key: str) -> str:
+        return f"the {self._gear_label(key[len(GEAR_PREFIX):])} from your gear list" if _gear(key) else SWITCHES[key]
+
+    def _apply(self, user_id: str, key: str, now: datetime) -> str:
+        if _gear(key):
+            return self._gear_apply(user_id, key[len(GEAR_PREFIX):], now) if self._gear_apply is not None else "Removed."
+        switch = self.switches.get(key)
+        return switch.apply_off(user_id, now) if switch is not None else "Switched off."
+
     # ------------------------------------------------------------------ the command
 
     def request_off(self, user_id: str, key: str, now: datetime) -> str | None:
         """None when it applies at once (unlocked or not covered); otherwise the reply saying it waits."""
-        if key not in self.switches or not self._locked(user_id):
+        if not self._covered(key) or not self._locked(user_id):
             return None
+        verb, still = ("remove", "removed") if _gear(key) else ("switch off", "off")
         pending = self._pending(user_id, key)
         if pending is not None:
-            return f"You already asked to switch off {SWITCHES[key]}. I'll ask you on {self._clock(_parse_iso(pending['ask_at']))} whether you still want it off."
+            return (f"You already asked to {verb} {self._name(key)}. I'll ask you on {self._clock(_parse_iso(pending['ask_at']))} whether you "
+                    f"still want it {still}.")
         ask_at = now + COOLING
         row_id = str(uuid.uuid4())
 
@@ -77,6 +105,10 @@ class OptOuts:
 
         apply_transition(self._core, write=write)
         decision("opt_outs", "A switch-off while locked waits 24 hours, then is asked about.", switch=key)
+        if _gear(key):
+            return (f"Noted. While you're locked, removing {self._name(key)} isn't done at once: on {self._clock(ask_at)} I'll ask whether "
+                    f"you still want it removed, and only a yes removes it. Until then tasks may still use it. If it broke or you lost it, "
+                    f"say so: `gear remove <piece> broken` or `gear remove <piece> lost` removes it at once.")
         return (f"Noted. While you're locked, switching off {SWITCHES[key]} isn't done at once: on {self._clock(ask_at)} I'll ask whether you "
                 f"still want it off, and only a yes switches it off. Until then it stays on. Health, safety, `leave` and the emergency option "
                 f"are never delayed.")
@@ -98,9 +130,16 @@ class OptOuts:
             self._decide(row, "lapsed", now)
 
     def _ask(self, row: dict, now: datetime) -> None:
-        text = (f"24 hours ago you asked to switch off {SWITCHES[row['switch']]}. Do you still want it off? If I don't hear from you, it stays on.")
-        actions = (ActionSpec(action_id=f"optout:yes:{row['id']}", label="Yes, switch it off"),
-                   ActionSpec(action_id=f"optout:no:{row['id']}", label="Keep it on", style="primary"))
+        if _gear(row["switch"]):
+            text = (f"24 hours ago you asked to remove {self._name(row['switch'])}. Do you still want it removed? If I don't hear from you, "
+                    f"it stays on the list.")
+            labels = ("Yes, remove it", "Keep it")
+        else:
+            text = (f"24 hours ago you asked to switch off {SWITCHES[row['switch']]}. Do you still want it off? If I don't hear from you, "
+                    f"it stays on.")
+            labels = ("Yes, switch it off", "Keep it on")
+        actions = (ActionSpec(action_id=f"optout:yes:{row['id']}", label=labels[0]),
+                   ActionSpec(action_id=f"optout:no:{row['id']}", label=labels[1], style="primary"))
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE opt_out_requests SET status = 'asked', asked_at = ? WHERE id = ? AND status = 'waiting'",
@@ -125,11 +164,12 @@ class OptOuts:
             return "That was already decided."
         if action == "no":
             self._decide(row, "kept_on", now)
+            if _gear(row["switch"]):
+                return f"Good. The {self._gear_label(row['switch'][len(GEAR_PREFIX):])} stays on your gear list."
             return f"Good. {SWITCHES[row['switch']].capitalize()} stays on."
         if not self._decide(row, "applied", now):
             return "That was already decided."
-        switch = self.switches.get(row["switch"])
-        return switch.apply_off(user_id, now) if switch is not None else "Switched off."
+        return self._apply(user_id, row["switch"], now)
 
     # ------------------------------------------------------------------ internals
 

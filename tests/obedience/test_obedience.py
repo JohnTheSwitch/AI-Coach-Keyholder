@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from infractions.signals import EVIDENCE, RULE_GROUPS, SignalKind
 from lines.service import sentence_for
-from obedience.service import CATALOG, PHOTO_DEADLINE, Ports, ObedienceTasks, chaster_brief
+from obedience.service import CATALOG, GEAR, PHOTO_DEADLINE, Ports, ObedienceTasks, chaster_brief
 from penalty_engine.repository import WARNING_ONLY_RULE_GROUPS
 from penalty_engine.violations_catalog import CATALOG as VIOLATIONS
 from tests.lines.test_lines import core
@@ -685,3 +685,58 @@ def test_standing_reminders_come_once_a_week_but_the_restraint_line_stays(tmp_pa
         w.chaster.current = None
     assert DISCRETION in texts[0] and DISCRETION not in texts[1] and DISCRETION not in texts[2]
     assert all(RESTRAINT_SHORT in t or "within reach the whole time" in t for t in texts)
+
+
+class TestGearRemovalWaits:
+    """Owner, 2026-11-16: "gear remove shouldn't work instantly" (G3's waiting, via opt_outs)."""
+
+    def _wired(self, tmp_path, locked=True):
+        from opt_outs.service import OptOuts
+        w = World(tmp_path)
+        opt = OptOuts(w.tasks._core, locked=lambda u: locked, local_clock=lambda t: t.strftime("%H:%M"))
+        opt.register_gear(lambda user, piece, now: w.tasks.set_gear(piece, 0, now, reason="asked_after_24h"), label=lambda piece: GEAR[piece])
+        w.tasks.remove_wait = lambda user, piece, now: opt.request_off(user, f"gear:{piece}", now)
+        w.tasks.add_hook = lambda user, piece, now: opt.withdraw(user, f"gear:{piece}", now)
+        return w, opt
+
+    def _row(self, w):
+        with w.tasks._core.transaction() as tx:
+            return dict(tx.fetch_one("SELECT * FROM opt_out_requests ORDER BY requested_at DESC LIMIT 1"))
+
+    def test_locked_removal_waits_then_a_yes_removes_it(self, tmp_path) -> None:
+        from opt_outs.service import COOLING
+        w, opt = self._wired(tmp_path)
+        reply = w.tasks.gear_command(U, "gear remove deep diver", MORNING)
+        assert reply.startswith("Noted.") and "gray Satisfyer Deep Diver" in reply and "broken" in reply
+        assert "deep_diver" in w.tasks.owned_gear()
+        assert w.tasks.gear_command(U, "gear remove diver", MORNING).startswith("You already asked to remove")
+        opt.tick(MORNING + COOLING)
+        assert opt.press(user_id=U, row_id=self._row(w)["id"], action="yes", now=MORNING + COOLING).startswith("Removed:")
+        assert "deep_diver" not in w.tasks.owned_gear()
+
+    def test_keep_it_or_adding_back_keeps_it(self, tmp_path) -> None:
+        from opt_outs.service import COOLING
+        w, opt = self._wired(tmp_path)
+        w.tasks.gear_command(U, "gear remove rope hemp", MORNING)
+        opt.tick(MORNING + COOLING)
+        assert "stays on your gear list" in opt.press(user_id=U, row_id=self._row(w)["id"], action="no", now=MORNING + COOLING)
+        later = MORNING + COOLING + timedelta(hours=1)
+        w.tasks.gear_command(U, "gear remove gag", later)
+        w.tasks.gear_command(U, "gear add gag", later)
+        assert self._row(w)["status"] == "withdrawn" and {"rope_hemp", "gag"} <= w.tasks.owned_gear()
+
+    def test_broken_lost_never_had_and_unlocked_are_at_once(self, tmp_path) -> None:
+        w, _ = self._wired(tmp_path)
+        assert w.tasks.gear_command(U, "gear remove deep diver broken", MORNING).startswith("Removed:")
+        assert w.tasks.gear_command(U, "gear remove fluffy cuffs never had", MORNING).startswith("Removed: fluffy cuffs")
+        assert w.tasks.gear_command(U, "gear remove gag lost", MORNING).startswith("Removed:")
+        assert not {"deep_diver", "toy_cuffs", "gag"} & w.tasks.owned_gear()
+        assert w.tasks.gear_command(U, "gear remove collar", MORNING).startswith("Removed:")      # not owned: nothing to wait for
+        w2, _ = self._wired(tmp_path / "u", locked=False)
+        assert w2.tasks.gear_command(U, "gear remove deep diver", MORNING).startswith("Removed:")
+
+    def test_a_broken_wait_never_removes(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.tasks.remove_wait = lambda user, piece, now: 1 / 0
+        assert not w.tasks.gear_command(U, "gear remove deep diver", MORNING).startswith("Removed")
+        assert "deep_diver" in w.tasks.owned_gear()

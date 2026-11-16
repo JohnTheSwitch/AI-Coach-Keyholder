@@ -1092,6 +1092,12 @@ def main() -> None:
     for key in SWITCHES:
         opt_outs.register(key, lambda user, now, k=key: application_service.apply_off(k, user, now))
     application_service.opt_outs = opt_outs
+    if obedience is not None:              # owner, 2026-11-16: "gear remove shouldn't work instantly"
+        from obedience.service import GEAR as _GEAR
+        opt_outs.register_gear(lambda user, piece, now, ob=obedience: ob.set_gear(piece, 0, now, reason="asked_after_24h"),
+                               label=lambda piece: _GEAR.get(piece, piece))
+        obedience.remove_wait = lambda user, piece, now, o=opt_outs: o.request_off(user, f"gear:{piece}", now)
+        obedience.add_hook = lambda user, piece, now, o=opt_outs: o.withdraw(user, f"gear:{piece}", now)
     bot.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=resolve_user, now=clock.now)
     bot.opt_outs_loop = opt_outs.loop(clock)
     # G4 (owner, 2026-11-15): changed time settings (after a restart) and the runtime halt are asked about and listed in the weekly review.
