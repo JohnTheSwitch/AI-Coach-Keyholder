@@ -46,6 +46,13 @@ LINES_WINDOW = 40               # owner, 2026-11-14
 RELEASE_GROUP = "RELEASE"          # owner, 2026-11-15 (earn the release): lines that earn a release, not a punishment
 RELEASE_SENTENCE = "I am grateful to my keyholder for every release I earn."
 RELEASE_LINES = 20
+# Owner, 2026-11-16: half the lines at the beginner level (warning / window / release).
+BEGINNER_LINES = {"warning": 10, "window": 20, "release": 10}
+
+
+def _beginner(tx) -> bool:
+    row = tx.fetch_one("SELECT current_mode FROM operating_mode_state WHERE id = 1")
+    return row is not None and row["current_mode"] == "beginner"
 SWATS_WITHIN = timedelta(hours=2)      # owner, 2026-11-16 (B1): the swats photo is due this long after the task is in Chaster
 REQUEST_DISTINCT_WORDS = 15            # ...of which at least this many different words
 REQUEST_MIN_WORDS = 30                 # B2: each of the written request's two answers (code counts words only)
@@ -121,6 +128,8 @@ class LineService:
         incident_id = event.payload.get("incident_id")
         if not incident_id or not self.enabled(tx):
             return
+        if _beginner(tx):
+            required = BEGINNER_LINES["warning"] if required == LINES_WARNING else BEGINNER_LINES["window"]
         rule = event.payload.get("rule_group_id")
         sentence = sentence_for(rule)
         line_id = str(uuid.uuid4())
@@ -164,15 +173,16 @@ class LineService:
                             (self.user_id, RELEASE_GROUP, since)) is not None:
                 return False
             line_id, key = str(uuid.uuid4()), f"release:{uuid.uuid4()}"
+            count = BEGINNER_LINES["release"] if _beginner(tx) else RELEASE_LINES      # owner, 2026-11-16: fewer at the beginner level
             allowed, default = self._release_choices(tx)
             tx.execute("INSERT INTO line_assignments (id, user_id, incident_id, rule_group_id, sentence, required, done, status, created_at, mode) "
-                       "VALUES (?, ?, ?, ?, ?, ?, 0, 'open', ?, ?)", (line_id, self.user_id, key, RELEASE_GROUP, RELEASE_SENTENCE, RELEASE_LINES,
+                       "VALUES (?, ?, ?, ?, ?, ?, 0, 'open', ?, ?)", (line_id, self.user_id, key, RELEASE_GROUP, RELEASE_SENTENCE, count,
                                                                    _iso(now), None if default == "lines" else default))
             write_event(tx, DomainEvent(event_type="lines.assigned", source_module="lines", occurred_at=now,
-                                        payload={"line_assignment_id": line_id, "incident_id": key, "required": RELEASE_LINES}))
+                                        payload={"line_assignment_id": line_id, "incident_id": key, "required": count}))
             how = ("by hand on paper. A Chaster task will ask for a photo of the sheet" if self.paper is not None else "one per line, here in our chat")
             if default == "lines":
-                text = (f"A release is within reach, but you earn it first: write this {RELEASE_LINES} times, {how}:\n"
+                text = (f"A release is within reach, but you earn it first: write this {count} times, {how}:\n"
                         f"\"{RELEASE_SENTENCE}\"\nOnce they're verified, your release is planned.")
             else:
                 text = f"A release is within reach, but you earn it first. Lines were last time, so: {REQUEST_ASK}"

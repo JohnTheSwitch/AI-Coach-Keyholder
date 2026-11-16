@@ -42,12 +42,15 @@ __all__ = ["LONG_CLAIM", "DECLINED_BEFORE", "STILL_OPEN", "review_reasons", "cla
 LONG_CLAIM = timedelta(hours=3)            # owner, 2026-11-15: "I would do 3 hours for the emergency"
 DECLINED_BEFORE = timedelta(hours=12)      # a declined request this soon before a claim is "a wish for release just before"
 STILL_OPEN = timedelta(hours=24)           # a claim still open this long is reviewed without waiting for its end
+# Owner, 2026-11-16: "every emergency unlock is asked about; unexplained = a serious incident". A Chaster emergency unlock is always asked
+# about now, with or without the reasons above (a genuine need is still the judge's default; silence confirms FALSE_HEALTH_CLAIM, severe).
+EVERY_EMERGENCY = "every Chaster emergency unlock is asked about"
 FIRST_SIGHT_LIMIT = timedelta(hours=48)    # an emergency unlock first seen later than this (e.g. an old lock on the first run) is never reviewed
 
 CLAIM_DETAIL = {
     "opening": "A health opening was reviewed afterwards because stored facts put it in doubt.",
     "exemption": "A health exemption was reviewed afterwards because stored facts put it in doubt.",
-    "emergency": "A Chaster emergency unlock was reviewed afterwards because stored facts put it in doubt.",
+    "emergency": "A Chaster emergency unlock was reviewed afterwards (every one is asked about since 2026-11-16).",
 }
 _WHAT = {"opening": "health opening", "exemption": "health exemption", "emergency": "emergency unlock"}
 
@@ -149,7 +152,7 @@ class EmergencyWatch:
         if relocked_at is None and now - unlocked < STILL_OPEN:
             return
         declined = self._declined(self._user, _iso(unlocked - DECLINED_BEFORE), _iso(unlocked))
-        reasons = review_reasons(started_at=unlocked, ended_at=relocked_at, declined=declined, now=now)
+        reasons = review_reasons(started_at=unlocked, ended_at=relocked_at, declined=declined, now=now) or [EVERY_EMERGENCY]
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE emergency_unlocks SET relocked_seen_at = ?, reviewed_at = ?, outcome = ? WHERE lock_id = ? AND reviewed_at IS NULL",

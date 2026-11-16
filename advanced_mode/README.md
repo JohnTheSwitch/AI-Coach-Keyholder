@@ -242,3 +242,13 @@ guarantee than what actually enforces it.
   `application/README.md`'s own note on `_settle_mode_state()`); there
   is still no automatic notification the moment 24 hours actually
   elapses with nobody watching.
+
+## Three levels (owner, 2026-11-16: "beginner, standard and advanced")
+
+`OperatingMode.BEGINNER` joins Standard and Advanced (`MODE_RANK`, `is_lowering`). Moving down (Advanced -> Standard, anything -> Beginner)
+lowers the difficulty: the Iron Contract allows it only while unlocked (`mode request beginner` and a lowering `mode confirm`); moving up
+never needs that. Every change keeps the 24-hour wait and the second confirmation; 30 days in Advanced before going down from it.
+`AdvancedModeAdministration.start_new_wearer_at_beginner` moves a new additional wearer's database (never transitioned, still at its seeded
+Standard) to Beginner once (event `advanced_mode.started_at_beginner`). What Beginner means elsewhere: tokens (`release_engine/conditioning.py`:
+base 1.0, +0.025 per release, cap 1.5, the owner's own start), lines (`lines/service.py`: 10 / 20, release lines 10), penalty windows as
+Standard, and `system/graduation.py`: after 28 days at Beginner without a confirmed severe incident, the wearer is asked once to move up.

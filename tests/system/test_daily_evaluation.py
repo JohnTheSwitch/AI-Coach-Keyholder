@@ -462,3 +462,10 @@ class TestTrainingStreakAndRaises:
         TestVerifiedTraining()._session(w3, TUE, "training:legs_a")
         logs(w3, [("squat", 100, 17), ("squat", 90, 18)])
         assert self._progress(w3, TUE) == with_session + Decimal("0.05")
+        monday = World(tmp_path / "mon")                                     # bug fix 2026-11-16: logged the day after the session
+        TestVerifiedTraining()._session(monday, MON, "training:legs_a")
+        without_logs = self._progress(monday, TUE)
+        next_day = World(tmp_path / "mon2")
+        TestVerifiedTraining()._session(next_day, MON, "training:legs_a")
+        logs(next_day, [("squat", 100, 18)])
+        assert self._progress(next_day, TUE) == without_logs + Decimal("0.05")

@@ -135,12 +135,25 @@ class TestEmergencyUnlocks:
         assert w.status() == [("health_claim", "waiting")] and self.outcome(w) == "reviewed"
         assert "emergency unlock" in w.wearer_cards()[0]["text"]
 
-    def test_relocked_within_three_hours_is_never_questioned(self, tmp_path) -> None:
+    def test_even_a_short_one_is_asked_about(self, tmp_path) -> None:
+        """Owner, 2026-11-16: every emergency unlock is asked about; unexplained = a serious incident."""
         w = Claims(tmp_path)
         e = self.watch(w)
         w.locks = (_lock(status="unlocked", unlocked_at=iso(NOW), emergency=True), _lock(lock_id="new"))
         e.poll(NOW + timedelta(hours=2))
-        assert w.status() == [] and self.outcome(w) == "not_questioned"
+        assert w.status() == [("health_claim", "waiting")] and self.outcome(w) == "reviewed"
+        assert "every Chaster emergency unlock is asked about" in w.wearer_cards()[0]["text"]
+
+    def test_silence_on_an_emergency_unlock_is_the_severe_incident(self, tmp_path) -> None:
+        """Owner, 2026-11-16: unexplained = a serious incident (not the usual warning for silence); the appeal stays."""
+        w = Claims(tmp_path)
+        e = self.watch(w)
+        w.locks = (_lock(status="unlocked", unlocked_at=iso(NOW), emergency=True), _lock(lock_id="new"))
+        e.poll(NOW + timedelta(hours=1))
+        w.advance(NOW + timedelta(days=2))
+        w.advance(NOW + timedelta(days=2) + APPEAL_WINDOW + timedelta(minutes=1))
+        assert w.status() == [("health_claim", "confirmed")]
+        assert w.incidents()[0]["rule_group_id"] == "FALSE_HEALTH_CLAIM"
 
     def test_a_declined_request_before_it_makes_even_a_short_one_reviewed(self, tmp_path) -> None:
         w = Claims(tmp_path)

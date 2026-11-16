@@ -177,6 +177,13 @@ BLIND_RESTRAINED_MINUTES = 20
 GAG_MINUTES = 20
 GAG_NOTE = "Ball gag in the whole time (only I know). Out at once if you feel sick or can't breathe freely through your nose."
 REPEAT_DAYS = 14
+# Owner, 2026-11-16 ("learning what you avoid", option 1): a task he avoided comes back more often. Avoided = postponed with "someone's
+# around", or failed (missed, late, rejected) in the last AVOID_DAYS; the health-or-safety button, an exemption, no free slot and a vote
+# that never ended NEVER count. Its parts (pose, add-ons, plug ladder, extra, workout) weigh AVOID_WEIGHT in the draw (never more: it is a
+# cap, not a ratchet), and an avoided task may come back after AVOID_REPEAT_DAYS instead of REPEAT_DAYS.
+AVOID_DAYS = 28
+AVOID_WEIGHT = 2.0
+AVOID_REPEAT_DAYS = 7
 
 _DD, _BJ = frozenset({"deep_diver"}), frozenset({"bijou_large"})
 EXTRAS: tuple[Task, ...] = (
@@ -275,7 +282,20 @@ def _variation(addon: str, owned, mode: str) -> str | None:
     return None
 
 
-def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mode: str = ALONE, *, back_blind_ok: bool = False) -> Task | None:
+def task_parts(key: str) -> set[str]:
+    """The parts of a task that avoidance is remembered by: a composed task's pose and add-ons, the plug ladder, a workout, or the key itself."""
+    if key.startswith("pose:"):
+        pose, _, addons = key[len("pose:"):].partition("+")
+        return {f"pose:{pose}", *(f"addon:{a}" for a in addons.split("+") if a)}
+    if key.startswith("plug:"):
+        return {"plug"}
+    if key.startswith(("workout_", "training:")):
+        return {"workout"}
+    return {key}
+
+
+def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mode: str = ALONE, *, back_blind_ok: bool = False,
+            avoided: frozenset = frozenset()) -> Task | None:
     """A pose plus add-ons (two at most when alone, one when not), never a combination in `banned`, never yesterday's main gear, and only
     variations he has the gear for. None when nothing new is left."""
     combos = []
@@ -294,7 +314,8 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
                 combos.append((key, words, minutes, addons))
     if not combos:
         return None
-    key, words, minutes, addons = rng.choice(combos)
+    weights = [AVOID_WEIGHT if task_parts(c[0]) & avoided else 1.0 for c in combos]
+    key, words, minutes, addons = rng.choices(combos, weights=weights)[0] if avoided else rng.choice(combos)
     cap = min(minutes, DISCREET_MINUTES) if mode == DISCREET else minutes
     if "clamps" in addons:
         cap = min(cap, CLAMP_MINUTES)
@@ -656,14 +677,18 @@ class ObedienceTasks:
         with self._core.transaction() as tx:
             rows = [dict(r) for r in tx.fetch_all("SELECT local_date, catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? "
                                                   "AND local_date < ?", (self.user_id, since, day.isoformat()))]
-        banned = {r["catalog_key"] for r in rows}
+        avoided_keys, avoided = self._avoided(day)
+        comeback = (day - timedelta(days=AVOID_REPEAT_DAYS)).isoformat()
+        # An avoided task may come back after AVOID_REPEAT_DAYS (unless it was given again since and done).
+        banned = {r["catalog_key"] for r in rows if not (r["catalog_key"] in avoided_keys and r["local_date"] < comeback)}
         yesterday = (day - timedelta(days=1)).isoformat()
         yesterday_gear = set().union(*(gear_of(r["catalog_key"]) for r in rows if r["local_date"] == yesterday)) if rows else set()
         workouts = [t for t in WORKOUTS if suits(t, owned, mode)]
-        if self._rng.random() < WORKOUT_SHARE and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
+        workout_share = min(1.0, WORKOUT_SHARE * (AVOID_WEIGHT if "workout" in avoided else 1.0))
+        if self._rng.random() < workout_share and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
             return self._rng.choice([t for t in workouts if t.key not in banned] or workouts)
         roll = self._rng.random()
-        if roll < LADDER_SHARE and "plug" not in yesterday_gear:
+        if roll < min(0.5, LADDER_SHARE * (AVOID_WEIGHT if "plug" in avoided else 1.0)) and "plug" not in yesterday_gear:
             plug = self.ladder_task(owned)
             if plug is not None:
                 return plug
@@ -677,12 +702,24 @@ class ObedienceTasks:
         fresh = [t for t in extras if t.key not in banned and not gear_of(t.key) & yesterday_gear]
         # Composed tasks most days; the fixed extras get a fair share, more of it when new gear unlocked many of them.
         if roll < 0.8 - 0.02 * len(fresh):
-            composed = compose(self._rng, banned, yesterday_gear, owned, mode, back_blind_ok=back_blind_ok)
+            composed = compose(self._rng, banned, yesterday_gear, owned, mode, back_blind_ok=back_blind_ok, avoided=avoided)
             if composed is not None:
                 return composed
         if fresh:
-            return self._rng.choice(fresh)
+            weights = [AVOID_WEIGHT if task_parts(t.key) & avoided else 1.0 for t in fresh]
+            return self._rng.choices(fresh, weights=weights)[0] if avoided else self._rng.choice(fresh)
         return compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode) or self._rng.choice(workouts)
+
+    def _avoided(self, day: date) -> tuple[set[str], frozenset]:
+        """(task keys, their parts) he avoided in the AVOID_DAYS before `day`: postponed ("someone's around") or failed. Never the health or
+        safety button, an exemption, a missing free slot or a vote that never ended."""
+        since = (day - timedelta(days=AVOID_DAYS)).isoformat()
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? AND local_date < ? "
+                                "AND (status = 'failed' OR (postponed_at IS NOT NULL AND COALESCE(outcome, '') <> 'health_or_safety'))",
+                                (self.user_id, since, day.isoformat()))
+        keys = {r["catalog_key"] for r in rows if r["catalog_key"] and r["catalog_key"] != ASK_KEY}
+        return keys, frozenset(set().union(*(task_parts(k) for k in keys)) if keys else set())
 
     def _verified_keys(self) -> list[str]:
         with self._core.transaction() as tx:

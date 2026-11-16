@@ -54,6 +54,11 @@ FACTOR_START = Decimal("1.000")
 FACTOR_STEP = Decimal("0.050")
 FACTOR_CAP = Decimal("2.000")
 BASE_THRESHOLD = {"standard": Decimal("1.5"), "advanced": Decimal("3.0")}   # about 5.2 / 10.5 days per token at full performance without training
+# Owner, 2026-11-16: the beginner level is the owner's own start (before 2026-11-15): base 1.0 (about 3.5 days per token), +0.025 per
+# release up to 1.5. Standard and Advanced keep FACTOR_STEP / FACTOR_CAP.
+BASE_THRESHOLD["beginner"] = Decimal("1.0")
+FACTOR_STEP_BY_MODE = {"beginner": Decimal("0.025")}
+FACTOR_CAP_BY_MODE = {"beginner": Decimal("1.500")}
 
 
 class IncrementOutcome(StrEnum):
@@ -114,9 +119,12 @@ class ProgressiveConditioning:
 
     def threshold_in(self, tx: Transaction, user_id: str) -> Decimal:
         """The pool's payout threshold for this user right now: base(operating mode) * factor."""
+        return BASE_THRESHOLD[self._mode_in(tx)] * self.factor_in(tx, user_id)
+
+    @staticmethod
+    def _mode_in(tx: Transaction) -> str:
         row = tx.fetch_one("SELECT current_mode FROM operating_mode_state WHERE id = 1")
-        mode = row["current_mode"] if row is not None and row["current_mode"] in BASE_THRESHOLD else "standard"
-        return BASE_THRESHOLD[mode] * self.factor_in(tx, user_id)
+        return row["current_mode"] if row is not None and row["current_mode"] in BASE_THRESHOLD else "standard"
 
     @staticmethod
     def factor_in(tx: Transaction, user_id: str) -> Decimal:
@@ -143,17 +151,19 @@ class ProgressiveConditioning:
                              outcome=IncrementOutcome.PAUSED.value)
             return IncrementOutcome.PAUSED
         before = self.factor_in(tx, user_id)
+        mode = self._mode_in(tx)
+        cap, step = FACTOR_CAP_BY_MODE.get(mode, FACTOR_CAP), FACTOR_STEP_BY_MODE.get(mode, FACTOR_STEP)
         if auth["kind"] != "token":
             outcome = IncrementOutcome.NOT_TOKEN
         elif not self._owner_enabled_in(tx):
             outcome = IncrementOutcome.OWNER_OFF
         elif not self._wearer_enabled_in(tx, user_id):
             outcome = IncrementOutcome.WEARER_OFF
-        elif before >= FACTOR_CAP:
+        elif before >= cap:
             outcome = IncrementOutcome.CAPPED
         else:
             outcome = IncrementOutcome.INCREASED
-        after = min(FACTOR_CAP, before + FACTOR_STEP) if outcome is IncrementOutcome.INCREASED else before
+        after = min(cap, before + step) if outcome is IncrementOutcome.INCREASED else before
         if after != before:
             tx.execute("INSERT INTO training_state (user_id, factor, updated_at) VALUES (?, ?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET factor = excluded.factor, updated_at = excluded.updated_at",

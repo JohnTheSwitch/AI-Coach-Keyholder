@@ -169,7 +169,7 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
         from exemptions.service import get_declined_requests
         out.emergencies = EmergencyWatch(core, user_id=account, trust_domain=honesty, signals=out.signals, list_worn_locks=worn,
                                          declined_between=lambda user, lo, hi: get_declined_requests(core, user, lo, hi))
-        out.notes.append("Emergency unlock review enabled: longer than 3 hours, or right after a declined request, is asked about afterwards.")
+        out.notes.append("Emergency unlock review enabled: every emergency unlock is asked about afterwards (owner, 2026-11-16).")
     return out
 
 

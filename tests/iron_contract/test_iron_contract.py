@@ -172,10 +172,11 @@ class TestLockStatusAndGuard:
     def test_lowering_the_difficulty_is_blocked_while_locked(self, core, monkeypatch) -> None:
         w = World(core)
         report(core, w.uid, "locked")
-        assert w.say("mode request standard") == LOCKED_REFUSAL
+        assert w.say("mode request beginner") == LOCKED_REFUSAL                  # owner, 2026-11-16: three levels; down is lowering
         assert w.say("mode request advanced") != LOCKED_REFUSAL                  # raising the difficulty is never blocked
         monkeypatch.setattr(w.service.advanced_mode, "get_active_request",
-                            lambda: SimpleNamespace(target_mode=OperatingMode.STANDARD, status=ModeTransitionStatus.AWAITING_CONFIRMATION))
+                            lambda: SimpleNamespace(source_mode=OperatingMode.ADVANCED, target_mode=OperatingMode.STANDARD,
+                                                    status=ModeTransitionStatus.AWAITING_CONFIRMATION))
         assert w.say("mode confirm") == LOCKED_REFUSAL
         report(core, w.uid, "unlocked")
         assert w.say("mode request standard") == "You're already in Standard Mode."
@@ -192,7 +193,7 @@ class TestLockStatusAndGuard:
         tree = ast.parse((ROOT / "application" / "service.py").read_text(encoding="utf-8"))
         guarded = {f.name for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
                    for d in f.decorator_list if isinstance(d, ast.Call) and getattr(d.func, "id", "") == "requires_unlocked"}
-        assert guarded == {"_handle_mode_request_standard", "_handle_vacation_cancel"}
+        assert guarded == {"_handle_mode_request_beginner", "_handle_vacation_cancel"}       # Advanced -> Standard is checked inside its handler
 
 
 class TestLockedContext:

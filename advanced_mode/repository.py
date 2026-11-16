@@ -40,6 +40,7 @@ from advanced_mode.models import (
 )
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
+from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 from penalty_engine.repository import PenaltyEngine
@@ -213,6 +214,21 @@ class AdvancedModeAdministration:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
 
+    def start_new_wearer_at_beginner(self, *, now: datetime) -> bool:
+        """Owner, 2026-11-16: an additional wearer's database starts at the beginner level. Only a database that never had a mode transition
+        and is still at its seeded Standard is moved; True when it was moved now. Never used for the owner's database."""
+        def write(tx: Transaction, _s: object) -> bool:
+            if tx.fetch_one("SELECT 1 FROM mode_transition_requests LIMIT 1") is not None:
+                return False
+            done = tx.execute("UPDATE operating_mode_state SET current_mode = ?, mode_activated_at = ? WHERE id = 1 AND current_mode = ?",
+                              (OperatingMode.BEGINNER.value, _iso(now), OperatingMode.STANDARD.value)).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="advanced_mode.started_at_beginner", source_module="advanced_mode", occurred_at=now,
+                                            payload={"mode": OperatingMode.BEGINNER.value}))
+            return bool(done)
+
+        return bool(apply_transition(self._core, write=write))
+
     # -------------------------------------------------------------------
     # The explicit reconciliation command
     # -------------------------------------------------------------------
@@ -274,7 +290,7 @@ class AdvancedModeAdministration:
                     f"({current_state.current_mode.value!r})."
                 )
 
-            if target_mode == OperatingMode.STANDARD:
+            if current_state.current_mode == OperatingMode.ADVANCED:      # 30 days in Advanced before going down from it
                 minimum_met_at = current_state.mode_activated_at + timedelta(days=MINIMUM_DAYS_IN_ADVANCED)
                 if now < minimum_met_at:
                     raise MinimumTimeInAdvancedNotMetError(

@@ -107,7 +107,7 @@ class TestThreshold:
             assert w.cond.threshold_in(tx, U) == D("3.0")
             tx.execute("INSERT INTO training_state (user_id, factor, updated_at) VALUES (?, '1.250', 'x')", (U,))
             assert w.cond.threshold_in(tx, U) == D("3.750")
-        assert BASE_THRESHOLD == {"standard": D("1.5"), "advanced": D("3.0")}                  # owner, 2026-11-15: harder
+        assert BASE_THRESHOLD == {"standard": D("1.5"), "advanced": D("3.0"), "beginner": D("1.0")}                # owner, 2026-11-15: harder
 
     @pytest.mark.parametrize("threshold,tokens_per_week", [(D("1.0"), 2), (D("2.0"), 1), (D("1.5"), 1)])
     def test_the_threshold_scales_the_payout(self, threshold, tokens_per_week) -> None:

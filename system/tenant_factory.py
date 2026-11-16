@@ -128,6 +128,8 @@ class TenantRuntime:
                 logger.exception("An opt-out pass of tenant %s failed; will retry next cycle.", self.tenant_id)
         if self.release_window is not None:
             self.release_window.tick(self.clock.now())     # parity 13: never raises (it logs and carries on)
+        from system.graduation import graduation_tick       # owner, 2026-11-16: four weeks at Beginner without a severe slip: asked once
+        graduation_tick(self.core, self.wearer_user_id, self.clock.now())
         if self.obedience is not None:
             try:
                 self.obedience.tick(self.clock.now())      # parity 12: the daily task, on this wearer's paired lock only
@@ -461,7 +463,7 @@ class TenantFactory:
     # ------------------------------------------------------------------ parity 12: obedience tasks
 
     # A new wearer's limits and gear are unknown until onboarding asks (roadmap D8): these start off and the gear list starts empty.
-    SEEDED_OFF = ("erotic_tasks", "workouts")
+    SEEDED_OFF = ("erotic_tasks", "workouts", "temptations", "protocol")   # owner, 2026-11-16: the beginner level starts with these off
 
     def _obedience(self, runtime, service, cfg, core: CoreDatabase) -> None:
         """Owner, 2026-11-16 (multi-wearer first): the daily obedience task for an additional wearer, on THEIR confirmed paired lock through
@@ -471,6 +473,8 @@ class TenantFactory:
         if runtime.features is None:
             return
         runtime.features.seed_off(runtime.wearer_user_id, self.SEEDED_OFF, self._shared.clock.now())
+        from advanced_mode.repository import AdvancedModeAdministration       # owner, 2026-11-16: a new wearer starts at Beginner
+        AdvancedModeAdministration(core.db_path, core=core).start_new_wearer_at_beginner(now=self._shared.clock.now())
         if runtime.proof_checks is None or runtime.detectors is None or runtime.detectors.signals is None:
             runtime.notes.append("Daily obedience tasks are NOT active for this wearer: they need the spot checks and the detector questions.")
             return

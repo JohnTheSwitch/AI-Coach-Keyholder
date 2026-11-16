@@ -47,6 +47,9 @@ are no leather ones. He keeps the list in the DM: `gear` shows it, `gear add <pi
 only plugs on the list. Event: `obedience.gear_changed`. Owner, 2026-11-16 (`features/`): with `workouts` off there is no training plan
 and no workout task; with `erotic_tasks` off a day without a training session has no task. Owner, 2026-11-16: while locked, `gear remove` waits 24 hours and is
 asked about (`opt_outs/`, key `gear:<piece>`); `gear remove <piece> broken` / `lost` / `never had` removes it at once (the reason is noted).
+Owner, 2026-11-16 ("learning what you avoid"): a task he avoided in the last 28 days (postponed with "someone's around", or failed: missed,
+late, rejected) comes back more often: its parts (pose, add-ons, plug ladder, extra, workout) weigh double in the draw (a cap, not a ratchet), and
+it may return after 7 days instead of 14. The health-or-safety button, an exemption, no free slot and an unended vote never count.
 
 **"Are you alone right now?" (owner, 2026-11-15; migration 073).** An erotic day is planned without a task (`ASK_KEY`). When its moment
 comes and Chaster's slot is free, the bot asks (status `asking`): "I'm alone" gives the full version (up to 30 minutes, two add-ons,

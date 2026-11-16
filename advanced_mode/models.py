@@ -22,8 +22,17 @@ def new_id() -> str:
 
 
 class OperatingMode(StrEnum):
+    BEGINNER = "beginner"          # owner, 2026-11-16: "beginner, standard and advanced"; beginner is close to the owner's own start
     STANDARD = "standard"
     ADVANCED = "advanced"
+
+
+# Owner, 2026-11-16: the three levels in order of difficulty. Moving down is "lowering the difficulty" (the Iron Contract: only unlocked).
+MODE_RANK = {OperatingMode.BEGINNER: 0, OperatingMode.STANDARD: 1, OperatingMode.ADVANCED: 2}
+
+
+def is_lowering(source: "OperatingMode", target: "OperatingMode") -> bool:
+    return MODE_RANK[target] < MODE_RANK[source]
 
 
 class ModeTransitionStatus(StrEnum):

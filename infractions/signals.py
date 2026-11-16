@@ -509,6 +509,10 @@ class InfractionSignals:
             self._clear(signal.id, excuse or "unanswered", now)
             return
         group = signal.rule_group if signal.kind in ADOPTED_RULE_GROUPS.values() else UNANSWERED_RULE_GROUP
+        # Owner, 2026-11-16: "every emergency unlock is asked about; unexplained = a serious incident". Silence on an emergency-unlock question
+        # counts as the claim confirmed false (FALSE_HEALTH_CLAIM, severe), not the usual warning; the appeal stays (e.g. he was in hospital).
+        if signal.kind is SignalKind.HEALTH_CLAIM and str(signal.subject_id).startswith("emergency:"):
+            group = RULE_GROUPS[SignalKind.HEALTH_CLAIM]
         if self._decide(signal.id, "silence", "No answer by the deadline.", group, now):
             self._tell(signal.id, "silence", OutgoingMessage(text=_SILENCE, actions=_appeal_buttons(signal.id)), now)
 

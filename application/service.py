@@ -36,6 +36,7 @@ from advanced_mode.models import (
     ModeTransitionStatus,
     NoActiveModeTransitionError,
     OperatingMode,
+    is_lowering,
 )
 from advanced_mode.repository import AdvancedMode, AdvancedModeAdministration
 from application.models import ActionSpec, EmbedField, EmbedSpec, IncomingMessage, OutgoingMessage
@@ -536,8 +537,14 @@ class ApplicationService:
         )
         self.router.register(
             "mode request standard",
-            "Request switching back to Standard Mode (needs 30+ days in Advanced first, then a 24h wait and a separate second confirmation)",
+            "Request switching to Standard Mode (from Advanced: 30+ days there first and only while unlocked; then a 24h wait and a separate "
+            "second confirmation)",
             self._handle_mode_request_standard,
+        )
+        self.router.register(
+            "mode request beginner",
+            "Request switching down to Beginner Mode (only while unlocked; a 24h wait and a separate second confirmation)",
+            self._handle_mode_request_beginner,
         )
         self.router.register("mode cancel", "Cancel your pending mode transition request", self._handle_mode_cancel)
         self.router.register(
@@ -778,7 +785,7 @@ class ApplicationService:
             )
 
         lines = [
-            "Requested: Standard -> Advanced.",
+            f"Requested: {state.current_mode.value.capitalize()} -> Advanced.",
             "This requires a full, uninterrupted 24-hour wait, followed by a second, separate "
             "confirmation -- send `mode confirm` once eligible.",
         ]
@@ -793,7 +800,6 @@ class ApplicationService:
         )
         return OutgoingMessage(text="\n".join(lines))
 
-    @requires_unlocked()
     def _handle_mode_request_standard(self, ctx: RequestContext) -> OutgoingMessage:
         self._settle_mode_state(ctx)
         consent_id = self._consent_id_for(ctx)
@@ -803,6 +809,10 @@ class ApplicationService:
         state = self.advanced_mode.get_current_mode()
         if state.current_mode == OperatingMode.STANDARD:
             return OutgoingMessage(text="You're already in Standard Mode.")
+        if is_lowering(state.current_mode, OperatingMode.STANDARD):    # Advanced -> Standard lowers the difficulty: the Iron Contract
+            refusal = self._iron_refusal(ctx)
+            if refusal is not None:
+                return refusal
 
         try:
             request = self.advanced_mode_admin.request_transition(
@@ -822,7 +832,7 @@ class ApplicationService:
             )
 
         lines = [
-            "Requested: Advanced -> Standard.",
+            f"Requested: {state.current_mode.value.capitalize()} -> Standard.",
             "This requires a full, uninterrupted 24-hour wait, followed by a second, separate "
             "confirmation -- send `mode confirm` once eligible.",
         ]
@@ -831,6 +841,31 @@ class ApplicationService:
                 "A Penalty Window is currently active or frozen -- the 24-hour wait will only "
                 "start once it ends."
             )
+        return OutgoingMessage(text="\n".join(lines))
+
+    @requires_unlocked()
+    def _handle_mode_request_beginner(self, ctx: RequestContext) -> OutgoingMessage:
+        """Owner, 2026-11-16: down to the beginner level; lowering the difficulty, so only while unlocked (the Iron Contract)."""
+        self._settle_mode_state(ctx)
+        consent_id = self._consent_id_for(ctx)
+        if consent_id is None:
+            return OutgoingMessage(text="Couldn't process that -- no stable message reference was available.")
+        state = self.advanced_mode.get_current_mode()
+        if state.current_mode == OperatingMode.BEGINNER:
+            return OutgoingMessage(text="You're already in Beginner Mode.")
+        try:
+            request = self.advanced_mode_admin.request_transition(
+                self.penalty_engine, target_mode=OperatingMode.BEGINNER, requested_via_consent_id=consent_id, now=ctx.now)
+        except ActiveModeTransitionExistsError:
+            return OutgoingMessage(text="You already have a pending mode transition request. Send `mode status` to see it, or `mode cancel` "
+                                        "to cancel it first.")
+        except MinimumTimeInAdvancedNotMetError:
+            return OutgoingMessage(text=f"You need at least 30 days in Advanced Mode before going down -- eligible from "
+                                        f"{(state.mode_activated_at + timedelta(days=30)).isoformat()}.")
+        lines = [f"Requested: {state.current_mode.value.capitalize()} -> Beginner.",
+                 "This requires a full, uninterrupted 24-hour wait, followed by a second, separate confirmation -- send `mode confirm` once eligible."]
+        if request.status == ModeTransitionStatus.BLOCKED_BY_PENALTY_WINDOW:
+            lines.append("A Penalty Window is currently active or frozen -- the 24-hour wait will only start once it ends.")
         return OutgoingMessage(text="\n".join(lines))
 
     def _handle_mode_cancel(self, ctx: RequestContext) -> OutgoingMessage:
@@ -853,7 +888,7 @@ class ApplicationService:
         request = self.advanced_mode.get_active_request()
         if request is None:
             return OutgoingMessage(text="You don't have a pending mode transition request.")
-        if request.target_mode == OperatingMode.STANDARD:          # lowering the difficulty: the Iron Contract (Phase G6)
+        if is_lowering(request.source_mode, request.target_mode):   # lowering the difficulty: the Iron Contract (Phase G6)
             refusal = self._iron_refusal(ctx)
             if refusal is not None:
                 return refusal

@@ -159,7 +159,8 @@ class DailyEvaluationTask:
             check_ins_ok=sum(1 for c in check_ins if c["status"] in ("answered", "answered_uncertain")),
             violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
             training_full=len(training) - short, training_short=short,
-            week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training else 0,   # raises only with a verified session
+            week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training or self._trained_before(day) else 0,
+            # raises only with a verified session that day, or the day before (bug fix 2026-11-16: sets are often logged the next day)
             board=self._board(lo, hi), surprise=self._surprise(lo, hi), cost=self._cost(lo, hi),
         )
 
@@ -206,6 +207,10 @@ class DailyEvaluationTask:
                 return False
             counted += 1
         return counted >= 2
+
+    def _trained_before(self, day: date) -> bool:
+        from obedience.service import get_verified_training
+        return bool(get_verified_training(self._core, self._user, (day - timedelta(days=1)).isoformat()))
 
     def _raises(self, lo: str, hi: str) -> int:
         from training.service import get_raises

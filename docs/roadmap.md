@@ -145,6 +145,11 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D7 | **Check-in misses of 9-12 Nov** | Not a timing problem: "I didn't yet take it seriously. Now I am seriously locked." Nothing to change |
 | D9 | **3 check-ins a day in Supervision Mode** | Level 1 cadence regardless of the level while supervision is on; quiet time after an answer 90 min then (Claude) |
 | D10 | **Old misses stay** | Not erased: real misses, not a bug; they leave the 7-day window by Thu 19 Nov |
+| D11 | **Learning what you avoid** (option 1) | Avoided tasks (postponed or failed in 28 days; never the health button) weigh double and may return after 7 days instead of 14 |
+| D12 | **Every emergency unlock is asked about** | Unexplained = FALSE_HEALTH_CLAIM (severe); a genuine need stays the judge's default |
+| D13 | **24-hour cooling-off with Claude** | While locked, a request to Claude to loosen anything waits 24 h and is asked again; health, safety, consent withdrawals, bug fixes and tightening are immediate |
+| D15 | **Three levels: Beginner, Standard, Advanced** | Beginner = the owner's start (tokens 1.0, +0.025, cap 1.5; lines 10/20/10; Standard windows; erotic tasks, workouts, temptations and protocol start off); a new wearer starts there; asked to move up after 4 weeks without a severe incident; moving down only while unlocked |
+| D14 | **Approved, not built yet** | Tamper watch (code changes not by Claude, dirty start, changed settings, database changed while the bot was off); learning options 2 (pattern reports) and 3 (what works on him), both report and propose only; multi-wearer: leak audit, invitation discloses operator data use, beginner profile (proposal to the owner), operator runbook rule: never loosen a tester's settings because they asked the operator directly |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)

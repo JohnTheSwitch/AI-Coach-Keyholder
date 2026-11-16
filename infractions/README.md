@@ -86,7 +86,7 @@ transaction: decided at once as self-reported and admitted, confirmed on the nex
 ## Health and emergency claims reviewed afterwards (G5, owner 2026-11-15; migration 076)
 
 A health opening, a health exemption or a Chaster emergency unlock is granted at once, as always. Afterwards (`health_claims.py`) it is reviewed
-when a stored fact puts it in doubt, and only then:
+when a stored fact puts it in doubt, and only then (a Chaster emergency unlock: always, since 2026-11-16):
 
 - it lasted longer than **3 hours** (the owner's limit: always reviewed, with or without anything else), counted to Chaster's relock or, for an
   emergency unlock, to the first pass that sees a lock locked again; still open after 24 hours is reviewed without waiting;
@@ -96,7 +96,9 @@ The review is a `health_claim` question on the path above, with three difference
 health need, so `judge.py` gets its claim instructions: a genuine need is the default, length alone is never proof, only an explanation that shows
 it was not a health or safety need, or gives none, is `not_explained`); nothing excuses it (its own opening would); and a confirmed one is
 `FALSE_HEALTH_CLAIM`, a full Incident in the Honesty domain (catalogue severity SEVERE, not warning-only). Still unclear after one follow-up
-clears it (2.12); silence is the usual `DETECTION_UNANSWERED` warning. One review per claim. An emergency unlock first seen more than 48 hours
+clears it (2.12); silence is the usual `DETECTION_UNANSWERED` warning, except for a Chaster emergency unlock (owner, 2026-11-16:
+"every emergency unlock is asked about; unexplained = a serious incident"): every one is asked about, and silence counts as `FALSE_HEALTH_CLAIM`
+(the appeal stays, for when the emergency itself kept him from answering). One review per claim. An emergency unlock first seen more than 48 hours
 after it happened (an old lock on the first run) is never reviewed. Needs the `honesty` Trust domain (`HONESTY_TRUST_DOMAIN`).
 
 **Bug fixed with it:** `proof_failed`, `contradiction`, `relock_picture_missing` and `obedience_missed` were never in the table's kind CHECK, and
