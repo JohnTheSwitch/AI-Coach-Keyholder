@@ -8,6 +8,27 @@ $repo = Split-Path -Parent $PSScriptRoot
 $bat = Join-Path $repo "scripts\start_bot.bat"
 if (-not (Test-Path $bat)) { throw "scripts\start_bot.bat is missing: run python -m scripts.make_start_script first." }
 
+# Owner, 2026-11-16: a bot started by the boot task runs in its own logon session, where this script may not end its process.
+# First ask the running bot to stop through its instance port (infrastructure/single_instance.py): it then closes cleanly, whichever
+# session it runs in. The secret is in data\instance_stop_token, written by the bot at start.
+$tokenFile = Join-Path $repo "data\instance_stop_token"
+function Test-BotPort { try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", 8429); $c.Close(); return $true } catch { return $false } }
+if ((Test-Path $tokenFile) -and (Test-BotPort)) {
+    try {
+        $client = New-Object Net.Sockets.TcpClient("127.0.0.1", 8429)
+        $stream = $client.GetStream()
+        $bytes = [Text.Encoding]::ASCII.GetBytes((Get-Content $tokenFile -Raw).Trim() + "`n")
+        $stream.Write($bytes, 0, $bytes.Length)
+        $client.Close()
+    } catch { Write-Output "The stop request failed: $($_.Exception.Message)" }
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Test-BotPort) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+    if (Test-BotPort) { Write-Output "The running bot did not stop within 45 s." }
+}
+if (Get-ScheduledTask -TaskName "AI Coach Bot" -ErrorAction SilentlyContinue) {
+    try { Stop-ScheduledTask -TaskName "AI Coach Bot" -ErrorAction Stop } catch { Write-Output "Could not stop the boot task: $($_.Exception.Message)" }
+    Start-Sleep -Seconds 3
+}
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'bot\.discord_bot|start_bot\.bat' -and $_.ProcessId -ne $PID } |
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -Confirm:$false -ErrorAction Stop } catch {} }
 Start-Sleep -Seconds 3

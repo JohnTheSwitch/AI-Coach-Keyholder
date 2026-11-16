@@ -30,6 +30,7 @@ Running:
 from __future__ import annotations
 
 import asyncio
+import os
 import collections
 import logging
 from pathlib import Path
@@ -1353,6 +1354,17 @@ def main() -> None:
         from system.tenant_dm_actions import TenantAwareActions
         from tenancy.router import TenantRouter
         bot.dm_actions = TenantAwareActions(bot.dm_actions, router=TenantRouter(platform.registry), supervisor=bot.tenant_supervisor)
+    # Owner, 2026-11-16: the restart script stops a boot-task bot through the instance port (it cannot end that process itself).
+    from infrastructure.single_instance import serve_stop_requests
+
+    def _stop_requested() -> None:
+        try:
+            bot.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(bot.close()))
+        except Exception:
+            logger.warning("The bot could not close cleanly on a stop request; the process ends now.")
+            os._exit(0)
+
+    serve_stop_requests(instance_guard, _stop_requested)
     bot.run(config.discord_token, log_handler=None)
 
 
