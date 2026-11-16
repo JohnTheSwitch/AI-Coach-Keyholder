@@ -14,3 +14,11 @@ Earn the release (owner, 2026-11-15; roadmap "Approved, not built yet", item 4).
 `release_waiting_for_training`, `release_waiting_for_lines` or None. A failure to read anything holds nothing, like release debt.
 No table of its own; nothing here touches a token, a plan or a lock. Health openings, exemptions and the emergency option never go through the
 release tick. The bot wires it where release debt is wired (`bot/discord_bot.py`).
+
+
+## The release window (owner, 2026-11-15/16; story idea P4, autonomous queue B3; `window.py`, migration 083)
+
+When a release is confirmed (`release_engine.last_confirmed_release`), a DM gives him 2 hours to relock and send a verification picture in
+Chaster. A picture between the confirmation and the window's end + 10 minutes closes it; none = he is asked to explain
+(RELEASE_WINDOW_OVERRUN, warning level, 20 lines "I relock on time when my keyholder says so."). Unreadable pictures are retried and dropped
+after 6 hours (unknown never counts). No lock action. Owns `release_windows`.

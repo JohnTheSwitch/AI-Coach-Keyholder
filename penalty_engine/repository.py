@@ -54,7 +54,7 @@ from infrastructure.time_format import parse_iso as _parse_iso
 PRIOR_OFFENSE_LOOKBACK = timedelta(days=30)
 # FALSE_REPORT (owner, 2026-11-13, honesty and proof): a failed spot check costs Trust and a Warning first, never a window.
 WARNING_ONLY_RULE_GROUPS = frozenset({"CHECKIN_REPEATED_NONCOMPLIANCE", "DETECTION_UNANSWERED", "EXEMPTION_OVERRIDE", "FALSE_REPORT",
-                                      "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING"})
+                                      "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING", "RELEASE_WINDOW_OVERRUN"})
 
 
 def active_hours_elapsed_from_row(row, now: datetime) -> float:

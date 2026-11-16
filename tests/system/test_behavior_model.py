@@ -143,7 +143,7 @@ class TestCatalog:
 
     def test_the_hygiene_infractions_only_concern_planned_breaks(self) -> None:
         # Owner, 2026-11-15: the missing relock picture joins HYGIENE_MISUSE; both concern only a planned (discretionary) break, never a health need.
-        assert [v.code for v in cat.by_domain("hygiene")] == ["HYGIENE_MISUSE", "HYGIENE_PICTURE_MISSING"]
+        assert [v.code for v in cat.by_domain("hygiene")] == ["HYGIENE_MISUSE", "RELEASE_WINDOW_OVERRUN", "HYGIENE_PICTURE_MISSING"]
         assert "iscretionary" in cat.get("HYGIENE_MISUSE").description
         assert "planned" in cat.get("HYGIENE_PICTURE_MISSING").description
 
@@ -162,4 +162,4 @@ class TestCatalog:
     def test_only_existing_modules_are_marked_detectable(self) -> None:
         assert {v.code for v in cat.CATALOG if v.detectable} == {
             "CHECKIN_MISSED_FIRST", "CHECKIN_INSUFFICIENT", "CHECKIN_REPEATED_NONCOMPLIANCE", "HYGIENE_MISUSE", "EPISTEMIC_MISREPRESENTATION", "DETECTION_UNANSWERED",
-            "EXEMPTION_OVERRIDE", "FALSE_REPORT", "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING", "FALSE_HEALTH_CLAIM"}
+            "EXEMPTION_OVERRIDE", "FALSE_REPORT", "OBEDIENCE_TASK_MISSED", "HYGIENE_PICTURE_MISSING", "FALSE_HEALTH_CLAIM", "RELEASE_WINDOW_OVERRUN"}

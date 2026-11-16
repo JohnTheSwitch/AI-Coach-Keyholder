@@ -75,6 +75,7 @@ class WeekFacts:
     recovery_hours: float = 0.0
     health_uses: int | None = None                        # G2 (owner, 2026-11-15): None when not wired; counted, never judged here
     health_detail: str = ""
+    promises: tuple = ()                                  # B2 (owner, 2026-11-16): what he wrote he'd do better, the week before
     settings_changed: tuple = ()                          # G4 (owner, 2026-11-15): "quiet hours 22:00-07:00 -> 23:00-08:00", ...
 
     @property
@@ -90,7 +91,14 @@ def _it(n: int) -> str:
     return "it" if n == 1 else "they"
 
 
+WELLBEING_ASK = "And honestly: how are you, body and mind? Any answer is fine; it never counts against you."   # owner, 2026-11-16 (6d)
+
+
 def render_week(f: WeekFacts) -> str:
+    return _render_week(f) + "\n" + WELLBEING_ASK
+
+
+def _render_week(f: WeekFacts) -> str:
     lines = [f"Your week, {_day(f.start)} to {_day(f.end)}."]
     if f.commitments:
         parts = [f"{f.kept} kept", f"{f.partly} partly", f"{f.not_kept} not kept"]
@@ -127,6 +135,8 @@ def render_week(f: WeekFacts) -> str:
         lines.append(tokens)
     else:
         lines.append("Check-ins and tokens: no finished days to count yet.")
+    for promise in f.promises:
+        lines.append(f"The week before, you wrote you'd do better: \"{promise[:200]}\" Did you? Tell me honestly.")
     if f.lines_assigned is not None:
         line = f"Lines: {f.lines_assigned} assigned, {f.lines_done} done."
         if f.lines_owed:
@@ -149,6 +159,7 @@ class WeeklyReview:
         self._ports = ports
         self.lines_between: Callable[[date, date], list[dict]] | None = None       # Q4: lines.service.LineService.get_lines_between
         self.lines_owed: Callable[[], int] | None = None
+        self.promises_between: Callable[[date, date], list[str]] | None = None     # B2: lines.service.LineService.get_promises_between
         self.recovery_between: Callable[[date, date], list[dict]] | None = None    # Q4: recovery_tasks.service.RecoveryTasks.get_tasks_between
         self.health_between: Callable[[date, date], list[dict]] | None = None      # G2: system.health_pattern.health_uses over local dates
         self.settings_between: Callable[[date, date], list[dict]] | None = None    # G4: settings_watch changes over local dates
@@ -209,6 +220,8 @@ class WeeklyReview:
             counts["lines_assigned"] = sum(int(r.get("required") or 0) for r in rows)
             counts["lines_done"] = sum(int(r.get("done") or 0) for r in rows)
             counts["lines_owed"] = int(self.lines_owed()) if self.lines_owed is not None else 0
+        if self.promises_between is not None:
+            counts["promises"] = tuple(self.promises_between(week_start - timedelta(days=7), week_start))
         if self.recovery_between is not None:
             passed = [r for r in self.recovery_between(week_start, end) if r.get("status") == "passed"]
             counts["recovery_verified"] = len(passed)

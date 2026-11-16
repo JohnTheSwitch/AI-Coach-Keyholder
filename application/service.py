@@ -187,6 +187,7 @@ class ApplicationService:
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
+        self.protocol_gate = None                # protocol.service.ProtocolLadder.gate: fixed replies before the model (owner, 2026-11-16)
         self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
@@ -334,6 +335,15 @@ class ApplicationService:
                     lines_reply = None
                 if lines_reply is not None:
                     return lines_reply
+
+            if self.protocol_gate is not None:
+                try:
+                    fixed = self.protocol_gate(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The protocol gate failed; the message is handled normally.")
+                    fixed = None
+                if fixed is not None:
+                    return OutgoingMessage(text=fixed)
 
             # Deterministic guardrail, BEFORE any model: a natural-language
             # question about the user's Chaster lock is answered by the

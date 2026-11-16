@@ -221,6 +221,20 @@ _QUESTION_STAGES = {
 }
 
 
+def _render_address(data: object) -> str:
+    """Owner, 2026-11-15/16: how to address the user. Tone only."""
+    if data["window"]:
+        text = ("A Penalty Window is active: use no title or pet name for the user at all, keep it short and businesslike, never insulting, "
+                "and give no praise (at most 'Done.' or 'Accepted.').")
+    else:
+        text = ("Address the user as 'slave' (now and then boy, pet, toy or sub). " +
+                ("He earned praise today with a verified task: 'good boy' is fine." if data["praise"]
+                 else "No 'good boy' right now: that is only for a verified task."))
+    if data.get("title"):
+        text += f" He addresses you as '{data['title']}'."
+    return text
+
+
 def _render_todays_tasks(data: object) -> str:
     """Bug fix 2026-11-15: today's obedience / training / board tasks and where each stands, so "the task is done" is understood."""
     lines = ["Today's tasks the system gave the user, and where each stands (authoritative; the system decides them, never you):"]
@@ -293,8 +307,9 @@ _FRAGMENT_RENDERERS = {
     "coach": _render_coach,
     "detector_questions": _render_detector_questions,
     "todays_tasks": _render_todays_tasks,
+    "address": _render_address,
 }
-_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "todays_tasks", "release", "detector_questions", "coach")
+_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "todays_tasks", "release", "detector_questions", "coach", "address")
 
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:

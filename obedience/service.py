@@ -315,8 +315,17 @@ def chaster_brief(text: str) -> str:
     for long, short in _SHORT_NAMES.items():
         text = text.replace(long, short)
     text = re.sub(r",? with [^.]*lube", "", text)
-    kept = [s for s in re.split(r"(?<=\.)\s+", text.strip())
-            if s and not re.match(r"(then )?(keep it|warm up|\d+ minutes)", s, re.I)]
+    kept = []
+    for s in re.split(r"(?<=\.)\s+", text.strip()):
+        if not s or re.match(r"(then )?(keep it|warm up)", s, re.I):
+            continue
+        timed = re.match(r"(\d+)\s*(minutes?|hours?)\b(.*)", s, re.I)
+        if timed:
+            rest = timed.group(3).strip()
+            if not rest or rest[0] in ",." or rest.lower().startswith(("then", "at most")):
+                continue                                    # "10 minutes, then off slowly.": a duration only
+            s = rest[0].upper() + rest[1:]                  # "20 minutes kneeling, ..." -> "Kneeling, ..."
+        kept.append(s)
     return " ".join(kept) or text
 
 
@@ -434,6 +443,13 @@ def get_obedience_today(core: CoreDatabase, user_id: str, local_date: str) -> li
             state = "closed without a verdict, no consequence"
         out.append({"kind": kind, "task": chaster_brief(r["text"] or "") or "not chosen yet", "state": state})
     return out
+
+
+def get_verified_task_ids_since(core: CoreDatabase, user_id: str, since: str) -> list[str]:
+    """Read-only (protocol rung 3, forms of address): ids of tasks verified since an ISO time."""
+    with core.transaction() as tx:
+        return [r["id"] for r in tx.fetch_all("SELECT id FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
+                                              "AND decided_at >= ?", (user_id, since))]
 
 
 def get_surprise_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str):

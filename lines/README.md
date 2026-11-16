@@ -23,3 +23,15 @@ check or recovery task goes first); once the oldest sheet has waited 3 hours wit
 lines never hold hygiene forever. Typed lines otherwise get "Lines go on paper". The community review watch leaves these photos alone.
 Chaster's own "Typing Lines" extension is a partner extension: with it on the lock the bot could no longer rewrite the extension list
 (hygiene openings, the extension guard, the relock picture), so it is not used.
+
+
+## Swats instead, and the written request (owner, 2026-11-15/16; autonomous queue B1, B2; migration 083)
+
+- **Swats instead (B1):** every lines message has a "Swats instead" button: one light hand swat per two lines (`swats_for`), counted aloud,
+  shown as a Chaster task "N light hand swats, counted aloud. Photo of the skin only." (community review). Not submitted within
+  `SWATS_WITHIN` (2 hours) of being in Chaster, rejected or taken off: the lines come back unchanged (`mode` reset), never a new incident.
+- **Before a release (B2):** the release task is his choice of three: release lines, swats, or a written request, never the one he did for
+  the last release (`_release_choices`). Default: lines, or the written request when lines were last. The written request is two DM
+  messages of at least `REQUEST_MIN_WORDS` (30) words each: why he earned it, then what he will do better; code counts words only. Shorter
+  messages are ordinary messages. The "do better" text is shown in the Sunday review a week later (`get_promises_between`).
+- `line_assignments.mode` (NULL = lines, 'swats', 'request'), `mode_chosen_at`, `request_why`, `request_better`. Buttons: scope `lines`.

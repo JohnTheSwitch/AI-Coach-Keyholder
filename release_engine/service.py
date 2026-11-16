@@ -212,6 +212,12 @@ class ReleaseEngine:
             )
         return [(r["id"], ProviderState(r["state"])) for r in rows]
 
+    def get_lock_first_seen(self) -> datetime | None:
+        """Read-only (A5, photo check-ins by lock length): when the most recently seen release lock was first seen."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT first_seen_at FROM release_lock_first_seen ORDER BY first_seen_at DESC LIMIT 1")
+        return None if row is None else _parse_iso(row["first_seen_at"])
+
     def last_confirmed_release(self, user_id: str) -> tuple[str, datetime] | None:
         """The most recent release the provider confirmed, as (authorization id, confirmation time).
         It opens a *release session* (see `release_session_over`)."""

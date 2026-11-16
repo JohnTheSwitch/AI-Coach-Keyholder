@@ -173,6 +173,8 @@ class CoachKeyholderBot(discord.Client):
         self.settings_watch_loop = None          # settings_watch.service.SettingsWatch.loop: changed settings asked about (G4)
         self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
+        self.release_window_loop = None          # release_earning.window.ReleaseWindow.loop (owner, 2026-11-16; queue B3)
+        self.protocol_loop = None                # protocol.service.ProtocolLadder via system/protocol_wiring.py (owner, 2026-11-16)
         self.task_board_loop = None              # task_board.service.TaskBoard.loop: the weekly task board (P1, owner 2026-11-15)
         self.obedience_loop = None               # obedience.service.ObedienceTasks.loop coroutine: daily obedience tasks (Q4b)
         self._extension_guard_task: asyncio.Task | None = None
@@ -241,6 +243,10 @@ class CoachKeyholderBot(discord.Client):
             self._obedience_task = asyncio.create_task(self.obedience_loop, name="obedience")
         if self.task_board_loop is not None:
             self._task_board_task = asyncio.create_task(self.task_board_loop, name="task-board")
+        if self.protocol_loop is not None:
+            self._protocol_task = asyncio.create_task(self.protocol_loop, name="protocol")
+        if self.release_window_loop is not None:
+            self._release_window_task = asyncio.create_task(self.release_window_loop, name="release-window")
         if self.settings_watch_loop is not None:
             self._settings_watch_task = asyncio.create_task(self.settings_watch_loop, name="settings-watch")
         if self.opt_outs_loop is not None:
@@ -765,6 +771,8 @@ def main() -> None:
     # Bug fix 2026-11-15: "The task is done" got praise for a workout; the model now sees today's tasks and where each stands (read-only).
     from conversation_engine.context_providers.obedience_today_provider import ObedienceTodayContextProvider
     from obedience.service import get_obedience_today
+    from system.protocol_wiring import build_address_provider          # owner, 2026-11-16 (A3): how he is addressed, tone only
+    context_providers = context_providers + (build_address_provider(core),)
     context_providers = context_providers + (ObedienceTodayContextProvider(
         read=lambda user_id, now, cfg=window_config_from(config): get_obedience_today(core, user_id, cfg.local(now).date().isoformat())),)
     if coach_dm is not None:
@@ -1137,6 +1145,10 @@ def main() -> None:
             return reader.picture_times(user_id=account, lock_ids=ids, now=now) if ids else None
 
         wiring.check_ins.photo_times = photo_times
+        _rt = getattr(wiring, "release_task", None)
+        if _rt is not None:                  # A5 (owner, 2026-11-16): more photo check-ins on a long lock
+            wiring.check_ins.lock_days = (lambda now, rt=_rt: (lambda first: None if first is None else (now - first).total_seconds() / 86400)(
+                rt.engine.get_lock_first_seen()))
         application_service.photo_check_ins = PhotoCheckInSwitch(consent=wiring.check_ins.photo_consent, user_id=wiring.check_ins.user_id)
         logger.info("Photo check-ins available (%s).", "on" if wiring.check_ins.photo_consent.is_on(wiring.check_ins.user_id)
                     else "off until the wearer sends `photo check-ins on`")
@@ -1150,6 +1162,16 @@ def main() -> None:
                                               (ex is not None and ex.wear_exemption_in_force(u)) or halted())
         wiring.check_ins.photo_suspended = (lambda now, ex=bot.exemptions, u=wiring.check_ins.user_id:
                                             ex is not None and ex.wear_exemption_in_force(u))
+        # The protocol ladder, no debate, the wellbeing check (owner, 2026-11-16; autonomous queue A2-A4).
+        from obedience.service import get_obedience_today
+        from system.protocol_wiring import build_protocol, protocol_loop
+        _cfg = window_config_from(config)
+        ladder = build_protocol(core, user_id=wiring.check_ins.user_id, check_ins=wiring.check_ins, window_cfg=_cfg,
+                                paused=lambda now, u=wiring.check_ins.user_id: wiring.check_ins.morning_suspended(now) or wiring.vacation.is_paused(u, now),
+                                todays_task_open=lambda now, u=wiring.check_ins.user_id: any(
+                                    t["state"] == "in Chaster, photo not sent yet" for t in get_obedience_today(core, u, _cfg.local(now).date().isoformat())))
+        application_service.protocol_gate = ladder.gate
+        bot.protocol_loop = protocol_loop(ladder, clock)
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:
@@ -1170,6 +1192,7 @@ def main() -> None:
     relock_account = config.chaster_execution_keyholder_user_id
     relock_tokens = background_tokens or chaster_token_manager
     relock_lock = _owner_lock_id(config, getattr(wiring, "owner_lock", None))
+    relock_pictures_fn = None                    # the release window (B3) reads the same pictures
     if bot.exemptions is not None and detectors.signals is not None and relock_account and relock_tokens is not None and relock_lock is not None:
         from chaster.hygiene_policy import HYGIENE_PICTURE_BELOW
         from chaster.peer_reviews import PeerReviewReader
@@ -1194,6 +1217,7 @@ def main() -> None:
                                  window=(relocked, now))
 
         bot.exemptions.relock_pictures = relock_pictures
+        relock_pictures_fn = relock_pictures
         bot.exemptions.picture_required = lambda _at, score=relock_score: (lambda s: s is not None and s < HYGIENE_PICTURE_BELOW)(score())
         bot.exemptions.raise_missing_picture = raise_missing_picture
         logger.info("Relock picture check active: due within 30 minutes of a planned hygiene relock while hygiene Trust is below 0.70.")
@@ -1217,6 +1241,11 @@ def main() -> None:
         if weekly_review is not None:
             weekly_review.lines_between = line_service.get_lines_between           # work queue Q4
             weekly_review.lines_owed = lambda u=notice_user: line_service.open_lines(u)
+            _wcfg = window_config_from(config)
+            weekly_review.promises_between = (lambda start, end, cfg=_wcfg: line_service.get_promises_between(
+                iso_time(cfg.to_utc(start, dt_time(0, 0))), iso_time(cfg.to_utc(end, dt_time(0, 0)))))    # B2
+        from system.dm_actions import ObedienceDm as _LinesDm
+        bot.dm_actions["lines"] = _LinesDm(line_service, resolve_user=resolve_user, now=clock.now)          # B1/B2: swats, written request
         if proof_checks is not None:
             # Owner, 2026-11-14: lines on paper, shown as a Chaster task (photo of the sheet with Chaster's code, community review).
             from lines.service import PaperPort
@@ -1244,6 +1273,24 @@ def main() -> None:
                 training_today=(lambda now, tp=training_for_release: tp.is_training_day_now(now)) if training_for_release is not None else (lambda now: False),
                 release_lines_done_since=line_service.release_done_since, assign_release_lines=line_service.assign_release)
             release_task.release_earned = earning.hold
+            # The release window (owner, 2026-11-16; P4, queue B3): 2 hours to relock and send a picture; none = asked to explain.
+            if relock_pictures_fn is not None and detectors.signals is not None:
+                from infractions.signals import SignalKind as _Kind
+                from release_earning.window import ReleaseWindow
+                _rw_cfg = window_config_from(config)
+
+                def _raise_overrun(row, now, signals=detectors.signals, domain=config.hygiene_trust_domain or "hygiene"):
+                    from infrastructure.time_format import parse_iso as _p
+                    signals.raise_signal(user_id=notice_user, kind=_Kind.RELEASE_WINDOW_OVERRUN, subject_id=row["authorization_id"], trust_domain=domain,
+                                         now=now, detail="No verification picture within the 2-hour window after a release.",
+                                         wearer_text="Your release window ended without a verification picture in Chaster. What happened?",
+                                         facts=f"Release confirmed at {row['confirmed_at']}; no verification picture by {row['due_at']} + 10 minutes.",
+                                         window=(_p(row["confirmed_at"]), now))
+
+                release_window = ReleaseWindow(core, user_id=notice_user, last_release=lambda rt=release_task: rt.engine.last_confirmed_release(rt.user_id),
+                                               pictures=relock_pictures_fn, local_clock=lambda t, c=_rw_cfg: c.local(t).strftime("%H:%M"),
+                                               raise_overrun=_raise_overrun)
+                bot.release_window_loop = release_window.loop(clock)
         logger.info("Lines are active: every confirmed incident gets lines in the DM.")
     try:
         quiet_windows = quiet_config_from(config)

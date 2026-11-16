@@ -50,7 +50,8 @@ def test_the_week_in_plain_facts() -> None:
         "Spot checks: 2 (1 passed, 1 still open).\n"
         "Check-ins (Mon 9 Nov to Sat 14 Nov): 9 of 10 answered.\n"
         "Tokens earned (Mon 9 Nov to Sat 14 Nov): 1. 1 day on vacation.\n"
-        "Today is counted after midnight. `weekly review off` stops this message.")
+        "Today is counted after midnight. `weekly review off` stops this message.\n"
+        "And honestly: how are you, body and mind? Any answer is fine; it never counts against you.")
 
 
 def test_an_empty_week_says_so_and_no_spot_check_line_without_them() -> None:

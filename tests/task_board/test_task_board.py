@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from obedience.service import chaster_brief
 from task_board.service import BOARD, OFFER_COUNT, WEEK_CAP, TaskBoard, get_board_rewards
 from tests.obedience.test_obedience import U, World
 
@@ -66,7 +67,7 @@ def test_take_start_verify_and_the_reward(tmp_path) -> None:
     b.w.tasks.tick(at + timedelta(minutes=1))
     with b.w.core.transaction() as tx:
         task = dict(tx.fetch_one("SELECT * FROM obedience_tasks WHERE slot = 2"))
-    assert task["status"] == "assigned" and task["text"] == first["text"] and first["text"] in b.w.chaster.assigned
+    assert task["status"] == "assigned" and task["text"] == first["text"] and chaster_brief(first["text"]) in b.w.chaster.assigned
     b.w.chaster.entries[task["task_id"]] = {"createdAt": (at + timedelta(minutes=20)).isoformat(), "peerVerification": {"status": "verified"}}
     b.w.tasks.tick(at + timedelta(minutes=25))
     b.board.tick(at + timedelta(minutes=26))

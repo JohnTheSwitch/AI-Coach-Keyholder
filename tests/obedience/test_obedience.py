@@ -636,6 +636,8 @@ def test_chaster_sees_a_brief_text_and_the_dm_the_full_one(tmp_path) -> None:
     full = ("Your gray Satisfyer Deep Diver in, with water-based lube. Warm up with the clear Crushious Bijou for 10 minutes first. "
             "Photo of the plug base only. Keep it in 20 minutes.")
     assert chaster_brief(full) == "Your Deep Diver in. Photo of the plug base only."
+    assert chaster_brief("20 minutes kneeling, hands behind your back. Photo from behind, waist down only.") == (
+        "Kneeling, hands behind your back. Photo from behind, waist down only.")
     assert chaster_brief("Clamps on your nipples, kneeling upright. Photo of your chest only, no face. 10 minutes, then off slowly.") == (
         "Clamps on your nipples, kneeling upright. Photo of your chest only, no face.")
     for task in _all_texts():

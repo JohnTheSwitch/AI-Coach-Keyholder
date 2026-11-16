@@ -81,6 +81,7 @@ MORNING_DUE = (time(12, 0), time(13, 0))     # due by 12:00 on a workday, 13:00 
 MORNING_AFTER_START = timedelta(hours=2)     # ...or 2 hours after the bot came back that morning, whichever is later
 MORNING_ASK = ("Good morning. Your morning report: tell me your plan for today, in your own words. Any answer counts. "
                "Due by {due}; none by then counts as a missed check-in.")
+DUTY_SLOTS = (91, 92, 93, 94)                # protocol duties (owner, 2026-11-16; protocol/): thank-yous and the weekly reflection
 RELEASE_SLOT = 100                           # above any scheduled slot index: one release check-in per local day
 RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
@@ -162,6 +163,8 @@ class CheckInService:
         # Bug fix 2026-11-15: a photo check-in was sent while the cage was off for a wear exemption and then counted as missed. While
         # `photo_suspended(now)` (a wear exemption in force) none is sent, and an open one is skipped instead of missed.
         self.photo_suspended: Callable[[datetime], bool] = lambda now: False
+        # Owner, 2026-11-16 (6e, A5): how many days the current lock has run, or None; +1 photo check-in a week from 7 days, +2 from 21.
+        self.lock_days: Callable[[datetime], float | None] = lambda now: None
         self.online_since: datetime | None = None
 
     # ------------------------------------------------------------------ driver
@@ -233,7 +236,7 @@ class CheckInService:
 
         def write(tx: Transaction, _s: object) -> bool:
             row = tx.fetch_one(
-                "SELECT * FROM check_ins WHERE user_id = ? AND kind IS NULL AND ("
+                "SELECT * FROM check_ins WHERE user_id = ? AND kind IS NULL AND slot_index NOT IN (91, 92, 93, 94) AND ("
                 " (status = 'sent' AND deadline_at >= ?) OR (status = 'insufficient_pending' AND follow_up_until >= ?)"
                 " OR status = 'responded') ORDER BY due_at DESC LIMIT 1",
                 (self._user, _iso(now), _iso(now)),
@@ -389,7 +392,43 @@ class CheckInService:
             else:
                 self._cas(row["id"], ("sending",), "needs_review", now)
 
+    # ------------------------------------------------------------------ protocol duties (owner, 2026-11-16; protocol/)
+
+    def open_duty(self, slot: int, local_date: str, deadline: datetime, now: datetime) -> str | None:
+        """A protocol duty owed by `deadline`: a check-in that is already 'sent' (protocol sends its own message). None when that slot of the
+        day is taken. A miss is decided by the usual deadline pass, with the usual consequence."""
+        assert slot in DUTY_SLOTS
+        row_id = str(uuid.uuid4())
+
+        def write(tx: Transaction, _s: object) -> str | None:
+            if not tx.execute("INSERT OR IGNORE INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, sent_at, deadline_at, "
+                              "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?)",
+                              (row_id, self._user, local_date, slot, int(self._level() or TrustLevel(4)), _iso(now), _iso(now), _iso(deadline),
+                               _iso(now), _iso(now))).rowcount:
+                return None
+            write_event(tx, DomainEvent(event_type="check_in.prompt_due", source_module="supervision", occurred_at=now,
+                                        payload={"check_in_id": row_id, "duty": slot}))
+            return row_id
+
+        return apply_transition(self._core, write=write)
+
+    def answer_duties(self, slots, now: datetime) -> int:
+        """Open protocol duties in `slots` still before their deadline are answered."""
+        marks = ",".join("?" for _ in slots)
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all(f"SELECT id FROM check_ins WHERE user_id = ? AND status = 'sent' AND slot_index IN ({marks}) AND deadline_at >= ?",
+                                (self._user, *slots, _iso(now)))
+        return sum(1 for r in rows if self._cas(r["id"], ("sent",), "answered", now, event="check_in.answered", responded_at=_iso(now)))
+
     # ------------------------------------------------------------------ the morning report (owner, 2026-11-15)
+
+    def _long_lock_extra(self, now: datetime) -> int:
+        try:
+            days = self.lock_days(now)
+        except Exception:
+            logger.exception("The lock's length could not be read; no extra photo check-ins.")
+            return 0
+        return 0 if days is None else (2 if days >= 21 else 1 if days >= 7 else 0)
 
     def _photo_held(self, now: datetime) -> bool:
         try:
@@ -503,7 +542,7 @@ class CheckInService:
                 return None
             done = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND kind = 'photo' AND local_date >= ? AND local_date < ? "
                                 "AND status != 'skipped'", (self._user, week_start, day))["n"]
-            remaining = PHOTO_CHECK_INS_PER_WEEK[level] - int(done)
+            remaining = PHOTO_CHECK_INS_PER_WEEK[level] + self._long_lock_extra(now) - int(done)
             due = None
             if remaining > 0 and self._rand() < remaining / days_left:
                 for _ in range(10):
@@ -638,7 +677,7 @@ class CheckInService:
             if r["slot_index"] == RELEASE_SLOT:           # ignoring a release offer costs nothing
                 self._cas(r["id"], ("sent",), "skipped", now)
                 continue
-            if r["slot_index"] == MORNING_SLOT and self._morning_held(now):
+            if r["slot_index"] in (MORNING_SLOT, *DUTY_SLOTS) and self._morning_held(now):
                 self._cas(r["id"], ("sent",), "skipped", now)
                 continue
             streak = self._miss_streak(r["id"], r["due_at"])
@@ -693,3 +732,10 @@ class CheckInService:
             return True
 
         return apply_transition(self._core, write=write)
+
+
+def get_duty_misses(core: CoreDatabase, user_id: str, since: str) -> int:
+    """Read-only (protocol ladder): missed morning reports and protocol duties since an ISO time."""
+    with core.transaction() as tx:
+        return int(tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND status = 'missed' AND slot_index IN (90, 91, 92, 93, 94) "
+                                "AND due_at >= ?", (user_id, since))["n"])
