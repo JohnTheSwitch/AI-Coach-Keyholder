@@ -1202,7 +1202,9 @@ def main() -> None:
         from system.temptation_wiring import build_temptations
         _window_left = window_left_hours_for(core)
         temptations = build_temptations(core, user_id=wiring.check_ins.user_id, window_cfg=_cfg,
+                                        # Leak audit 2026-11-16: a temptation needs the Deep Diver on the gear list (it was offered after `gear remove`).
                                         blocked=lambda now, u=wiring.check_ins.user_id: (not features.is_on(u, "temptations")
+                                                                                         or (obedience is not None and "deep_diver" not in obedience.owned_gear())
                                                                                          or wiring.check_ins.morning_suspended(now)
                                                                                          or wiring.vacation.is_paused(u, now) or _window_left(now) is not None))
         from system.dm_actions import ObedienceDm as _TemptationDm

@@ -41,7 +41,7 @@ EXERCISES: dict[str, Exercise] = {e.key: e for e in (
     Exercise("pullups", "Pull-ups", 3, 5, 8, 0, 0, "bw", "2 min", "as now"),
     Exercise("incline", "Incline dumbbell press", 3, 8, 12, 20, 2.5, "kg/hand", "90 s", "superset with cable rows"),
     Exercise("cable_row", "Cable row", 3, 8, 12, 34, 4, "kg", "90 s"),
-    Exercise("triceps", "Triceps pushdown", 2, 8, 12, 18, 2, "kg", "60 s", "superset with curls"),
+    Exercise("triceps", "Triceps pushdown", 2, 8, 12, 18, 4, "kg", "60 s", "superset with curls"),
     Exercise("curl", "Biceps curl", 2, 8, 12, 14, 2, "kg", "60 s"),
     Exercise("lateral", "Lateral raise", 2, 12, 20, 14, 1, "kg", "60 s", "superset with decline crunches"),
     Exercise("crunch", "Decline crunch", 2, 12, 20, 0, 0, "bw", "60 s"),

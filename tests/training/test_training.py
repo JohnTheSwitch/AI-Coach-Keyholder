@@ -102,3 +102,12 @@ def test_every_exercise_is_complete() -> None:
         assert ex.low <= ex.high and ex.sets >= 2 and ex.unit in ("kg", "kg/hand", "plates", "bw")
         assert (ex.step == 0) == (ex.unit == "bw")
     assert random  # imported for parity with the obedience tests
+
+
+def test_the_exercise_key_with_an_underscore_and_the_cable_steps(tmp_path) -> None:
+    """Bug fixes 2026-11-16: `log cable_row` was not understood; the triceps cable stack moves in 4 kg steps."""
+    from training.plan import EXERCISES
+    assert EXERCISES["triceps"].step == 4 and EXERCISES["cable_row"].step == 4
+    from training.service import _LOG, ALIASES
+    name = _LOG.match("log cable_row 34 12,12").group("name").strip().lower()
+    assert (ALIASES.get(name) or ALIASES.get(name.replace("_", " ")) or (name if name in EXERCISES else None)) == "cable_row"

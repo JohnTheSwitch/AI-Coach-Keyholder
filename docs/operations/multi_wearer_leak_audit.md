@@ -13,7 +13,7 @@ schedule, and the prompt texts (`conversation_engine/`, `ai/persona_voices.py`, 
 | Erotic task catalogue written around the owner's limits and items | `obedience/service.py` | Off at the start (`erotic_tasks` seeded off); a wearer switching it on gets the owner's catalogue filtered by gear | **Open**: needs the generic gear above and the wearer's limits from onboarding |
 | Training plan (rack, weights, Saturday/Sunday schedule, the vest) | `training/plan.py` | Off at the start (`workouts` seeded off) | **Open**: a per-wearer plan before anyone switches workouts on |
 | Workout tasks (pull-ups with the vest, push-ups on handles with the Deep Diver) | `obedience/service.py` `WORKOUTS` | Off with `workouts` | **Open**, with the training plan |
-| Temptations name the Deep Diver | `temptations/service.py` | Off at the start (`temptations` seeded off) | **Open**: offer only to a wearer who owns a vibrating plug (also closes a loophole for the owner after `gear remove deep diver`) |
+| Temptations name the Deep Diver | `temptations/service.py` | Off at the start (`temptations` seeded off) | Owner: fixed (offered only while the Deep Diver is on his gear list). Additional wearers: **open** with generic gear |
 | Task board extras (push-ups with the Deep Diver) | `task_board/service.py` | Owner-only (not in parity yet) | Open when the board gets parity |
 | Toy control (Deep Diver over Intiface) | `toy_control/` | Not wired for anyone | n/a |
 

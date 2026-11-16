@@ -223,7 +223,8 @@ class TrainingPlan:
             return None
         match = _LOG.match(text.strip())
         name = match.group("name").strip().lower() if match else ""
-        key = ALIASES.get(name)
+        # Bug fix 2026-11-16: `log cable_row` (the key itself, with an underscore) was not understood.
+        key = ALIASES.get(name) or ALIASES.get(name.replace("_", " ")) or (name if name in EXERCISES else None)
         if match is None or key is None:
             return OutgoingMessage(text="I couldn't read that. Write it like `log squat 105 4x9` or `log pullups 8,8,7`.")
         ex = EXERCISES[key]
