@@ -32,6 +32,10 @@ Chaster's own "Typing Lines" extension is a partner extension: with it on the lo
   `SWATS_WITHIN` (2 hours) of being in Chaster, rejected or taken off: the lines come back unchanged (`mode` reset), never a new incident.
 - **Before a release (B2):** the release task is his choice of three: release lines, swats, or a written request, never the one he did for
   the last release (`_release_choices`). Default: lines, or the written request when lines were last. The written request is two DM
-  messages of at least `REQUEST_MIN_WORDS` (30) words each: why he earned it, then what he will do better; code counts words only. Shorter
+  messages of at least `REQUEST_MIN_WORDS` (30) words each, `REQUEST_DISTINCT_WORDS` (15) of them different (a pasted sentence
+  repeated doesn't count): why he earned it, then what he will do better; code counts words only. Shorter
   messages are ordinary messages. The "do better" text is shown in the Sunday review a week later (`get_promises_between`).
 - `line_assignments.mode` (NULL = lines, 'swats', 'request'), `mode_chosen_at`, `request_why`, `request_better`. Buttons: scope `lines`.
+
+- Fixes 2026-11-16: swats are refused while Chaster tasks are unavailable (they could never be done); typed lines never pay a swats or
+  written-request assignment.

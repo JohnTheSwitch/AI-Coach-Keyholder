@@ -239,3 +239,12 @@ def test_a_missed_kneel_is_never_an_obedience_incident(tmp_path) -> None:
     assert row["catalog_key"] == KNEEL_KEY and row["status"] == "assigned" and w.chaster.assigned[-1] == "Kneeling for the night. Photo from behind only."
     w.tasks.tick(datetime.fromisoformat(row["deadline"].replace("Z", "+00:00")) + timedelta(minutes=5))
     assert w.row()["status"] == "failed" and w.failures == []
+
+
+def test_the_czech_ty_is_not_a_thank_you(tmp_path) -> None:
+    w = World(tmp_path)
+    at = w.climb_to(3)
+    w.ladder.gate(U, "ty jo, to bylo dobry", at)
+    assert w.answered == []
+    w.ladder.gate(U, "Děkuji za úkol", at)
+    assert w.answered

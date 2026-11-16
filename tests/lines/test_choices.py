@@ -57,7 +57,7 @@ class TestSwats:
 
 
 class TestBeforeARelease:
-    LONG = " ".join(["word"] * 31)
+    LONG = " ".join(f"word{i}" for i in range(31))
 
     def _release(self, s, db, at):
         assert s.assign_release((at - timedelta(minutes=1)).isoformat(), at)
@@ -108,11 +108,13 @@ class TestReleaseWindow:
 
     def test_the_window_is_announced_and_a_picture_in_time_closes_it(self, tmp_path) -> None:
         db, raised = core(tmp_path), []
-        w = self._window(db, lambda a, b: True, raised)
+        spans = []
+        w = self._window(db, lambda a, b: spans.append((a, b)) or True, raised)
         w.tick(NOW + timedelta(minutes=1))
         assert "release window: 2 hours" in rows(db, "SELECT text FROM notifications WHERE kind = 'release_window'")[0]["text"]
         w.tick(NOW + timedelta(hours=2, minutes=11))
         assert rows(db, "SELECT outcome FROM release_windows")[0]["outcome"] == "picture" and raised == []
+        assert spans[0][0] == NOW + timedelta(minutes=15)                  # a picture before the release itself doesn't count
 
     def test_no_picture_asks_and_unknown_never_counts(self, tmp_path) -> None:
         db, raised = core(tmp_path), []
@@ -135,3 +137,21 @@ def test_photo_check_ins_grow_with_the_lock(tmp_path) -> None:
     assert e.svc._long_lock_extra(NOW) == 2
     e.svc.lock_days = lambda now: (_ for _ in ()).throw(RuntimeError("x"))
     assert e.svc._long_lock_extra(NOW) == 0
+
+
+def test_swats_need_chaster_tasks(tmp_path) -> None:
+    db = core(tmp_path)
+    s = LineService(db, user_id=U)
+    assign(s, db, "penalty_warning.recorded")
+    assert "aren't available" in s.press(user_id=U, row_id=line_id(db), action="swats", now=NOW)
+    assert rows(db, "SELECT mode FROM line_assignments")[0]["mode"] is None
+
+
+def test_a_written_request_is_never_paid_with_typed_lines(tmp_path) -> None:
+    from lines.service import RELEASE_SENTENCE
+    db = core(tmp_path)
+    s = LineService(db, user_id=U)
+    assert s.assign_release((NOW - timedelta(minutes=1)).isoformat(), NOW)
+    s.press(user_id=U, row_id=line_id(db), action="request", now=NOW)
+    assert s.take(U, "\n".join([RELEASE_SENTENCE] * 20), NOW + timedelta(hours=4)) is None
+    assert rows(db, "SELECT status FROM line_assignments")[0]["status"] == "open"

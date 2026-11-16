@@ -54,7 +54,7 @@ ASK_PROPERLY = "Ask properly: please, and why."
 RULES_STAND = "The rules stand. Arguing changes nothing."
 WINDOW_OVER = "Window's over. Good boy for getting through it."
 CALM_CHECK = ("That sounds hard. Nothing you write here ever counts against you. If your body needs a break, ask for a health exemption and "
-              "it's granted; if you need everything paused, `vacation` stops it all. Tell me what's going on.")
+              "it's granted at once. Tell me what's going on.")      # bug fix 2026-11-16: `vacation` can only be scheduled while unlocked
 REFLECTION_ASK = ("Your weekly reflection: what you obeyed this week, where you pushed back, and one aim for next week. Due Monday 12:00.")
 
 _PUSHBACK = re.compile(r"\b(unfair|why do i have to|why should i|i won'?t do (it|that|this)|that'?s stupid|this is stupid|you can'?t make me|not fair|"
@@ -65,7 +65,7 @@ _REQUEST = re.compile(r"\b(unlock|open (the |my )?(lock|cage)|hygiene|exemption|
 _PLEASE = re.compile(r"\b(please|pls|prosím|prosim)\b", re.I)
 _BYPASS = re.compile(r"\b(health\w*|safe\w*|emergenc\w*|hurt\w*|pain\w*|bleed\w*|numb|doctor|hospital|sick|ill|injur\w*|swollen|zdrav\w*|bolest\w*|"
                      r"nouz\w*|nemocn\w*|doktor\w*|krv\w*)\b", re.I)
-_THANKS = re.compile(r"\b(thank(s| you)?|ty|děkuj\w*|dekuj\w*|díky|diky)\b", re.I)
+_THANKS = re.compile(r"\b(thank(s| you)?|děkuj\w*|dekuj\w*|díky|diky)\b", re.I)
 _TITLE_CMD = re.compile(r"^\s*title\s+(.{2,30})\s*$", re.I)
 
 

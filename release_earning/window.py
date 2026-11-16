@@ -26,6 +26,7 @@ logger = logging.getLogger("ai_coach_keyholder.release_earning")
 WINDOW = timedelta(hours=2)
 GRACE = timedelta(minutes=10)
 GIVE_UP = timedelta(hours=6)
+EARLIEST = timedelta(minutes=15)   # decided by Claude, 2026-11-16: a picture from the first 15 minutes (before the release itself) doesn't count
 
 
 class ReleaseWindow:
@@ -57,7 +58,8 @@ class ReleaseWindow:
                 write_event(tx, DomainEvent(event_type="release_earning.window_opened", source_module="release_earning", occurred_at=now,
                                             payload={"authorization_id": auth_id}))
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="release_window", dedupe_key=f"release_window:{auth_id}", now=now, immediate=True,
-                                       text=f"Your release window: 2 hours. Relock and send the verification picture in Chaster by {self._clock(due)}.")
+                                       text=f"Your release window: 2 hours. After you relock, send the verification picture in Chaster by "
+                                            f"{self._clock(due)}.")
 
         apply_transition(self._core, write=write)
 
@@ -68,7 +70,7 @@ class ReleaseWindow:
         for row in rows:
             confirmed, due = _parse_iso(row["confirmed_at"]), _parse_iso(row["due_at"])
             try:
-                seen = self._pictures(confirmed, due + GRACE)
+                seen = self._pictures(confirmed + EARLIEST, due + GRACE)
             except Exception:
                 logger.exception("The release pictures could not be read; tried again later.")
                 seen = None

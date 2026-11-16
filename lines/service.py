@@ -47,6 +47,7 @@ RELEASE_GROUP = "RELEASE"          # owner, 2026-11-15 (earn the release): lines
 RELEASE_SENTENCE = "I am grateful to my keyholder for every release I earn."
 RELEASE_LINES = 20
 SWATS_WITHIN = timedelta(hours=2)      # owner, 2026-11-16 (B1): the swats photo is due this long after the task is in Chaster
+REQUEST_DISTINCT_WORDS = 15            # ...of which at least this many different words
 REQUEST_MIN_WORDS = 30                 # B2: each of the written request's two answers (code counts words only)
 RELEASE_OPTIONS = ("lines", "swats", "request")   # B2: his choice before a release, never the one he did last time
 FALLBACK_AFTER = timedelta(hours=3)    # a sheet that waited this long for Chaster's task slot may be typed in the DM instead
@@ -211,6 +212,8 @@ class LineService:
         mode = None if action == "lines" else action
         if action not in allowed or (row["mode"] or None) == mode:
             return "That choice isn't open for these."
+        if action == "swats" and self.paper is None:          # bug fix 2026-11-16: swats need a Chaster task, or they could never be done
+            return "Swats need a Chaster task, and Chaster tasks aren't available right now. The lines stand."
         if row["task_id"] and self.paper is not None:
             try:
                 current = self.paper.chaster.current_task(row["lock_id"])
@@ -240,8 +243,9 @@ class LineService:
 
     def _take_request(self, user_id: str, text: str, now: datetime) -> OutgoingMessage | None:
         """B2: an open written request takes his answers (at least REQUEST_MIN_WORDS words each); a shorter message is an ordinary one."""
-        if len(text.split()) < REQUEST_MIN_WORDS:
-            return None
+        words = text.split()
+        if len(words) < REQUEST_MIN_WORDS or len({w.lower().strip(".,!?;:\"'") for w in words}) < REQUEST_DISTINCT_WORDS:
+            return None                                       # bug fix 2026-11-16: a pasted sentence repeated 20 times is not a request
 
         def write(tx: Transaction, _s: object):
             row = tx.fetch_one("SELECT * FROM line_assignments WHERE user_id = ? AND status = 'open' AND mode = 'request' ORDER BY created_at LIMIT 1",
@@ -281,8 +285,8 @@ class LineService:
     def _typing_allowed(self, user_id: str, now: datetime) -> bool:
         """Typing counts when the oldest owed sheet has waited FALLBACK_AFTER for Chaster's task slot without getting a task."""
         with self._core.transaction() as tx:
-            row = tx.fetch_one("SELECT created_at, task_id FROM line_assignments WHERE user_id = ? AND status = 'open' ORDER BY created_at, rowid LIMIT 1",
-                               (user_id,))
+            row = tx.fetch_one("SELECT created_at, task_id FROM line_assignments WHERE user_id = ? AND status = 'open' AND mode IS NULL "
+                               "ORDER BY created_at, rowid LIMIT 1", (user_id,))
         return row is not None and row["task_id"] is None and now - _parse_iso(row["created_at"]) >= FALLBACK_AFTER
 
     def is_lines_task(self, task_id: str | None) -> bool:
@@ -447,7 +451,7 @@ class LineService:
 
         def write(tx: Transaction, _s: object):
             rows = [dict(r) for r in tx.fetch_all("SELECT id, sentence, required, done FROM line_assignments WHERE user_id = ? AND status = 'open' "
-                                                  "ORDER BY created_at, rowid", (user_id,))]
+                                                  "AND mode IS NULL ORDER BY created_at, rowid", (user_id,))]   # swats / a request are not typed
             if not rows:
                 return None
             wanted = {normalize(r["sentence"]) for r in rows}

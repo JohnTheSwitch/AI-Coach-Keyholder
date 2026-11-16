@@ -134,6 +134,17 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 
 ## Ideas (not approved; each needs the owner's yes)
 
+- **Found overnight 2026-11-16 (Claude's review; each needs his yes):**
+  - **`gear remove` is an instant loophole.** Removing the Deep Diver (or any piece) stops every task that uses it at once. Proposal: while
+    locked, a removal takes effect after 24 hours and a "Still want it removed?" question (like G3); "it broke" or "I lost it" is immediate
+    and noted. Adding stays immediate. (Close to P9, which he deferred, so asked separately.)
+  - **The coach proposes commitments from small talk.** "Plan outfit for Saturday's ball" came from a remark about dancing. Proposal: an
+    unsolicited proposal only when his message itself talks about a plan, goal or to-do.
+  - **The chat model drifts into the Iron Contract and invents plans** ("What time is your dancing school tonight?"). Proposal: the Iron
+    Contract fragment only when he asks about rules or the contract; today's tasks (added overnight) already ground the rest.
+  - **Check-ins missed early last week (10 of 13 unanswered, mostly Mon-Wed).** Not a bug found yet; worth asking him whether the
+    times were bad (e.g. at the gym or the dancing school), which the check-in hours could avoid.
+
 - **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; first try the PC's built-in Bluetooth, the owner will
   test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
