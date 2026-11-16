@@ -147,7 +147,9 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 
 - **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; first try the PC's built-in Bluetooth, the owner will
   test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
-  First step: a test that it pairs and responds. A new kind of action on his body, so asked first.
+  First step: a test that it pairs and responds. A new kind of action on his body, so asked first. Groundwork built 2026-11-16 (not wired):
+  `toy_control/` and his own test `python -m cli toy-test --level 0.2 --seconds 2 --yes`; Intiface Central installed; the PC's Bluetooth
+  adapter showed Code 43 and must be fixed first.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
 - **Typing Lines** extension: desk research done (2026-11-16, `docs/research/typing_lines.md`): the bot can keep rewriting the lock's extensions with it installed (sent back unchanged), but cannot configure or drive it; recommendation: not worth integrating.
 - **Ideas from his favourite stories (2026-11-15), P1-P10 + his kink ideas 1-5:** task board, title in every DM, the release as a timed

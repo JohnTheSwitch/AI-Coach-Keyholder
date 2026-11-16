@@ -58,3 +58,9 @@ Sources: [Intiface: Satisfyer](https://intiface.com/docs/intiface-central/brands
 [buttplug on PyPI](https://pypi.org/project/buttplug/),
 [Buttplug connectors docs](https://buttplug.io/docs/dev-guide/writing-buttplug-applications/connectors),
 [Buttplug 5.1.10 changes](https://tangled.org/buttplug.io/buttplug/commits/buttplug-5.1.10).
+
+## Groundwork built (2026-11-16)
+
+`toy_control/` (not wired into the bot): a minimal Buttplug v3 client over aiohttp and the owner's own test,
+`python -m cli toy-test --level 0.2 --seconds 2 --yes` (capped at 50% and 10 seconds, always stopped). Intiface Central 3.2.2 is
+installed on the PC; the PC's Realtek Bluetooth adapter showed Code 43 on 2026-11-16 and must be fixed first.

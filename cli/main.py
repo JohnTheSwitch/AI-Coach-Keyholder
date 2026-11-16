@@ -490,6 +490,36 @@ def run_release_test_override(args, *, out, now, factory) -> int:
     return 0
 
 
+def run_toy_test(args, *, out) -> int:
+    """Owner, 2026-11-16 (P6 groundwork): one short, capped buzz through Intiface Central on this PC. Nothing else; never from the bot."""
+    if not args.yes:
+        out.write("Add --yes to run it: the toy will vibrate.\n")
+        return 2
+    import asyncio
+    import aiohttp
+    from toy_control.client import IntifaceClient, ToyError, run_test
+
+    async def go() -> bool:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(args.url) as ws:
+                async def recv() -> str:
+                    msg = await ws.receive()
+                    if msg.type != aiohttp.WSMsgType.TEXT:
+                        raise ToyError("the connection closed")
+                    return msg.data
+                return await run_test(IntifaceClient(ws.send_str, recv), level=args.level, seconds=args.seconds,
+                                      say=lambda text: out.write(text + "\n"))
+
+    try:
+        return 0 if asyncio.run(go()) else 1
+    except (aiohttp.ClientError, OSError) as exc:
+        out.write(f"Could not reach Intiface Central at {args.url} ({exc.__class__.__name__}). Is it running with the server started?\n")
+        return 1
+    except ToyError as exc:
+        out.write(f"Intiface answered with an error: {exc}\n")
+        return 1
+
+
 def run_obedience_extra(args, *, out, now) -> int:
     """Owner, 2026-11-15: ONE extra erotic obedience task today at --at (local HH:MM), beside the day's own task (obedience.plan_extra_task)."""
     import hmac
@@ -1073,6 +1103,11 @@ def main(argv: list[str], *, out: TextIO | None = None,
                                                        "penalty window; the running bot carries it out only with a confirmed barrier in free time.")
     rt.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     rt.add_argument("--yes", action="store_true", help="confirm that this really spends a token and releases the live lock")
+    tt = sub.add_parser("toy-test", help="Owner, 2026-11-16 (P6): one short capped buzz through Intiface Central on this PC (toy paired, server started).")
+    tt.add_argument("--level", type=float, default=0.2, help="0-1, capped at 0.5")
+    tt.add_argument("--seconds", type=float, default=2.0, help="capped at 10")
+    tt.add_argument("--url", default="ws://127.0.0.1:12345")
+    tt.add_argument("--yes", action="store_true", help="confirm (the toy will vibrate)")
     ox = sub.add_parser("obedience-extra", help="Owner, 2026-11-15: file ONE extra erotic obedience task for today at a local time (the running bot gives it).")
     ox.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
     ox.add_argument("--at", required=True, help="local time HH:MM")
@@ -1294,6 +1329,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
     if args.command == "setup":
         return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory, review_factory=review_factory,
                          lock_tasks=lock_tasks_reader(config_factory, now) if args.setup_command == "check" else None)
+    if args.command == "toy-test":
+        return run_toy_test(args, out=out)
     if args.command == "obedience-extra":
         return run_obedience_extra(args, out=out, now=now)
     if args.command == "obedience-credit-training":
