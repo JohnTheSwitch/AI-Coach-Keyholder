@@ -74,6 +74,10 @@ FOLLOW_UP_WINDOW = timedelta(minutes=30)     # after an INSUFFICIENT verdict
 STRICT_RESPONSE_TIMEOUT = timedelta(minutes=30)   # strict Supervision Mode (Trust < 0.40)
 STRICT_FOLLOW_UP_WINDOW = timedelta(minutes=15)
 QUIET_AFTER_ANSWER = timedelta(hours=3)       # owner, 2026-11-10: an hour after answering, the same question came again
+# Owner, 2026-11-16: "while in Supervision Mode, 3 check-ins a day (Level 1 cadence) regardless of your level". Decided by Claude: the quiet
+# time after an answer is shorter then, or the 3-hour gap would silently skip one of the three in an evening window.
+SUPERVISION_CHECK_INS = 3
+SUPERVISION_QUIET_AFTER_ANSWER = timedelta(minutes=90)
 MAX_LATE = timedelta(minutes=30)             # a slot that is this overdue is skipped, not sent
 _STALE_SENDING = timedelta(minutes=5)
 MORNING_SLOT = 90                            # owner, 2026-11-15: the morning report (one a local day; below the release slot)
@@ -318,6 +322,8 @@ class CheckInService:
         if level is None:
             return
         n = check_ins_per_day(level)
+        if self._strict():
+            n = max(n, SUPERVISION_CHECK_INS)          # owner, 2026-11-16: Supervision Mode asks three times a day
         local_date = self._cfg.local(now).date()
 
         def write(tx: Transaction, _s: object) -> int:
@@ -354,7 +360,8 @@ class CheckInService:
             today = self._cfg.local(now).date().isoformat()
             later_today = tx.fetch_one("SELECT 1 FROM check_ins WHERE user_id = ? AND status = 'scheduled' AND local_date = ? AND due_at > ?",
                                        (self._user, today, _iso(now))) is not None
-        recently_answered = answered is not None and now - _parse_iso(answered) < QUIET_AFTER_ANSWER
+        quiet = SUPERVISION_QUIET_AFTER_ANSWER if self._strict() else QUIET_AFTER_ANSWER
+        recently_answered = answered is not None and now - _parse_iso(answered) < quiet
         # Owner, 2026-11-10: a check-in that fell into a time the PC was off is not simply lost. The latest overdue one of today is sent late, once,
         # when nothing else is planned for the rest of the day; older ones are skipped as before.
         late_ok = None if later_today else next((r["id"] for r in reversed(due) if r["local_date"] == today), None)

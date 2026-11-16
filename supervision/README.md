@@ -13,6 +13,9 @@ prompts, answers, evaluation and penalties are later phases.
 - **Decision (owner):** check-ins apply whenever the Trust level is below Level 4 (score < 0.85); the < 0.40 threshold
   only switches on the strict *Supervision Mode*. Cadence is therefore level-based: Level 3 one per day, Level 2 two,
   Level 1 three.
+- **Owner, 2026-11-16:** while in Supervision Mode, 3 check-ins a day (Level 1 cadence) regardless of the level; the quiet time after
+  an answer is 90 minutes then instead of 3 hours (decided by Claude, so the third is not silently skipped). When supervision ends, the extra
+  unsent slot of the day is skipped.
 - Isolation: imports nothing from `chaster*`, `conversation_engine`, `application`,
   `bot`, `discord` or `ai`.
 

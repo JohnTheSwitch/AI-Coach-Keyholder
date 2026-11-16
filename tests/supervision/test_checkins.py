@@ -522,3 +522,26 @@ class TestMorningReport:
 def _iso_(at):
     from infrastructure.time_format import iso
     return iso(at)
+
+
+class TestSupervisionCadence:
+    """Owner, 2026-11-16: while in Supervision Mode, 3 check-ins a day (Level 1 cadence) regardless of the level."""
+
+    @pytest.mark.parametrize("score", [0.75, 0.5, 0.9])
+    def test_supervision_asks_three_times_a_day(self, tmp_path, score) -> None:
+        e = Env(tmp_path, score=score)
+        e.svc._is_strict = lambda: True
+        e.svc.tick(local(MON, 9, 0))
+        assert len(e.rows()) == 3
+
+    def test_after_supervision_the_extra_slot_is_skipped(self, tmp_path) -> None:
+        e = Env(tmp_path, score=0.5)
+        e.svc._is_strict = lambda: True
+        e.svc.tick(local(MON, 9, 0))
+        e.svc._is_strict = lambda: False
+        e.svc.tick(local(MON, 9, 5))
+        assert sorted(r["status"] for r in e.rows()) == ["scheduled", "scheduled", "skipped"]
+
+    def test_the_quiet_time_after_an_answer_is_shorter_in_supervision(self) -> None:
+        from supervision.checkins import QUIET_AFTER_ANSWER, SUPERVISION_QUIET_AFTER_ANSWER
+        assert SUPERVISION_QUIET_AFTER_ANSWER < QUIET_AFTER_ANSWER

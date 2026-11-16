@@ -626,3 +626,31 @@ class TestParity12Obedience:
         assert runtime.obedience.owned_gear() == frozenset({"collar"})
         with w.main.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM obedience_gear")["n"] == 0
+
+
+class TestParity13Release:
+    """Owner, 2026-11-16 (multi-wearer first): earning the release, the release window and the relock picture for an additional wearer."""
+
+    def test_the_release_waits_for_training_or_release_lines(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        release_task = runtime.wiring.release_task
+        if release_task is None:
+            return
+        assert release_task.release_earned is not None
+        assert runtime.release_window is None                      # no wearer connection: no window, never a miss on an unknown
+
+    def test_with_a_connection_the_window_and_relock_picture_are_wired(self, w) -> None:
+        from types import SimpleNamespace as NS
+        from system.tenant_factory import tenant_config
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        if runtime.wiring.release_task is None or runtime.exemptions is None:
+            return
+        runtime.detectors = NS(signals=NS(raise_signal=lambda **kw: True))
+        cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
+        w.factory._release_and_relock(runtime, cfg, runtime.core, runtime.wiring, NS(), NS())
+        assert runtime.release_window is not None and runtime.release_window.enabled() is True
+        assert runtime.exemptions.relock_pictures is not None and runtime.exemptions.raise_missing_picture is not None
+        runtime.features.set(runtime.wearer_user_id, "release_relock", False, NOW)
+        assert runtime.release_window.enabled() is False

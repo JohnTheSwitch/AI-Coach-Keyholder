@@ -111,6 +111,7 @@ class TenantRuntime:
     lines: object | None = None                       # lines.service.LineService for THIS wearer (parity 11)
     extra_consumers: dict | None = None               # further outbox consumers of THIS tenant (lines)
     obedience: object | None = None                   # obedience.service.ObedienceTasks for THIS wearer (parity 12)
+    release_window: object | None = None              # release_earning.window.ReleaseWindow for THIS wearer (parity 13)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
@@ -125,6 +126,8 @@ class TenantRuntime:
                 self.opt_outs.tick(self.clock.now())       # parity 10: switch-offs asked about after 24 h while locked, in this tenant only
             except Exception:
                 logger.exception("An opt-out pass of tenant %s failed; will retry next cycle.", self.tenant_id)
+        if self.release_window is not None:
+            self.release_window.tick(self.clock.now())     # parity 13: never raises (it logs and carries on)
         if self.obedience is not None:
             try:
                 self.obedience.tick(self.clock.now())      # parity 12: the daily task, on this wearer's paired lock only
@@ -347,6 +350,7 @@ class TenantFactory:
             runtime.dm_actions["exemption"] = ExemptionDm(exemptions, resolve_user=resolve, now=s.clock.now)
         self._lines(runtime, service, core, wiring, wearer.id)        # after the exemptions: owed lines hold an opening
         self._obedience(runtime, service, cfg, core)                  # after the spot checks and the detectors it needs
+        self._release_and_relock(runtime, cfg, core, wiring, tokens, connections)   # after the lines and the obedience it reads
         if dispatcher is not None:
             from system.penalty_notices import penalty_notice_handlers
             runtime.notifications, runtime.penalty_notices = dispatcher, penalty_notice_handlers(wearer.id)
@@ -377,6 +381,82 @@ class TenantFactory:
         service.opt_outs, service.features_command = opt_outs, features.command
         runtime.opt_outs, runtime.features = opt_outs, features
         runtime.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+
+    # ------------------------------------------------------------------ parity 13: earning the release, its window, the relock picture
+
+    def _release_and_relock(self, runtime, cfg, core: CoreDatabase, wiring, tokens, connections) -> None:
+        """Owner, 2026-11-16 (multi-wearer first), all over THIS wearer's database and Chaster connection:
+        - earning the release: a token waits for that day's verified training session or the release lines (the owner's rule);
+        - the release window: 2 hours to relock and send a verification picture, unless their `release relock` switch is off;
+        - the relock picture after a planned hygiene opening while their hygiene Trust is below 0.70.
+        The pictures come from the locks the wearer wears, through their own connection; without it there is no window and no relock
+        picture check (unknown never counts against them)."""
+        wearer_id = runtime.wearer_user_id
+        release_task = wiring.release_task if getattr(wiring.release_task, "user_id", None) == wearer_id else None
+        if release_task is not None and runtime.lines is not None:
+            from obedience.service import get_training_verified_since
+            from release_earning.service import ReleaseEarning
+            training = getattr(runtime.obedience, "training", None) if runtime.obedience is not None else None
+            earning = ReleaseEarning(
+                user_id=wearer_id, last_spend_at=lambda rt=release_task: rt.engine.get_last_spend_at(rt.user_id),
+                training_verified_since=lambda since: get_training_verified_since(core, wearer_id, since),
+                training_today=(lambda now, tp=training: tp.is_training_day_now(now)) if training is not None else (lambda now: False),
+                release_lines_done_since=runtime.lines.release_done_since, assign_release_lines=runtime.lines.assign_release)
+            release_task.release_earned = earning.hold
+        if tokens is None or connections is None or runtime.detectors is None or runtime.detectors.signals is None:
+            return
+        from chaster.hygiene_policy import HYGIENE_PICTURE_BELOW
+        from chaster.lock_directory import LockDirectory
+        from chaster.peer_reviews import PeerReviewReader
+        from infractions.signals import SignalKind
+        from infrastructure.time_format import parse_iso
+        from system.composition import window_config_from
+        from trust_manager.repository import TrustManager
+        s, signals = self._shared, runtime.detectors.signals
+        domain = cfg.hygiene_trust_domain or "hygiene"
+        directory = LockDirectory(token_manager=tokens, lock_client=s.lock_client, connections=connections)
+        reader = PeerReviewReader(token_manager=tokens, lock_client=s.lock_client)
+
+        def pictures(start, end):
+            now = s.clock.now()
+            listing = directory.list_account_locks(user_id=wearer_id, now=now)
+            ids = [lock.lock_id for lock in listing.wearer_locks if lock.status == "locked"]
+            if not ids:
+                return None
+            times = reader.picture_times(user_id=wearer_id, lock_ids=ids, now=now)
+            return None if times is None else any(start <= t <= end for t in times)
+
+        if runtime.exemptions is not None:
+            def hygiene_score():
+                state = TrustManager(core.db_path, core=core).get_domain_state(domain)
+                return None if state is None else float(state.score)
+
+            def raise_missing_picture(row, now):
+                signals.raise_signal(user_id=row["user_id"], kind=SignalKind.RELOCK_PICTURE_MISSING, subject_id=row["id"], trust_domain=domain,
+                                     now=now, detail="No verification picture within 30 minutes of relocking after a planned hygiene opening.",
+                                     wearer_text="No relock picture arrived in Chaster within 30 minutes of closing your hygiene opening. What happened?",
+                                     facts=f"Planned hygiene opening relocked at {row['relocked_at']}; no verification picture by 30 minutes later.",
+                                     window=(parse_iso(row["relocked_at"]), now))
+
+            runtime.exemptions.relock_pictures = pictures
+            runtime.exemptions.picture_required = lambda _at: (lambda score: score is not None and score < HYGIENE_PICTURE_BELOW)(hygiene_score())
+            runtime.exemptions.raise_missing_picture = raise_missing_picture
+        if release_task is not None:
+            from features.service import get_feature_on
+            from release_earning.window import ReleaseWindow
+            window = window_config_from(cfg)
+
+            def raise_overrun(row, now):
+                signals.raise_signal(user_id=wearer_id, kind=SignalKind.RELEASE_WINDOW_OVERRUN, subject_id=row["authorization_id"], trust_domain=domain,
+                                     now=now, detail="No verification picture within the 2-hour window after a release.",
+                                     wearer_text="Your release window ended without a verification picture in Chaster. What happened?",
+                                     facts=f"Release confirmed at {row['confirmed_at']}; no verification picture by {row['due_at']} + 10 minutes.",
+                                     window=(parse_iso(row["confirmed_at"]), now))
+
+            release_window = ReleaseWindow(core, user_id=wearer_id, last_release=lambda rt=release_task: rt.engine.last_confirmed_release(rt.user_id),
+                                           pictures=pictures, local_clock=lambda t, c=window: c.local(t).strftime("%H:%M"), raise_overrun=raise_overrun)
+            release_window.enabled = lambda: get_feature_on(core, wearer_id, "release_relock")
+            runtime.release_window = release_window
 
     # ------------------------------------------------------------------ parity 12: obedience tasks
 

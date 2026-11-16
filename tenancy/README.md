@@ -87,3 +87,7 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
     spot checks, misses through their own detector questions. Their limits and gear are not known yet, so `erotic_tasks` and `workouts`
     start OFF (seeded once, never over the wearer's own choice) and the gear list starts EMPTY (`gear add`). The training plan is the
     owner's programme until onboarding sets the wearer's own (roadmap D8).
+13. **Earning the release, the release window and the relock picture (done 2026-11-16).** `TenantFactory._release_and_relock`: a token
+    waits for the day's verified training session or the release lines; with the wearer's own Chaster connection, the 2-hour release
+    window (behind their `release relock` switch, ticked by the tenant cycle) and the relock picture after a planned hygiene opening
+    while their hygiene Trust is below 0.70. Without the connection neither runs (unknown never counts against them).
