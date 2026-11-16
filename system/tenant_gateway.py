@@ -102,6 +102,12 @@ COACH_DISCLOSURE = ("A coach proposes goals and commitments; they start only on 
                     "stops the spot checks at any time.")
 
 
+# Owner, 2026-11-16: what he told the first tester; the invitation they accept must say the same.
+OPERATOR_DISCLOSURE = ("Your records (messages, check-ins, tasks, your lock's data) are stored on the computer of the keyholder who invited you; "
+                       "as the operator they can see them and use them to improve the system. You start at the beginner level with the extras "
+                       "(erotic tasks, workouts, temptations, protocol) off; `features` shows them and `<feature> on` starts one.")
+
+
 def invitation_text(name: str) -> str:
     return (f"Hello {name}. The keyholder of this bot has invited you to let it act as a keyholder for your Chaster lock.\n"
             "If you accept: the bot keeps your own separate records (goals, check-ins, trust) and may lock or release your managed lock "
@@ -110,7 +116,7 @@ def invitation_text(name: str) -> str:
             "The bot also keeps a Coaching Memory of your goals, patterns and quotes, which you can view with `memory` and erase with `forget`, "
             "and it may write private suggestions about your regime for your keyholder. You can switch Progressive Conditioning off at any time "
             "with `conditioning off`; it then stays at its current level. " + COACH_DISCLOSURE + " " + TELEMETRY_DISCLOSURE + " "
-            + IRON_CONTRACT_DISCLOSURE + "\n"
+            + IRON_CONTRACT_DISCLOSURE + " " + OPERATOR_DISCLOSURE + "\n"
             "Reply `accept` to join or `decline` to refuse. Nothing happens until you accept.")
 
 

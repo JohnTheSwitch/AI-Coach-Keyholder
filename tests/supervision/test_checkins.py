@@ -545,3 +545,26 @@ class TestSupervisionCadence:
     def test_the_quiet_time_after_an_answer_is_shorter_in_supervision(self) -> None:
         from supervision.checkins import QUIET_AFTER_ANSWER, SUPERVISION_QUIET_AFTER_ANSWER
         assert SUPERVISION_QUIET_AFTER_ANSWER < QUIET_AFTER_ANSWER
+
+
+class TestMorningMovesOnce:
+    """Bug fix 2026-11-16: every restart before noon pushed the morning report 2 hours later (17:43 that day), its text still saying 12:19."""
+
+    def test_a_restart_moves_it_at_most_once_and_the_text_follows(self, tmp_path) -> None:
+        e = Env(tmp_path)
+        e.svc.morning_on = True
+        e.svc.online_since = local(MON, 8, 0)
+        e.svc.tick(local(MON, 8, 5))
+        row = [r for r in e.rows() if r["slot_index"] == 90][0]
+        assert "Due by 12:00" in row["prompt_text"]
+        e.svc.online_since = local(MON, 10, 30)                              # the bot came back before noon
+        e.svc.tick(local(MON, 10, 31))
+        row = [r for r in e.rows() if r["slot_index"] == 90][0]
+        assert "Due by 12:30" in row["prompt_text"]
+        e.svc.online_since = local(MON, 11, 45)                              # a second restart never moves it again
+        e.svc.tick(local(MON, 11, 46))
+        row = [r for r in e.rows() if r["slot_index"] == 90][0]
+        assert "Due by 12:30" in row["prompt_text"]
+        e.svc.online_since = local(MON, 14, 0)                               # nor does one after the time
+        e.svc.tick(local(MON, 14, 1))
+        assert [r for r in e.rows() if r["slot_index"] == 90][0]["status"] == "missed"

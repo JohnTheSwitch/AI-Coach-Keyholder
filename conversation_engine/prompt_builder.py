@@ -134,6 +134,15 @@ def _render_lock_state(data: object) -> str:
     return f"Lock: {_LOCK_STATUS_PHRASES.get(status, status)}. {data['note']}"
 
 
+def _render_held_lock(data: object) -> str:
+    """Bug fix 2026-11-16: the keyholder's view of the user's own lock (provider-reported by Chaster)."""
+    if data["status"] == "locked":
+        frozen = " and frozen by the keyholder" if data.get("frozen") else ""
+        return (f"Lock (provider-reported by Chaster, read as the keyholder): the user IS locked{frozen}. Never tell them they are not locked "
+                "or have no lock.")
+    return "Lock (provider-reported by Chaster, read as the keyholder): the user's lock is unlocked."
+
+
 def _to_plain_data(value: object) -> object:
     """
     Prompt-output serialization boundary only -- converts
@@ -208,7 +217,9 @@ def _render_release(data: object) -> str:
 # whether anything is holding a release back right now.
 _RELEASE_GENERAL_RULE = (" As a general rule you may tell the user that missed check-ins and ignored questions stand between them and being "
                          "unlocked (for example: \"Keep missing these check-ins and you're surely not getting unlocked.\"), but never say whether "
-                         "anything is holding a release back right now.")
+                         "anything is holding a release back right now. Never name a specific missed check-in or incident as the "
+                         "reason they are locked, never tell them to finish, explain or catch up an old check-in (a missed one is over and cannot be "
+                         "made up), and never invent what they owe. If they are told they are locked, they are locked: never say otherwise.")
 
 
 _QUESTION_STAGES = {
@@ -314,13 +325,14 @@ _FRAGMENT_RENDERERS = {
     "lock_state": _render_lock_state,
     "active_task": _render_active_task,
     "release": _render_release,
+    "held_lock": _render_held_lock,
     "contract": _render_contract,
     "coach": _render_coach,
     "detector_questions": _render_detector_questions,
     "todays_tasks": _render_todays_tasks,
     "address": _render_address,
 }
-_FRAGMENT_ORDER = ("contract", "lock_state", "active_task", "todays_tasks", "release", "detector_questions", "coach", "address")
+_FRAGMENT_ORDER = ("contract", "lock_state", "held_lock", "active_task", "todays_tasks", "release", "detector_questions", "coach", "address")
 
 
 def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:

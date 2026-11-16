@@ -762,6 +762,9 @@ def main() -> None:
         raise SystemExit(1)
 
     context_providers = context_providers + (IronContractContextProvider(is_locked=wiring.iron_contract.locked_for_context),)
+    if getattr(wiring, "held_lock", None) is not None:          # bug fix 2026-11-16: "You're not literally locked"
+        from conversation_engine.context_providers.held_lock_provider import HeldLockContextProvider
+        context_providers = context_providers + (HeldLockContextProvider(get_latest=wiring.held_lock),)
     coaching, conditioning, memory_provider, memory_sink = coaching_memory_parts(config, config.db_path, core, coach=config.enable_coach)
     if memory_provider is not None:
         context_providers = context_providers + (memory_provider,)
@@ -879,6 +882,10 @@ def main() -> None:
         coach=coach_dm, exemption_reply=exemption_reply, clock=clock,
     )
     bot = build_bot(config, db, clock, application_service)
+    if getattr(wiring, "held_lock", None) is not None:          # bug fix 2026-11-16: his lock as its keyholder sees it
+        application_service.held_lock = wiring.held_lock
+        _held_cfg = window_config_from(config)
+        application_service.held_lock_clock = lambda at, c=_held_cfg: c.local(at).strftime("%d %b %H:%M")
     from features.service import Features
     features = Features(core)                     # owner, 2026-11-16: per-wearer feature switches (`features`, `<feature> off|on`)
     application_service.features_command = features.command

@@ -112,6 +112,7 @@ class TenantRuntime:
     extra_consumers: dict | None = None               # further outbox consumers of THIS tenant (lines)
     obedience: object | None = None                   # obedience.service.ObedienceTasks for THIS wearer (parity 12)
     release_window: object | None = None              # release_earning.window.ReleaseWindow for THIS wearer (parity 13)
+    protocol: object | None = None                    # protocol.service.ProtocolLadder for THIS wearer (parity 14)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
@@ -128,6 +129,8 @@ class TenantRuntime:
                 logger.exception("An opt-out pass of tenant %s failed; will retry next cycle.", self.tenant_id)
         if self.release_window is not None:
             self.release_window.tick(self.clock.now())     # parity 13: never raises (it logs and carries on)
+        if self.protocol is not None:
+            self.protocol.tick(self.clock.now())           # parity 14: never raises (each pass logs and carries on)
         from system.graduation import graduation_tick       # owner, 2026-11-16: four weeks at Beginner without a severe slip: asked once
         graduation_tick(self.core, self.wearer_user_id, self.clock.now())
         if self.obedience is not None:
@@ -353,6 +356,7 @@ class TenantFactory:
         self._lines(runtime, service, core, wiring, wearer.id)        # after the exemptions: owed lines hold an opening
         self._obedience(runtime, service, cfg, core)                  # after the spot checks and the detectors it needs
         self._release_and_relock(runtime, cfg, core, wiring, tokens, connections)   # after the lines and the obedience it reads
+        self._morning_and_protocol(runtime, service, cfg, core, wiring)           # after the exemptions, switches and obedience
         if dispatcher is not None:
             from system.penalty_notices import penalty_notice_handlers
             runtime.notifications, runtime.penalty_notices = dispatcher, penalty_notice_handlers(wearer.id)
@@ -383,6 +387,33 @@ class TenantFactory:
         service.opt_outs, service.features_command = opt_outs, features.command
         runtime.opt_outs, runtime.features = opt_outs, features
         runtime.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+
+    # ------------------------------------------------------------------ parity 14: the morning report and the protocol ladder
+
+    def _morning_and_protocol(self, runtime, service, cfg, core: CoreDatabase, wiring) -> None:
+        """Owner, 2026-11-16 (multi-wearer first): the morning report (on by default) and the protocol ladder (off at the beginner start,
+        `protocol on`), exactly as the owner's, over THIS wearer's database: suspended during their wear exemption, paused on
+        their vacation; their `morning report` and `protocol` switches apply."""
+        checks = wiring.check_ins
+        if checks is None or runtime.features is None:
+            return
+        from obedience.service import get_obedience_today
+        from system.composition import window_config_from
+        from system.protocol_wiring import build_protocol
+        wearer, features = runtime.wearer_user_id, runtime.features
+        window = window_config_from(cfg)
+        checks.morning_on = True
+        checks.online_since = self._shared.clock.now()
+        # Not the execution halt: a new wearer starts halted (no lock actions) while the bot already talks to them.
+        checks.morning_suspended = lambda now, rt=runtime: rt.exemptions is not None and rt.exemptions.wear_exemption_in_force(wearer)
+        checks.morning_enabled = lambda: features.is_on(wearer, "morning_report")
+        ladder = build_protocol(core, user_id=wearer, check_ins=checks, window_cfg=window,
+                                enabled=lambda: features.is_on(wearer, "protocol"),
+                                paused=lambda now: checks.morning_suspended(now) or wiring.vacation.is_paused(wearer, now),
+                                todays_task_open=lambda now: any(t["state"] == "in Chaster, photo not sent yet"
+                                                                 for t in get_obedience_today(core, wearer, window.local(now).date().isoformat())))
+        service.protocol_gate = ladder.gate
+        runtime.protocol = ladder
 
     # ------------------------------------------------------------------ parity 13: earning the release, its window, the relock picture
 

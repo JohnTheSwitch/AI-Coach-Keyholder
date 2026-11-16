@@ -75,6 +75,7 @@ class TamperWatch:
         self._repo = Path(repo)
         self._raise = raise_finding
         self._git = git or (lambda *args: _git(self._repo, *args))
+        self._start_status: str | None = None      # read the moment the bot starts (bug fix 2026-11-16: read 60 s later it saw Claude's next edits)
 
     # ------------------------------------------------------------------ at start
 
@@ -102,7 +103,7 @@ class TamperWatch:
         with self._core.transaction() as tx:
             state = tx.fetch_one("SELECT * FROM tamper_watch_state WHERE id = 1")
         head = self._head()
-        status = self._git("status", "--porcelain", "--untracked-files=no")
+        status = self._start_status if self._start_status is not None else self._git("status", "--porcelain", "--untracked-files=no")
         # Only what the running bot executes counts: tests and documentation never change its behaviour.
         changed = [line[3:].strip() for line in (status or "").splitlines() if line.strip()]
         changed = [f for f in changed if not (f.startswith(("tests/", "docs/")) or f.endswith(".md"))]
@@ -156,6 +157,7 @@ class TamperWatch:
     async def loop(self, clock, *, initial_delay_seconds: float = 60.0) -> None:
         """The start check once (after the bot is up), then a fingerprint every PASS."""
         import asyncio
+        self._start_status = await asyncio.to_thread(self._git, "status", "--porcelain", "--untracked-files=no") or ""
         await asyncio.sleep(initial_delay_seconds)
         await asyncio.to_thread(self.check_at_start, clock.now())
         while True:

@@ -459,9 +459,13 @@ class CheckInService:
             logger.exception("Could not read whether the morning report is suspended; it is (never a miss by accident).")
             return True
 
+    def _morning_base(self, day) -> datetime:
+        return self._cfg.to_utc(day, MORNING_DUE[1] if is_non_working_day(self._cfg, day) else MORNING_DUE[0])
+
     def _morning_due(self, day) -> datetime:
-        base = self._cfg.to_utc(day, MORNING_DUE[1] if is_non_working_day(self._cfg, day) else MORNING_DUE[0])
-        if self.online_since is not None and self._cfg.local(self.online_since).date() == day:
+        # Bug fix 2026-11-16: only a bot that came back BEFORE the normal time moves it (every restart used to push it 2 hours later).
+        base = self._morning_base(day)
+        if self.online_since is not None and self._cfg.local(self.online_since).date() == day and self.online_since < base:
             base = max(base, self.online_since + MORNING_AFTER_START)
         return base
 
@@ -477,10 +481,12 @@ class CheckInService:
         for row in rows:
             due = _parse_iso(row["due_at"])
             later = self._morning_due(day) if row["local_date"] == day.isoformat() else due
-            if later > due and now < due:
+            # Moved at most once (bug fix 2026-11-16): only a row still at its normal time, and its text says the new time.
+            if later > due and now < due and row["local_date"] == day.isoformat() and due == self._morning_base(day):
                 def move(tx: Transaction, _s: object, r=row, at=later) -> None:
-                    tx.execute("UPDATE check_ins SET due_at = ?, deadline_at = CASE WHEN status = 'sent' THEN ? ELSE deadline_at END, updated_at = ? "
-                               "WHERE id = ?", (_iso(at), _iso(at), _iso(now), r["id"]))
+                    text = MORNING_ASK.format(due=self._cfg.local(at).strftime("%H:%M")) if r["prompt_text"] else r["prompt_text"]
+                    tx.execute("UPDATE check_ins SET due_at = ?, deadline_at = CASE WHEN status = 'sent' THEN ? ELSE deadline_at END, prompt_text = ?, "
+                               "updated_at = ? WHERE id = ?", (_iso(at), _iso(at), text, _iso(now), r["id"]))
                 apply_transition(self._core, write=move)
             elif row["status"] == "scheduled" and now >= due:
                 if self._morning_held(now):

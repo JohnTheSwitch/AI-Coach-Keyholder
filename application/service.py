@@ -189,6 +189,8 @@ class ApplicationService:
         self.training_log = None
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.proof_switch = None                 # slice 8 (Q9): proof_checks.service.ProofChecks.set_switch, for an additional wearer only
+        self.held_lock = None                    # () -> ChasterProviderObservation | None: the keyholder's view of the owner's lock (bug fix 2026-11-16)
+        self.held_lock_clock = lambda at: at.strftime("%d %b %H:%M UTC")
         self.protocol_gate = None                # protocol.service.ProtocolLadder.gate: fixed replies before the model (owner, 2026-11-16)
         self.features_command = None             # features.service.Features.command: `features`, `<feature> off|on` (owner, 2026-11-16)
         self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
@@ -1058,7 +1060,35 @@ class ApplicationService:
         outcome = self._read_chaster_outcome(ctx)
         if outcome is None:
             return self._handle_chaster_status(ctx)
+        held = self._held_lock_message(outcome, ctx.now)
+        if held is not None:
+            return held
         return self._chaster_message(outcome.kind, now=ctx.now, detail=outcome.detail, locks=outcome.locks)
+
+    def _held_lock_message(self, outcome, now) -> OutgoingMessage | None:
+        """Bug fix 2026-11-16: the account connected here is the keyholder's, so it wears no lock; the owner's lock is read as its keyholder."""
+        if self.held_lock is None or outcome.kind != ChasterToolOutcomeKind.LOCKS or outcome.locks:
+            return None
+        try:
+            obs = self.held_lock()
+        except Exception:
+            logger.exception("The keyholder's view of the lock could not be read.")
+            return None
+        if obs is None:
+            return None
+        status = getattr(obs.status, "value", str(obs.status))
+        lines = [f"Your lock (held by your keyholder): **{status}**."]
+        if status == "locked" and obs.is_frozen:
+            lines.append("It is frozen by your keyholder: you stay locked until your keyholder releases you.")
+        lines.append(f"Provider-reported by Chaster, read {self._clock_text(obs.fetched_at)}.")
+        text = " ".join(lines)
+        return OutgoingMessage(text=text, embed=EmbedSpec(title="\U0001f512 Chaster Status", description=text, color="blue"))
+
+    def _clock_text(self, at) -> str:
+        try:
+            return self.held_lock_clock(at)
+        except Exception:
+            return str(at)
 
     def _read_chaster_outcome(self, ctx: RequestContext) -> ChasterToolOutcome | None:
         """One read-only Chaster call through the self-healing token
@@ -1103,6 +1133,9 @@ class ApplicationService:
 
         outcome = self._read_chaster_outcome(ctx)
         assert outcome is not None  # guarded above
+        held = self._held_lock_message(outcome, ctx.now)
+        if held is not None:
+            return held
         return self._chaster_message(outcome.kind, now=ctx.now, locks=outcome.locks, detail=outcome.detail)
 
     @staticmethod

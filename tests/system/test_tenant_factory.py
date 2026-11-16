@@ -654,3 +654,23 @@ class TestParity13Release:
         assert runtime.exemptions.relock_pictures is not None and runtime.exemptions.raise_missing_picture is not None
         runtime.features.set(runtime.wearer_user_id, "release_relock", False, NOW)
         assert runtime.release_window.enabled() is False
+
+
+class TestParity14MorningAndProtocol:
+    """Owner, 2026-11-16 (multi-wearer first): the morning report (on) and the protocol ladder (off at the start) for an additional wearer."""
+
+    def test_wired_in_the_wearers_runtime(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        if runtime.wiring.check_ins is None:
+            return
+        assert runtime.wiring.check_ins.morning_on is True and runtime.wiring.check_ins.morning_enabled() is True
+        assert runtime.protocol is not None and runtime.application_service.protocol_gate is not None
+        assert runtime.application_service.protocol_gate(runtime.wearer_user_id, "this is unfair", NOW) is None     # protocol off at the start
+        runtime.features.set(runtime.wearer_user_id, "protocol", True, NOW)
+        assert runtime.application_service.protocol_gate(runtime.wearer_user_id, "this is unfair", NOW) is not None
+
+    def test_the_invitation_says_what_the_operator_can_see(self) -> None:
+        from system.tenant_gateway import invitation_text
+        text = invitation_text("Alex")
+        assert "as the operator they can see them" in text and "beginner level" in text

@@ -77,3 +77,24 @@ def test_changes_to_tests_and_docs_are_not_a_dirty_start(tmp_path) -> None:
     db, git, raised, watch = world(tmp_path)
     git.status = " M tests/system/test_x.py\n M docs/roadmap.md\n M lines/README.md\n"
     assert watch.check_at_start(NOW) == []
+
+
+def test_dirtiness_is_read_when_the_bot_starts_not_a_minute_later(tmp_path) -> None:
+    """Bug fix 2026-11-16: the check ran 60 s after start and saw Claude's next, uncommitted edits."""
+    import asyncio
+
+    class Clock:
+        def now(self):
+            return NOW
+
+    db, git, raised, watch = world(tmp_path)
+
+    async def run():
+        task = asyncio.create_task(watch.loop(Clock(), initial_delay_seconds=0.2))
+        await asyncio.sleep(0.05)
+        git.status = " M lines/service.py\n"                    # edited after the start
+        await asyncio.sleep(0.4)
+        task.cancel()
+
+    asyncio.run(run())
+    assert raised == []

@@ -103,6 +103,9 @@ class RulesExecutionWiring:
     penalty_hold: object | None = None              # rules_engine.penalty_hold.PenaltyHold (Phase J2, always built): the redemption hold
     penalty_barrier: object | None = None           # chaster_execution.penalty_barrier.PenaltyBarrierExecutor (Phase J2, owner's system only)
     owner_lock: object | None = None                # system.owner_lock.OwnerLockResolver when a lock id is `auto` (owner, 2026-11-13)
+    # Bug fix 2026-11-16: the owner's Discord account is connected to the KEYHOLDER Chaster account, so "my locks" was empty and the bot
+    # said he had no lock. The keyholder's latest observation of his lock (ChasterProviderObservation or None), read-only.
+    held_lock: object | None = None
     notes: list[str] = field(default_factory=list)
 
     def release_phase(self, user_id: str) -> str | None:
@@ -415,6 +418,7 @@ def build_rules_and_execution(
                                                 keyholder_user_id=keyholder_id, keyholder_tokens=kh_tokens, lock_client=lock_client,
                                                 clock=clock or SystemClock(), resolver=out.owner_lock if auto else None)
         get_obs, refresh_obs = source.get_latest, source.refresh
+        out.held_lock = source.get_latest
         out.notes.append("Release lock: the owner's recognised lock, observed as its keyholder." if auto else f"Release lock {release_lock}: observed as its keyholder.")
     elif release_lock:
         out.notes.append("RELEASE_LOCK_ID is set but NOT used: it needs Chaster fully configured and CHASTER_EXECUTION_KEYHOLDER_USER_ID.")
