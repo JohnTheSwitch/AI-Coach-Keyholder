@@ -45,16 +45,18 @@ def build_address_provider(core):
 
 def build_protocol(core, *, user_id, check_ins, window_cfg, paused, todays_task_open):
     from lines.service import LineService
-    from obedience.service import get_verified_task_ids_since
+    from obedience.service import get_kneel_status, get_verified_task_ids_since, plan_kneel_task
     from protocol.service import ProtocolLadder, Ports
     from supervision.checkins import get_duty_misses
     lines = LineService(core, user_id=user_id)
     return ProtocolLadder(core, user_id=user_id, ports=Ports(
-        local=window_cfg.local, to_utc=window_cfg.to_utc, quiet_end=window_cfg.quiet_end, paused=paused,
+        local=window_cfg.local, to_utc=window_cfg.to_utc, quiet_end=window_cfg.quiet_end, quiet_start=window_cfg.quiet_start, paused=paused,
         open_lines=lambda: lines.open_lines(user_id), todays_task_open=todays_task_open, window_left_hours=window_left_hours_for(core),
         verified_since=lambda since: get_verified_task_ids_since(core, user_id, since),
         open_duty=check_ins.open_duty, answer_duties=check_ins.answer_duties,
-        duty_misses=lambda since: get_duty_misses(core, user_id, since)))
+        duty_misses=lambda since: get_duty_misses(core, user_id, since), skip_duties=check_ins.skip_duties,
+        plan_kneel=lambda day, at, now: plan_kneel_task(core, user_id, day, at, now),
+        kneel_status=lambda day: get_kneel_status(core, user_id, day)))
 
 
 async def protocol_loop(ladder, clock, *, interval_seconds: float = 120.0) -> None:

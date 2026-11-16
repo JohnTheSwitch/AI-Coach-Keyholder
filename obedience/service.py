@@ -471,7 +471,7 @@ def get_verified_task_ids_since(core: CoreDatabase, user_id: str, since: str) ->
     """Read-only (protocol rung 3, forms of address): ids of tasks verified since an ISO time."""
     with core.transaction() as tx:
         return [r["id"] for r in tx.fetch_all("SELECT id FROM obedience_tasks WHERE user_id = ? AND status = 'passed' AND outcome = 'verified' "
-                                              "AND decided_at >= ?", (user_id, since))]
+                                              "AND decided_at >= ? AND catalog_key != 'kneel:evening'", (user_id, since))]
 
 
 def get_surprise_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str):
@@ -532,6 +532,32 @@ def plan_board_task(core: CoreDatabase, user_id: str, day: date, key: str, text:
                           "VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, 2)", (row_id, user_id, day.isoformat(), f"board:{key}", text, _iso(now), _iso(now))).rowcount == 1
 
     return row_id if apply_transition(core, write=write) else None
+
+
+KNEEL_KEY = "kneel:evening"
+KNEEL_TEXT = "Kneeling for the night. Photo from behind only."
+KNEEL_NOTE = "Kneel for 5 minutes, then the photo. It's your protocol's evening duty: none counts as a missed check-in, nothing more."
+KNEEL_START_BY = timedelta(minutes=20)    # not in Chaster by then (the task slot stayed taken): skipped, never missed
+
+
+def plan_kneel_task(core: CoreDatabase, user_id: str, day: date, planned_at: datetime, now: datetime) -> str | None:
+    """Protocol rung 6 (owner, 2026-11-15/16; queue A3): the evening kneel as an obedience task in slot 4, outside free time allowed. A miss
+    is a missed check-in (the protocol's duty), never an obedience failure. None when today's is already planned."""
+    row_id = str(uuid.uuid4())
+
+    def write(tx: Transaction, _s: object) -> bool:
+        return tx.execute("INSERT OR IGNORE INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, slot, anytime) "
+                          "VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, 4, 1)",
+                          (row_id, user_id, day.isoformat(), KNEEL_KEY, KNEEL_TEXT, _iso(planned_at), _iso(now))).rowcount == 1
+
+    return row_id if apply_transition(core, write=write) else None
+
+
+def get_kneel_status(core: CoreDatabase, user_id: str, local_date: str) -> str | None:
+    """Read-only (protocol rung 6): today's kneel task status, or None."""
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT status FROM obedience_tasks WHERE user_id = ? AND local_date = ? AND catalog_key = ?", (user_id, local_date, KNEEL_KEY))
+    return None if row is None else row["status"]
 
 
 def get_obedience_state(core: CoreDatabase, row_id: str) -> tuple[str, str | None] | None:
@@ -757,10 +783,13 @@ class ObedienceTasks:
                 or self._ports.paused(now)):
             self._close(row, "skipped", "no_free_slot", now)            # the free time is over: no task today, no consequence
             return False
+        if row["catalog_key"] == KNEEL_KEY and now > _parse_iso(row["planned_at"]) + KNEEL_START_BY:
+            self._close(row, "skipped", "no_free_slot", now)            # rung 6: the slot stayed taken, so the kneel is skipped, never missed
+            return False
         lock_id = self._ports.lock_id(now)
         if lock_id is None or self._ports.halted() or self._ports.slot_taken() or self._chaster.current_task(lock_id) is not None:
             return False                                                # tried again next pass
-        key, text, mode, note = row["catalog_key"], row["text"], row.get("mode"), ""
+        key, text, mode, note = row["catalog_key"], row["text"], row.get("mode"), (KNEEL_NOTE if row["catalog_key"] == KNEEL_KEY else "")
         if key == ASK_KEY:
             if row["status"] == "planned":
                 self._ask(row, now)
@@ -959,7 +988,7 @@ class ObedienceTasks:
             self._update(row["id"], status="submitted", submitted_at=_iso(submitted) if submitted else None, review_status=status)
         if status == "verified":
             # Training and board tasks pay their own rewards, so they never draw a surprise.
-            surprise = (not row["catalog_key"].startswith(("training:", "board:"))) and self._rng.random() < SURPRISE_SHARE
+            surprise = (not row["catalog_key"].startswith(("training:", "board:", "kneel:"))) and self._rng.random() < SURPRISE_SHARE
             text = ("Your task was verified. Good. And a surprise: +" + SURPRISE_REWARD + " toward your next token."
                     if surprise else "Your task was verified. Good.")
             if self._close(row, "passed", "verified", now, text=text, surprise=SURPRISE_REWARD if surprise else None) and surprise:
@@ -973,6 +1002,9 @@ class ObedienceTasks:
         return 0
 
     def _fail(self, row: dict, reason: str, now: datetime) -> int:
+        if row["catalog_key"] == KNEEL_KEY:                              # rung 6: the protocol's duty decides it (a missed check-in), never an incident
+            self._close(row, "failed", reason, now)
+            return 1
         if row["catalog_key"].startswith("training:short:"):             # Q4c: the short session is optional, missing it costs nothing
             if self._close(row, "skipped", reason, now):
                 decision("obedience", "The optional short training session was skipped; no consequence.", task=row["catalog_key"])

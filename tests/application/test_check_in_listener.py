@@ -136,3 +136,15 @@ class TestIndependence:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names.append(node.module)
         assert not [n for n in names if n.split(".")[0] in ("supervision", "release_engine", "schedule_windows")]
+
+
+def test_a_fixed_protocol_reply_still_answers_a_check_in(core, tmp_path) -> None:  # noqa: F811
+    """Bug fix 2026-11-16: arguing in answer to a check-in gets the fixed reply AND counts as the answer; "Address me properly." does not."""
+    calls = []
+    service = build(core, tmp_path, lambda *a: calls.append(a) or True)
+    service.protocol_gate = lambda user_id, text, now: "The rules stand. Arguing changes nothing." if "unfair" in text else (
+        "Address me properly." if "hi" in text else None)
+    assert service.handle_message(_incoming("this is unfair", "m1")).text == "The rules stand. Arguing changes nothing."
+    assert len(calls) == 1 and calls[0][1] == "this is unfair"
+    assert service.handle_message(_incoming("hi there", "m2")).text == "Address me properly."
+    assert len(calls) == 1

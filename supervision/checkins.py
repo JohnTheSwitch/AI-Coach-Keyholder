@@ -81,7 +81,7 @@ MORNING_DUE = (time(12, 0), time(13, 0))     # due by 12:00 on a workday, 13:00 
 MORNING_AFTER_START = timedelta(hours=2)     # ...or 2 hours after the bot came back that morning, whichever is later
 MORNING_ASK = ("Good morning. Your morning report: tell me your plan for today, in your own words. Any answer counts. "
                "Due by {due}; none by then counts as a missed check-in.")
-DUTY_SLOTS = (91, 92, 93, 94)                # protocol duties (owner, 2026-11-16; protocol/): thank-yous and the weekly reflection
+DUTY_SLOTS = (91, 92, 93, 94, 95)                # protocol duties (owner, 2026-11-16; protocol/): thank-yous and the weekly reflection
 RELEASE_SLOT = 100                           # above any scheduled slot index: one release check-in per local day
 RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
@@ -236,7 +236,7 @@ class CheckInService:
 
         def write(tx: Transaction, _s: object) -> bool:
             row = tx.fetch_one(
-                "SELECT * FROM check_ins WHERE user_id = ? AND kind IS NULL AND slot_index NOT IN (91, 92, 93, 94) AND ("
+                "SELECT * FROM check_ins WHERE user_id = ? AND kind IS NULL AND slot_index NOT IN (91, 92, 93, 94, 95) AND ("
                 " (status = 'sent' AND deadline_at >= ?) OR (status = 'insufficient_pending' AND follow_up_until >= ?)"
                 " OR status = 'responded') ORDER BY due_at DESC LIMIT 1",
                 (self._user, _iso(now), _iso(now)),
@@ -411,6 +411,13 @@ class CheckInService:
             return row_id
 
         return apply_transition(self._core, write=write)
+
+    def skip_duties(self, slots, now: datetime) -> int:
+        """Open protocol duties in `slots` are skipped (never a miss): e.g. the kneel could not go on Chaster."""
+        marks = ",".join("?" for _ in slots)
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all(f"SELECT id FROM check_ins WHERE user_id = ? AND status = 'sent' AND slot_index IN ({marks})", (self._user, *slots))
+        return sum(1 for r in rows if self._cas(r["id"], ("sent",), "skipped", now))
 
     def answer_duties(self, slots, now: datetime) -> int:
         """Open protocol duties in `slots` still before their deadline are answered."""
@@ -737,5 +744,5 @@ class CheckInService:
 def get_duty_misses(core: CoreDatabase, user_id: str, since: str) -> int:
     """Read-only (protocol ladder): missed morning reports and protocol duties since an ISO time."""
     with core.transaction() as tx:
-        return int(tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND status = 'missed' AND slot_index IN (90, 91, 92, 93, 94) "
+        return int(tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND status = 'missed' AND slot_index IN (90, 91, 92, 93, 94, 95) "
                                 "AND due_at >= ?", (user_id, since))["n"])

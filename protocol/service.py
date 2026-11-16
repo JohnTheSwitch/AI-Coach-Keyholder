@@ -31,8 +31,9 @@ HOLD_DAYS = 14                      # a rung is held this long with at most MAX_
 MAX_MISSES = 1
 ANNOUNCE_AHEAD = timedelta(days=1)  # announced a day ahead
 THANKS_WITHIN = timedelta(hours=2)  # rung 3
-TOP_RUNG = 5                        # decided by Claude, 2026-11-16: rung 6 (evening kneel) is built before rung 5 can be held (earliest late
-                                    # January); until then the ladder stops at 5
+TOP_RUNG = 6
+KNEEL_BEFORE_QUIET = timedelta(minutes=10)   # rung 6: the kneel task goes on Chaster 10 minutes before quiet hours (5 minutes kneeling, then the photo)
+KNEEL_DUE_AFTER = timedelta(minutes=65)      # ...and the photo is due this long after (the obedience photo deadline + the 5 minutes)
 REFLECTION_MIN_WORDS = 10           # rung 5: any content of at least this many words counts (code counts words only)
 REVIEW_AT = time(19, 0)             # the Sunday review's time (weekly_review)
 
@@ -43,6 +44,8 @@ RUNGS = {
     4: "Address me by my title at the start of every message. Commands and buttons don't need it.",
     5: "Every Sunday after the review, your weekly reflection: what you obeyed, where you pushed back, and one aim for the week. Due Monday "
        "12:00; none counts as a missed check-in.",
+    6: "Every evening, 5 minutes before quiet hours, you kneel for 5 minutes and send a photo from behind in the Chaster task. None counts as "
+       "a missed check-in; it's skipped when the task slot is taken, during an exemption or a vacation.",
 }
 TITLE_ASK = ("Choose the title you'll use for me: send `title Sir`, `title Keyholder`, `title Master`, `title Mistress`, or `title` and your "
              "own word.")
@@ -91,6 +94,7 @@ class Ports:
     local: Callable[[datetime], datetime]                       # UTC -> local
     to_utc: Callable[..., datetime]                             # (local date, local time) -> UTC
     quiet_end: time
+    quiet_start: time
     paused: Callable[[datetime], bool]                          # vacation / halt / wear exemption: nothing new is owed
     open_lines: Callable[[], int]
     todays_task_open: Callable[[datetime], bool]                # today's task is in Chaster and not done
@@ -99,10 +103,14 @@ class Ports:
     open_duty: Callable[..., str | None]                        # supervision: (slot, local_date, deadline, now) -> check-in id
     answer_duties: Callable[..., int]                           # supervision: (slots, now) -> how many were answered
     duty_misses: Callable[[str], int]                           # supervision: duty misses since an ISO time
+    skip_duties: Callable[..., int] = lambda slots, now: 0      # supervision: (slots, now)
+    plan_kneel: Callable[..., str | None] | None = None         # obedience: (local date, planned_at, now) -> task id
+    kneel_status: Callable[[str], str | None] = lambda day: None   # obedience: today's kneel task status
 
 
 THANKS_SLOTS = (91, 92, 93)
 REFLECTION_SLOT = 94
+KNEEL_SLOT = 95
 
 
 def get_protocol_state(core: CoreDatabase, user_id: str) -> dict | None:
@@ -130,7 +138,7 @@ class ProtocolLadder:
     # ------------------------------------------------------------------ the tick
 
     def tick(self, now: datetime) -> None:
-        for step in (self._start, self._climb, self._thanks, self._reflection, self._window):
+        for step in (self._start, self._climb, self._thanks, self._reflection, self._kneel, self._window):
             try:
                 step(now)
             except Exception:
@@ -211,6 +219,28 @@ class ProtocolLadder:
                 self._dm(tx, f"protocol:reflection:{local.date().isoformat()}", REFLECTION_ASK, now)
 
             apply_transition(self._core, write=dm)
+
+    def _kneel(self, now: datetime) -> None:
+        """Rung 6: plans the evening kneel (a Chaster task) and its duty; a submitted photo answers the duty, a skipped task skips it."""
+        s = self.state()
+        if s is None or int(s["rung"]) < 6 or self._ports.plan_kneel is None:
+            return
+        local = self._ports.local(now)
+        day = local.date()
+        status = self._ports.kneel_status(day.isoformat())
+        if status in ("submitted", "passed"):
+            self._ports.answer_duties((KNEEL_SLOT,), now)
+            return
+        if status in ("skipped", "cancelled"):
+            self._ports.skip_duties((KNEEL_SLOT,), now)
+            return
+        if status is not None or self._ports.paused(now):
+            return
+        at = self._ports.to_utc(day, self._ports.quiet_start) - KNEEL_BEFORE_QUIET
+        if not (at - timedelta(minutes=5) <= now < at + timedelta(minutes=5)):
+            return
+        if self._ports.plan_kneel(day, at, now) is not None:
+            self._ports.open_duty(KNEEL_SLOT, day.isoformat(), at + KNEEL_DUE_AFTER, now)
 
     def _window(self, now: datetime) -> None:
         """How he is addressed: the first DM after a Penalty Window ends brings the praise back."""

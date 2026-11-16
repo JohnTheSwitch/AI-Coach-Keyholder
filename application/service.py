@@ -348,6 +348,11 @@ class ApplicationService:
                     logger.exception("The protocol gate failed; the message is handled normally.")
                     fixed = None
                 if fixed is not None:
+                    # Bug fix 2026-11-16: a fixed reply (pushback, asking properly, the calm check) still answers an open check-in, or arguing
+                    # would quietly become a missed check-in. Only "Address me properly." does not: a manner rung acts when redone properly.
+                    from protocol.service import ADDRESS_ME
+                    if fixed != ADDRESS_ME:
+                        self._notify_check_in(user.id, incoming.text, incoming.received_at)
                     return OutgoingMessage(text=fixed)
 
             # Deterministic guardrail, BEFORE any model: a natural-language

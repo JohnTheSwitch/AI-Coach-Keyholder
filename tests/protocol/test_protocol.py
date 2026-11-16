@@ -16,18 +16,25 @@ class World:
     def __init__(self, tmp_path) -> None:
         self.core = core(tmp_path)
         self.paused, self.lines, self.task_open, self.left, self.verified, self.misses = False, 0, False, None, [], 0
-        self.duties, self.answered = [], []
+        self.duties, self.answered, self.skipped, self.kneel, self.kneels = [], [], [], {}, []
         self.ladder = ProtocolLadder(self.core, user_id=U, ports=Ports(
-            local=lambda t: t, to_utc=lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc), quiet_end=time(7, 0),
+            local=lambda t: t, to_utc=lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc), quiet_end=time(7, 0), quiet_start=time(22, 0),
             paused=lambda now: self.paused, open_lines=lambda: self.lines, todays_task_open=lambda now: self.task_open,
             window_left_hours=lambda now: self.left, verified_since=lambda since: list(self.verified),
-            open_duty=self._open, answer_duties=self._answer, duty_misses=lambda since: self.misses))
+            open_duty=self._open, answer_duties=self._answer, duty_misses=lambda since: self.misses,
+            skip_duties=lambda slots, now: self.skipped.append(tuple(slots)) or 1, plan_kneel=self._plan_kneel,
+            kneel_status=lambda day: self.kneel.get(day)))
 
     def _open(self, slot, day, deadline, now):
         if any(d[:2] == (slot, day) for d in self.duties):
             return None
         self.duties.append((slot, day, deadline))
         return f"{slot}{day}"
+
+    def _plan_kneel(self, day, at, now):
+        self.kneels.append(at)
+        self.kneel[day.isoformat()] = "planned"
+        return "k"
 
     def _answer(self, slots, now):
         self.answered.append(tuple(slots))
@@ -76,11 +83,11 @@ class TestTheLadder:
         w.ladder.tick(MON + timedelta(days=HOLD_DAYS + 2))
         assert len(w.notes()) == 1
 
-    def test_never_past_rung_five_until_the_kneel_is_built(self, tmp_path) -> None:
+    def test_the_top_is_rung_six(self, tmp_path) -> None:
         w = World(tmp_path)
-        at = w.climb_to(5)
+        at = w.climb_to(6)
         w.ladder.tick(at + timedelta(days=60))
-        assert w.rung() == 5
+        assert w.rung() == 6
 
 
 class TestTheGate:
@@ -194,9 +201,41 @@ def test_the_wiring_builds(tmp_path) -> None:
     from types import SimpleNamespace
     from system.protocol_wiring import build_address_provider, build_protocol
     db = core(tmp_path)
-    cfg = SimpleNamespace(local=lambda t: t, to_utc=lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc), quiet_end=time(7, 0))
-    check_ins = SimpleNamespace(open_duty=lambda *a: None, answer_duties=lambda *a: 0)
+    cfg = SimpleNamespace(local=lambda t: t, to_utc=lambda d, t: datetime.combine(d, t, tzinfo=timezone.utc), quiet_end=time(7, 0), quiet_start=time(22, 0))
+    check_ins = SimpleNamespace(open_duty=lambda *a: None, answer_duties=lambda *a: 0, skip_duties=lambda *a: 0)
     ladder = build_protocol(db, user_id=U, check_ins=check_ins, window_cfg=cfg, paused=lambda now: False, todays_task_open=lambda now: False)
     ladder.tick(MON)
     assert ladder.gate(U, "this is unfair", MON) == RULES_STAND
     assert build_address_provider(db).provide_context(subject_key=U, now=MON).data == {"window": False, "praise": False, "title": None}
+
+
+def test_the_evening_kneel_from_rung_six(tmp_path) -> None:
+    """Rung 6: 10 minutes before quiet hours the kneel goes on Chaster with a duty; a submitted photo answers it, a skipped task skips it."""
+    from protocol.service import KNEEL_SLOT
+    w = World(tmp_path)
+    at = w.climb_to(6)
+    evening = datetime.combine(at.date() + timedelta(days=1), time(21, 50), tzinfo=timezone.utc)
+    w.ladder.tick(evening - timedelta(hours=2))
+    assert w.kneels == []
+    w.ladder.tick(evening)
+    assert w.kneels == [evening] and w.duties[-1][0] == KNEEL_SLOT and w.duties[-1][2] == evening + timedelta(minutes=65)
+    w.kneel[evening.date().isoformat()] = "submitted"
+    w.ladder.tick(evening + timedelta(minutes=8))
+    assert w.answered[-1] == (KNEEL_SLOT,)
+    w.kneel[evening.date().isoformat()] = "skipped"
+    w.ladder.tick(evening + timedelta(minutes=30))
+    assert w.skipped[-1] == (KNEEL_SLOT,)
+
+
+def test_a_missed_kneel_is_never_an_obedience_incident(tmp_path) -> None:
+    from obedience.service import KNEEL_KEY, plan_kneel_task
+    from tests.obedience.test_obedience import World as OW, MORNING
+    w = OW(tmp_path)
+    day = MORNING.date()
+    at = MORNING.replace(hour=21, minute=50)
+    assert plan_kneel_task(w.core, "wearer", day, at, MORNING) is not None and plan_kneel_task(w.core, "wearer", day, at, MORNING) is None
+    w.tasks.tick(at)
+    row = w.row()
+    assert row["catalog_key"] == KNEEL_KEY and row["status"] == "assigned" and w.chaster.assigned[-1] == "Kneeling for the night. Photo from behind only."
+    w.tasks.tick(datetime.fromisoformat(row["deadline"].replace("Z", "+00:00")) + timedelta(minutes=5))
+    assert w.row()["status"] == "failed" and w.failures == []
