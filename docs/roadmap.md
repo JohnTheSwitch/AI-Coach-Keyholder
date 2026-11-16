@@ -155,7 +155,7 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 
 ## Ideas (not approved; each needs the owner's yes)
 
-- **Cooling-off (asked 2026-11-16 ~17:20, ask again from 2026-11-17 ~17:20):** the check-ins missed before he took the lock seriously (the
+- **Cooling-off (first raised 2026-11-16 10:50 Prague, ask again from 2026-11-17 10:50 Prague):** the check-ins missed before he took the lock seriously (the
   test lock with his then girlfriend, up to Thu 12 Nov) should not hold releases through supervision. Loosening while locked, so it waits
   24 h (D13). Options to offer then: leave as is (they age out of the 7-day window by about Thu 19 Nov), or leave misses before a cut-off
   date out of short-term Trust (they stay in the record and in long-term Trust).
