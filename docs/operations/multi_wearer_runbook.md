@@ -46,6 +46,23 @@ Before allowing any real lock action, do the live test-lock verification (exhaus
 Nothing acts on a wearer's lock until all of these hold: the tenant is active, the pairing is confirmed, a fresh keyholder search shows the paired lock
 locked with the bot as keyholder, and neither the tenant halt nor the platform halt is set.
 
+### What a new wearer starts with (owner, 2026-11-16)
+
+- **Beginner level** (`advanced_mode`): tokens base 1.0, +0.025 per release up to 1.5; lines 10 / 20, release lines 10; asked to move up after 4
+  weeks without a severe incident (`system/graduation.py`). `mode request standard` moves up; going down only while unlocked.
+- **Off at the start** (`features`): erotic tasks, workouts, temptations, protocol. The wearer switches them on (`<feature> on`).
+- **Gear list empty**: `gear add <piece>` or `gear add <piece> as <their name>`; pieces are listed by role (`gear`).
+- **Workouts:** the training plan in `training/plan.py` is the owner's programme. Do not let a wearer switch `workouts` on until a plan of
+  their own exists (see `docs/operations/multi_wearer_leak_audit.md`).
+- Before inviting anyone, set up a small private Discord server with the bot and invite the wearer there: Discord lets a person DM a bot
+  only when they share a server.
+
+### The operator's own rule (owner, 2026-11-16)
+
+A tester's settings are never loosened because they asked the operator directly (on Chaster, Discord or anywhere else). Any loosening goes
+through the bot's own rules (the 24-hour wait and the second question), exactly as for the owner. Tightening or a health or safety need is
+always immediate.
+
 ## 4. Stopping things
 
 | Want | Command | Who can undo |

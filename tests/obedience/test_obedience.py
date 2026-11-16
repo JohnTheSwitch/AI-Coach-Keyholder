@@ -740,3 +740,26 @@ class TestGearRemovalWaits:
         w.tasks.remove_wait = lambda user, piece, now: 1 / 0
         assert not w.tasks.gear_command(U, "gear remove deep diver", MORNING).startswith("Removed")
         assert "deep_diver" in w.tasks.owned_gear()
+
+
+class TestOwnGearNames:
+    """Leak audit (owner, 2026-11-16): another wearer sees pieces by role and their own names replace the owner's items in task texts."""
+
+    def test_a_wearer_names_their_own_piece_and_tasks_use_it(self, tmp_path) -> None:
+        from obedience.service import ROLE
+        w = World(tmp_path)
+        w.tasks.default_owned, w.tasks.generic_names = frozenset(), True
+        assert w.tasks.gear_command(U, "gear add vibrating plug as Black Silicone Plug", MORNING) == \
+            "Added: Black Silicone Plug. Tasks that need it can come now."
+        listing = w.tasks.gear_command(U, "gear", MORNING)
+        assert "Your gear: Black Silicone Plug." in listing and ROLE["dildo_purple"] in listing and "RealRock" not in listing
+        assert w.tasks.personalize("Your gray Satisfyer Deep Diver in. Keep the Deep Diver in.") == \
+            "Your Black Silicone Plug in. Keep the Black Silicone Plug in."
+        for _ in range(200):
+            task = w.tasks._pick(MORNING.date(), "alone")
+            assert "Deep Diver" not in task.text and "Satisfyer" not in task.text
+
+    def test_the_owner_keeps_his_names(self, tmp_path) -> None:
+        w = World(tmp_path)
+        assert w.tasks.personalize("Your gray Satisfyer Deep Diver in.") == "Your gray Satisfyer Deep Diver in."
+        assert "gray Satisfyer Deep Diver" in w.tasks.gear_command(U, "gear", MORNING)

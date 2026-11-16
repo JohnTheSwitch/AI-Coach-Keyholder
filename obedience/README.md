@@ -121,3 +121,8 @@ always keeps "Key and shears within reach."
 - `door_wait` (needs the harness and a `leash`): kneeling at the door, the leash from the harness waist ring to the door handle, 10 minutes;
   the safety note says never the collar, a one-handed clip, shears within reach. Decided by Claude: not yet a release-task option (he owns
   neither piece); added when he does.
+
+Leak audit (owner, 2026-11-16): for an additional wearer (`generic_names`) every piece is listed by its role (`ROLE`: vibrating plug, small
+plug, suction-cup dildo...) and `gear add <piece> as <their name>` stores their own name (migration 088, `obedience_gear.label`); a picked
+task's text has the owner's item names replaced by theirs (`personalize`, `NAME_VARIANTS`, toys only: restraints, the harness and the collar
+keep their words because the safety notes are read from them). Without a label nothing changes, so the owner's texts are as before.

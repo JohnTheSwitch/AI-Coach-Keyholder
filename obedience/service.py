@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import random
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _replace
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -104,6 +104,29 @@ GEAR_ALIASES = {"gildo": "gildo_27", "plug_joy": "plug_joy_medium", "plug_and_jo
                 "bijou": "bijou_large", "diver": "deep_diver", "cuffs": "leather_cuffs", "padlock": "padlocks", "locks": "padlocks",
                 "nipple_clamps": "clamps", "clamp": "clamps", "mask": "blindfold", "harness": "bondage_harness",
                 "hidden_desire_harness": "bondage_harness", "ball_gag": "gag", "fluffy_cuffs": "toy_cuffs"}
+# Leak audit (owner, 2026-11-16): the catalogue names are the owner's own items. An additional wearer sees each piece by its ROLE and may
+# give it their own name (`gear add vibrating plug as black silicone plug`); task texts then use their name (NAME_VARIANTS, longest first).
+# Only toys are renamed: restraints, the harness and the collar keep their names, because the safety notes are read from those words.
+ROLE: dict[str, str] = {
+    "deep_diver": "vibrating plug", "bijou_large": "large metal plug", "gildo_27": "glass plug", "plug_joy_medium": "medium plug",
+    "rimfire_s": "small plug", "dildo_purple": "suction-cup dildo", "dildo_big": "big dildo", "rope_cotton": "soft rope",
+    "rope_hemp": "hemp rope", "toy_cuffs": "fluffy cuffs", "leather_cuffs": "leather cuffs", "padlocks": "small padlocks",
+    "blindfold": "blindfold", "collar": "collar", "clamps": "nipple clamps", "gag": "ball gag",
+    "bondage_harness": "bondage harness (collar, waist strap, velcro cuffs)", "airpods": "noise-cancelling earphones", "leash": "leash",
+}
+NAME_VARIANTS: dict[str, tuple[str, ...]] = {
+    "deep_diver": ("gray Satisfyer Deep Diver (vibrating plug)", "gray Satisfyer Deep Diver", "gray Deep Diver", "Satisfyer Deep Diver", "Deep Diver"),
+    "bijou_large": ("clear Crushious Bijou (metal plug)", "clear Crushious Bijou", "Crushious Bijou", "clear Bijou", "Bijou"),
+    "gildo_27": ("glass Gildo No. 27 plug", "glass Gildo No. 27", "Gildo No. 27", "Gildo"),
+    "plug_joy_medium": ("Plug & Joy medium plug", "Plug & Joy medium", "Plug & Joy"),
+    "rimfire_s": ("Wolf Rimfire S plug", "Wolf Rimfire S", "Rimfire"),
+    "dildo_purple": ("purple RealRock dildo", "RealRock dildo"),
+    "dildo_big": ("big Lovetoy dildo", "Lovetoy dildo"),
+    "airpods": ("AirPods with noise cancellation", "AirPods"),
+}
+GEAR_ALIASES.update({role.replace(" ", "_"): key for key, role in ROLE.items() if "(" not in role})
+GEAR_ALIASES.update({"bondage_harness": "bondage_harness", "earphones": "airpods", "vibrator_plug": "deep_diver", "vibrating_butt_plug": "deep_diver"})
+
 IMPLIED = {"bondage_harness": frozenset({"collar"})}          # the harness has a collar: collar tasks work with it
 
 
@@ -618,6 +641,7 @@ class ObedienceTasks:
         self._rng = rng or random.SystemRandom()
         # Owner, 2026-11-16 (multi-wearer): DEFAULT_OWNED is the owner's inventory; an additional wearer starts with nothing and adds gear.
         self.default_owned: frozenset = DEFAULT_OWNED
+        self.generic_names = False         # an additional wearer: pieces are listed by ROLE, and their own names replace the owner's items
 
     # ------------------------------------------------------------------ plan and start
 
@@ -669,6 +693,33 @@ class ObedienceTasks:
         decision("obedience", "Today's obedience task was planned.", day=day.isoformat(), task=task.key, planned_at=_iso(planned))
 
     def _pick(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
+        task = self._pick_raw(day, mode, owned)
+        return _replace(task, text=self.personalize(task.text)) if task is not None else task
+
+    def labels(self) -> dict[str, str]:
+        """The wearer's own names for their pieces (`gear add <piece> as <name>`)."""
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT gear, label FROM obedience_gear WHERE user_id = ? AND owned = 1 AND label IS NOT NULL AND label <> ''",
+                                (self.user_id,))
+        return {r["gear"]: r["label"] for r in rows}
+
+    def personalize(self, text: str) -> str:
+        """A task text with the wearer's own names for their toys in place of the owner's items (nothing changes without a label)."""
+        try:
+            labels = self.labels()
+        except Exception:
+            logger.exception("The gear names could not be read; the catalogue names are used.")
+            return text
+        for gear, label in labels.items():
+            for variant in NAME_VARIANTS.get(gear, ()):
+                text = text.replace(variant, label)
+        return text
+
+    def _gear_name(self, gear: str, labels: dict[str, str] | None = None) -> str:
+        name = (labels or {}).get(gear)
+        return name or (ROLE[gear] if self.generic_names else GEAR[gear])
+
+    def _pick_raw(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
         """Workout about one day in four; otherwise the plug ladder (never two days running: a rest day between plug sessions), a composed
         pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, never yesterday's main gear, only gear he owns, and only
         tasks that suit `mode` (alone: the full versions; discreet: quiet and short)."""
@@ -976,13 +1027,18 @@ class ObedienceTasks:
             return self._gear_list()
         if words[1] not in ("add", "remove") or len(words) < 3:
             return "Use `gear`, `gear add <piece>` or `gear remove <piece>`."
-        name = "_".join(words[2:]).replace("-", "_").replace("&", "and").replace("\u2019", "'")
+        rest, label = words[2:], None
+        if words[1] == "add" and "as" in rest[1:]:
+            cut = rest.index("as", 1)
+            label = " ".join(text.strip().split()[2 + cut + 1:]).strip()[:60] or None     # their own words, case kept
+            rest = rest[:cut]
+        name = "_".join(rest).replace("-", "_").replace("&", "and").replace("\u2019", "'")
         reason = next((r for r in self._AT_ONCE if name.endswith("_" + r)), None) if words[1] == "remove" else None
         if reason is not None:
             name = name[: -len(reason) - 1]
         gear = name if name in GEAR else GEAR_ALIASES.get(name)
         if gear is None:
-            return f"I don't know that piece. Pieces: {', '.join(sorted(GEAR))}."
+            return f"I don't know that piece. Pieces: {', '.join(sorted(ROLE.values() if self.generic_names else GEAR))}."
         owned = 1 if words[1] == "add" else 0
         if owned and self.add_hook is not None:
             try:
@@ -997,29 +1053,33 @@ class ObedienceTasks:
                 waiting = "That can't be changed right now. Try again later."
             if waiting is not None:
                 return waiting
-        return self.set_gear(gear, owned, now, reason=reason)
+        return self.set_gear(gear, owned, now, reason=reason, label=label)
 
-    def set_gear(self, gear: str, owned: int, now: datetime, *, reason: str | None = None) -> str:
+    def set_gear(self, gear: str, owned: int, now: datetime, *, reason: str | None = None, label: str | None = None) -> str:
         """The change itself (also opt_outs' "Yes, remove it")."""
 
         def write(tx: Transaction, _s: object) -> None:
-            tx.execute("INSERT INTO obedience_gear (user_id, gear, owned, changed_at) VALUES (?, ?, ?, ?) "
-                       "ON CONFLICT (user_id, gear) DO UPDATE SET owned = excluded.owned, changed_at = excluded.changed_at",
-                       (self.user_id, gear, owned, _iso(now)))
+            tx.execute("INSERT INTO obedience_gear (user_id, gear, owned, changed_at, label) VALUES (?, ?, ?, ?, ?) "
+                       "ON CONFLICT (user_id, gear) DO UPDATE SET owned = excluded.owned, changed_at = excluded.changed_at, "
+                       "label = COALESCE(excluded.label, label)", (self.user_id, gear, owned, _iso(now), label))
             write_event(tx, DomainEvent(event_type="obedience.gear_changed", source_module="obedience", occurred_at=now,
                                         payload={"user_id": self.user_id, "gear": gear, "owned": bool(owned), "reason": reason}))
 
         apply_transition(self._core, write=write)
         decision("obedience", "The wearer changed his gear list.", gear=gear, owned=bool(owned), reason=reason)
+        name = label or self._gear_name(gear, self.labels())
         if owned:
-            return f"Added: {GEAR[gear]}. Tasks that need it can come now."
-        return f"Removed: {GEAR[gear]}. Tasks that need it wait until you add it back."
+            return f"Added: {name}. Tasks that need it can come now."
+        return f"Removed: {name}. Tasks that need it wait until you add it back."
 
     def _gear_list(self) -> str:
-        owned = self.owned_gear()
-        have = ", ".join(GEAR[g] for g in GEAR if g in owned) or "nothing"
-        missing = ", ".join(GEAR[g] for g in GEAR if g not in owned) or "nothing"
-        return f"Your gear: {have}.\nTasks waiting for: {missing}.\nChange it with `gear add <piece>` or `gear remove <piece>`."
+        owned, labels = self.owned_gear(), self.labels()
+        have = ", ".join(self._gear_name(g, labels) for g in GEAR if g in owned) or "nothing"
+        missing = ", ".join(self._gear_name(g) for g in GEAR if g not in owned) or "nothing"
+        how = "Change it with `gear add <piece>` or `gear remove <piece>`."
+        if self.generic_names:
+            how = "Change it with `gear add <piece>` (or `gear add <piece> as <your name for it>`) or `gear remove <piece>`."
+        return f"Your gear: {have}.\nTasks waiting for: {missing}.\n{how}"
 
     # ------------------------------------------------------------------ poll
 

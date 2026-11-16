@@ -487,6 +487,7 @@ class TenantFactory:
         if obedience is None:
             return
         obedience.default_owned = frozenset()
+        obedience.generic_names = True                    # leak audit: pieces by role, and the wearer's own names in task texts
         runtime.obedience = obedience
         service.gear_command = obedience.gear_command
         runtime.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
