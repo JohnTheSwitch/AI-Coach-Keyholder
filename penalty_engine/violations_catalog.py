@@ -60,6 +60,10 @@ CATALOG: tuple[Violation, ...] = (
        "Claimed locked while the provider reports unlocked"),
     # G5 (owner, 2026-11-15; philosophy v1.17): a health or emergency claim that stored facts put in doubt, judged on the wearer's explanation
     # and confirmed as not a genuine health or safety need. A full Incident (it may open or extend a Penalty Window). A genuine need never is.
+    # Owner, 2026-11-16 (the tamper watch): the bot's code or stored history changed outside the bot, and not explained. A full Incident in the
+    # Honesty domain, moderate like a tampered Chaster setting; an explanation ("I fixed X myself") clears it.
+    _v("SYSTEM_TAMPERING", "integrity", S.MODERATE, None,
+       "The bot's code or stored history was changed outside the bot (a commit not by Claude, a dirty start, an edited database), and not explained"),
     _v("FALSE_HEALTH_CLAIM", "integrity", S.SEVERE, None,
        "A health opening, health exemption or emergency unlock confirmed by the judge as not a genuine health or safety need"),
 )

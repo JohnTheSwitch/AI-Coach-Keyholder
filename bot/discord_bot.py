@@ -173,6 +173,7 @@ class CoachKeyholderBot(discord.Client):
         self.lines_paper_loop = None             # lines.service.LineService.paper_loop coroutine: lines on paper (owner, 2026-11-14)
         self.settings_watch_loop = None          # settings_watch.service.SettingsWatch.loop: changed settings asked about (G4)
         self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
+        self.tamper_watch_loop = None            # tamper_watch.service.TamperWatch.loop: code or history changed outside the bot (owner, 2026-11-16)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
         self.temptations_loop = None             # temptations.service.Temptations.loop (owner, 2026-11-16; queue B7)
         self.release_window_loop = None          # release_earning.window.ReleaseWindow.loop (owner, 2026-11-16; queue B3)
@@ -255,6 +256,8 @@ class CoachKeyholderBot(discord.Client):
             self._settings_watch_task = asyncio.create_task(self.settings_watch_loop, name="settings-watch")
         if self.opt_outs_loop is not None:
             self._opt_outs_task = asyncio.create_task(self.opt_outs_loop, name="opt-outs")
+        if self.tamper_watch_loop is not None:
+            self._tamper_watch_task = asyncio.create_task(self.tamper_watch_loop, name="tamper-watch")
         if self.health_pattern_loop is not None:
             self._health_pattern_task = asyncio.create_task(self.health_pattern_loop, name="health-pattern")
         if self.dm_actions:
@@ -1114,6 +1117,18 @@ def main() -> None:
         obedience.add_hook = lambda user, piece, now, o=opt_outs: o.withdraw(user, f"gear:{piece}", now)
     bot.dm_actions["optout"] = OptOutDm(opt_outs, resolve_user=resolve_user, now=clock.now)
     bot.opt_outs_loop = opt_outs.loop(clock)
+    # The tamper watch (owner, 2026-11-16): a commit not by Claude, a dirty start or stored history edited while the bot was off is asked about.
+    tamper_user = wiring.check_ins.user_id if wiring.check_ins is not None else config.owner_user_id
+    if detectors.signals is not None and tamper_user:
+        from infractions.signals import SignalKind as _TamperKind
+        from tamper_watch.service import TamperWatch
+        _honesty = getattr(config, "honesty_trust_domain", None) or "honesty"
+        tamper = TamperWatch(core, repo=Path(__file__).resolve().parents[1],
+                             raise_finding=lambda f, now, s=detectors.signals: s.raise_signal(
+                                 user_id=tamper_user, kind=_TamperKind.TAMPERING, subject_id=f.subject_id, trust_domain=_honesty, now=now,
+                                 detail=f.detail, wearer_text=f.wearer_text, facts=f.facts))
+        bot.tamper_watch_loop = tamper.loop(clock)
+        logger.info("Tamper watch enabled: code changes not by Claude, a dirty start and edited history are asked about.")
     # G4 (owner, 2026-11-15): changed time settings (after a restart) and the runtime halt are asked about and listed in the weekly review.
     from infrastructure.time_format import iso as iso_time
     from system.composition import runtime_halted

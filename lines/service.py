@@ -81,6 +81,7 @@ SENTENCES = {
     "RELEASE_WINDOW_OVERRUN": "I relock on time when my keyholder says so.",
     "EPISTEMIC_MISREPRESENTATION": "I am honest with my keyholder about my cage.",
     "FALSE_HEALTH_CLAIM": "I never use my health to escape my keyholder.",
+    "SYSTEM_TAMPERING": "I never change my keyholder's system behind its back.",
 }
 _NUMBER = re.compile(r"^\s*\d{1,3}\s*[.):-]\s*")
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"'})

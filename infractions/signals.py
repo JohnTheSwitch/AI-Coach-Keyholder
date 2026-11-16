@@ -88,6 +88,7 @@ class SignalKind(StrEnum):
     RELOCK_PICTURE_MISSING = "relock_picture_missing"  # owner, 2026-11-15: no picture within 30 min of a hygiene relock (warning only)
     OBEDIENCE_MISSED = "obedience_missed"            # owner, 2026-11-14 (Q4b): the daily obedience task not done or its photo rejected (warning only)
     HEALTH_CLAIM = "health_claim"                    # owner, 2026-11-15 (G5): a health or emergency claim that stored facts put in doubt (Honesty, full)
+    TAMPERING = "tampering"                          # owner, 2026-11-16: the tamper watch (code or stored history changed outside the bot)
 
 
 RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE_FREQUENCY: "HYGIENE_MISUSE", SignalKind.LOCK_CLAIM: "EPISTEMIC_MISREPRESENTATION",
@@ -96,14 +97,14 @@ RULE_GROUPS = {SignalKind.HYGIENE_DURATION: "HYGIENE_MISUSE", SignalKind.HYGIENE
                SignalKind.EXEMPTION_OVERRIDE: "EXEMPTION_OVERRIDE", SignalKind.PROOF_FAILED: "FALSE_REPORT",
                SignalKind.CONTRADICTION: "FALSE_REPORT", SignalKind.OBEDIENCE_MISSED: "OBEDIENCE_TASK_MISSED",
                SignalKind.RELOCK_PICTURE_MISSING: "HYGIENE_PICTURE_MISSING", SignalKind.HEALTH_CLAIM: "FALSE_HEALTH_CLAIM",
-               SignalKind.RELEASE_WINDOW_OVERRUN: "RELEASE_WINDOW_OVERRUN"}
+               SignalKind.RELEASE_WINDOW_OVERRUN: "RELEASE_WINDOW_OVERRUN", SignalKind.TAMPERING: "SYSTEM_TAMPERING"}
 # Proportionate (3.8): a break that ran long is minor, so a first one ends in a Warning; a false lock report is serious; a community vote is one weak signal.
 EVIDENCE = {SignalKind.HYGIENE_DURATION: _MINOR_EVIDENCE, SignalKind.HYGIENE_FREQUENCY: _MINOR_EVIDENCE, SignalKind.LOCK_CLAIM: _SEVERE_EVIDENCE,
             SignalKind.EXEMPTION_OVERRUN: _MINOR_EVIDENCE, SignalKind.PHOTO_REJECTED: _COMMUNITY_EVIDENCE, SignalKind.CHECKIN_NONCOMPLIANCE: _MINOR_EVIDENCE,
             SignalKind.SELF_REPORT_HYGIENE: _MINOR_EVIDENCE, SignalKind.EXEMPTION_OVERRIDE: _MINOR_EVIDENCE, SignalKind.PROOF_FAILED: _MINOR_EVIDENCE,
             SignalKind.CONTRADICTION: _MINOR_EVIDENCE, SignalKind.OBEDIENCE_MISSED: _MINOR_EVIDENCE,
             SignalKind.RELOCK_PICTURE_MISSING: _MINOR_EVIDENCE, SignalKind.HEALTH_CLAIM: _SEVERE_EVIDENCE,
-            SignalKind.RELEASE_WINDOW_OVERRUN: _MINOR_EVIDENCE}
+            SignalKind.RELEASE_WINDOW_OVERRUN: _MINOR_EVIDENCE, SignalKind.TAMPERING: _MINOR_EVIDENCE}
 # Incidents another module registers UNCONFIRMED by itself; they are taken into this path instead of waiting for a button nobody presses.
 ADOPTED_RULE_GROUPS = {"CHECKIN_REPEATED_NONCOMPLIANCE": SignalKind.CHECKIN_NONCOMPLIANCE}
 _SILENCE_NEVER_COUNTS = frozenset({SignalKind.HYGIENE_DURATION, SignalKind.HYGIENE_FREQUENCY})
