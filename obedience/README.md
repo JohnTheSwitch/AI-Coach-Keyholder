@@ -54,7 +54,7 @@ it may return after 7 days instead of 14. The health-or-safety button, an exempt
 **"Are you alone right now?" (owner, 2026-11-15; migration 073).** An erotic day is planned without a task (`ASK_KEY`). When its moment
 comes and Chaster's slot is free, the bot asks (status `asking`): "I'm alone" gives the full version (up to 30 minutes, two add-ons,
 self-bondage with locked leather cuffs, louder toys), "Not alone" a discreet one (one add-on, 15 minutes at most, the Deep Diver on its
-lowest setting, nothing long to set up). Both are mandatory; no answer in 15 minutes = the discreet version. "I can't now (health or
+lowest setting, nothing long to set up). Both are mandatory. Owner, 2026-11-16 23:00: no timer any more (it was 15 minutes, then the discreet version); the question waits for his answer, quiet hours included (a started task gets its usual deadline), and is a missed task (`unanswered`, the usual explanation path) when still unanswered at midnight. A later "I'm alone" while a discreet task is out and no photo is in swaps it for the full version (`_upgrade`: taken back in Chaster, a fresh deadline); never the other way round. "I can't now (health or
 safety)" works while being asked too. A training day is not asked. Safety lines in the DM follow the gear (`safety_notes`): key and shears
 within reach and never blindfolded while restrained; the collar loose enough for two fingers and never tied, clipped or locked to anything;
 clamps off after 10 minutes at most. Events: `obedience.alone_asked`, `obedience.alone_answered`.
@@ -133,3 +133,7 @@ keep their words because the safety notes are read from them). Without a label n
 extra erotic task for today (slot 1, `plan_extra_task`, the same row `python -m cli obedience-extra` files): the alone question, Chaster,
 photo, vote and the usual consequences. Only when erotic tasks are on, no exemption or vacation, and the moment plus the photo hour fit in
 free time (the owner's CLI `--anytime` exception stays CLI only). One a day.
+
+**What Chaster's voters see (owner, 2026-11-16 23:35).** `chaster_brief` names the toys by what they are (the Deep Diver is a "vibrating plug",
+the Bijou a "clear plug", the Gildo a "glass plug", the Rimfire a "large plug") and leaves out whether it vibrates; the DM keeps the full text.
+A task photographed from behind adds a DM-only line on how (`PHOTO_HOW`: phone propped up on the self-timer, or one hand on the phone).

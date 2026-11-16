@@ -56,7 +56,8 @@ CLOCK_SKEW = timedelta(minutes=2)
 WORKOUT_SHARE = 0.25                     # about one day in four is a workout task (owner, 2026-11-14)
 PLAN_STEP = timedelta(minutes=15)
 POSTPONE = timedelta(hours=2)            # "Someone's around": once per task (owner, 2026-11-14: he does not live alone)
-ASK_WAIT = timedelta(minutes=15)         # "Are you alone right now?" unanswered this long = the discreet version (owner, 2026-11-15)
+# Owner, 2026-11-16 23:00: "Are you alone right now?" has no timer any more (it was 15 minutes, then the discreet version); it waits for his
+# answer, quiet hours included, and is a missed task when still unanswered at midnight.
 DISCRETION = "Do it in your room with the door closed, keep it quiet, and leave nothing lying around or visible afterwards."
 SAFETY = ("Stop at once if anything hurts, bleeds, goes numb or feels wrong; that never counts against you. Never numbing lube, never "
           "overnight.")
@@ -154,6 +155,8 @@ class Task:
 
 
 PHOTO_BEHIND = "Photo from behind, waist down only."
+# Owner, 2026-11-16 23:35 ("how am I supposed to take a picture with hands behind my head?"): said in the DM only, never in Chaster.
+PHOTO_HOW = "For the photo, prop your phone up and use the self-timer; if you can't, one hand on the phone for the shot is fine."
 
 # Owner, 2026-11-14: "make the tasks so that it's not repetitive". Most erotic days are COMPOSED from a pose and one or two add-ons, so there
 # are dozens of combinations; a combination used in the last REPEAT_DAYS days is not used again, and the main gear never repeats two days in
@@ -370,16 +373,23 @@ def gear_of(key: str) -> set[str]:
     return {key.split("_")[0]}
 
 
-_SHORT_NAMES = {"gray Satisfyer Deep Diver": "Deep Diver", "clear Crushious Bijou": "Bijou", "glass Gildo No. 27": "Gildo",
-                "Plug & Joy medium": "Plug & Joy", "Wolf Rimfire S": "Rimfire"}
+# Owner, 2026-11-16 23:35: the voters in Chaster don't know his toys by name, so they see what each one is; whether it vibrates is not shown
+# (a photo cannot show it; the DM keeps it).
+_SHORT_NAMES = {"gray Satisfyer Deep Diver": "vibrating plug", "clear Crushious Bijou": "clear plug", "glass Gildo No. 27": "glass plug",
+                "Plug & Joy medium": "plug", "Wolf Rimfire S": "large plug",
+                "Deep Diver": "vibrating plug", "Bijou": "clear plug", "Gildo": "glass plug", "Plug & Joy": "plug", "Rimfire": "large plug"}
+_VIBRATING = ("in and vibrating", " in, vibrating on its lowest setting")
 
 
 def chaster_brief(text: str) -> str:
     """Owner, 2026-11-15 ("who doesn't use lube?"): what the voters in Chaster see is only what he does and what the photo shows. The DM keeps
     the full task (lube, warm-up, how long); Chaster drops those sentences and uses the plugs' short names."""
     import re
+    for words in _VIBRATING:
+        text = text.replace(words, " in" if words.startswith(" ") else "in")
     for long, short in _SHORT_NAMES.items():
         text = text.replace(long, short)
+    text = text.replace("vibrating plug plug", "vibrating plug").replace("plug (vibrating plug)", "plug")
     text = re.sub(r",? with [^.]*lube", "", text)
     kept = []
     for s in re.split(r"(?<=\.)\s+", text.strip()):
@@ -901,7 +911,15 @@ class ObedienceTasks:
     def _start(self, row: dict, now: datetime) -> bool:
         """True when the task is in Chaster now."""
         anytime = bool(row.get("anytime"))                              # the owner's one-time exception to free time (migration 078)
-        if (self._ports.today(now).isoformat() != row["local_date"] or (not anytime and not self._ports.free_time(now + PHOTO_DEADLINE))
+        # Owner, 2026-11-16 23:00: no timer on "Are you alone right now?". Once asked, he may answer (and do the task) even in quiet hours;
+        # still unanswered when the day ends = a missed task.
+        asked = row["catalog_key"] == ASK_KEY and row["status"] == "asking"
+        if asked and row.get("mode") is None and self._ports.today(now).isoformat() != row["local_date"] and not self._ports.paused(now):
+            if self._close(row, "failed", "unanswered", now):
+                self._ports.raise_failure(row, "unanswered", now)
+                decision("obedience", "The alone question was still unanswered at midnight: a missed task.", day=row["local_date"])
+            return False
+        if (self._ports.today(now).isoformat() != row["local_date"] or (not anytime and not asked and not self._ports.free_time(now + PHOTO_DEADLINE))
                 or self._ports.paused(now)):
             self._close(row, "skipped", "no_free_slot", now)            # the free time is over: no task today, no consequence
             return False
@@ -917,10 +935,7 @@ class ObedienceTasks:
                 self._ask(row, now)
                 return False
             if mode is None:
-                asked = _parse_iso(row["asked_at"]) if row.get("asked_at") else now
-                if now < asked + ASK_WAIT:
-                    return False
-                mode = DISCREET                                         # no answer: the discreet version (still mandatory)
+                return False                                            # waits for his answer (no timer since 2026-11-16)
             prepared = self._prepared(row, mode)
             task = prepared or self._pick(self._ports.today(now), mode)
             key, text, note = task.key, task.text, task.dm_note
@@ -942,6 +957,8 @@ class ObedienceTasks:
             # Owner, 2026-11-16 (A0b): the standing reminders in full at most once a week; a restraint task always keeps one short line.
             full = self._reminder_due(now)
             extra = safety_notes(text) if full else (RESTRAINT_SHORT if is_restraint(text) else "")
+            if PHOTO_BEHIND in text:
+                note = f"{note} {PHOTO_HOW}".strip()
             message = (f"{head}\n{text}\n" + (f"Only between us: {note}\n" if note else "")
                        + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}." + (f" {DISCRETION} {SAFETY}" if full else "")
                        + (f" {extra}" if extra else ""))
@@ -989,7 +1006,7 @@ class ObedienceTasks:
     def _ask(self, row: dict, now: datetime) -> None:
         """Owner, 2026-11-15: before the task, "Are you alone right now?". Alone = the full version, not alone = a discreet one; both mandatory."""
         text = (f"Your task for today is ready. Are you alone right now? Alone gets the full version, not alone a discreet one; both are "
-                f"mandatory. No answer in {int(ASK_WAIT.total_seconds() // 60)} minutes means the discreet version.")
+                f"mandatory. Answer when you can, even in quiet hours; unanswered at midnight counts as a missed task.")
         actions = (ActionSpec(action_id=f"obedience:alone:{row['id']}", label="I'm alone"),
                    ActionSpec(action_id=f"obedience:discreet:{row['id']}", label="Not alone"),
                    ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))

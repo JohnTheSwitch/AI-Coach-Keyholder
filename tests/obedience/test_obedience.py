@@ -350,8 +350,8 @@ class TestAloneQuestion:
                 assert task.key.count("+") == 1 and int(re.search(r"(\d+) minutes", task.text).group(1)) <= 15, task.text
                 assert "deep diver in and vibrating" not in task.text.lower()
 
-    def test_no_answer_means_the_discreet_version(self, tmp_path) -> None:
-        from obedience.service import ASK_WAIT
+    def test_the_alone_question_waits_and_is_missed_at_midnight(self, tmp_path) -> None:
+        """Owner, 2026-11-16 23:00: no timer; he may answer in quiet hours; unanswered at midnight = a missed task."""
         w = World(tmp_path)
         w.tasks.tick(MORNING)
         due = w.due()
@@ -359,25 +359,34 @@ class TestAloneQuestion:
         with w.core.transaction() as tx:
             ask = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:ask:%'")
         assert "Are you alone right now?" in ask["text"] and "I'm alone" in ask["actions_json"] and "Not alone" in ask["actions_json"]
-        w.tasks.tick(due + ASK_WAIT - timedelta(minutes=1))
-        assert w.row()["status"] == "asking"
-        w.tasks.tick(due + ASK_WAIT)
-        assert (w.row()["status"], w.row()["mode"]) == ("assigned", "discreet") and w.row()["catalog_key"] != "ask"
-        # Owner, 2026-11-16 22:40: a late "I'm alone" swaps the discreet task for the full version while no photo is in
-        first = w.row()["task_id"]
-        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due + ASK_WAIT).startswith("Alone: the full version instead.")
-        assert (w.row()["status"], w.row()["mode"]) == ("assigned", "alone") and w.row()["task_id"] != first
-        with w.core.transaction() as tx:
-            assert tx.fetch_one("SELECT 1 FROM notifications WHERE dedupe_key LIKE 'obedience:task:%:full'") is not None
-        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=due + ASK_WAIT) == "Already answered."
+        assert "midnight" in ask["text"] and "minutes means" not in ask["text"]
+        late = due.replace(hour=22, minute=30)                                     # quiet hours (free time ends at 22 here)
+        w.tasks.tick(late)
+        assert w.row()["status"] == "asking" and w.failures == []
+        w.tasks.tick(due.replace(hour=0, minute=1) + timedelta(days=1))
+        assert w.row()["status"] == "failed" and w.row()["outcome"] == "unanswered" and w.failures == ["unanswered"]
+
+    def test_an_answer_in_quiet_hours_starts_the_task(self, tmp_path) -> None:
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        w.tasks.tick(w.due())
+        late = w.due().replace(hour=23, minute=0)
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=late) == "Alone: the full version. It's in Chaster now."
+        assert w.row()["status"] == "assigned" and w.chaster.assigned
 
     def test_not_alone_answer_and_a_second_answer(self, tmp_path) -> None:
         w = World(tmp_path)
         w.tasks.tick(MORNING)
         assert w.start(answer="discreet") == "Not alone: a discreet version. It's in Chaster now."
         assert w.row()["mode"] == "discreet"
+        # Owner, 2026-11-16 22:40: a later "I'm alone" swaps the discreet task for the full version while no photo is in
+        first = w.row()["task_id"]
         assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=w.due()).startswith("Alone: the full version instead.")
+        assert (w.row()["status"], w.row()["mode"]) == ("assigned", "alone") and w.row()["task_id"] != first
+        with w.core.transaction() as tx:
+            assert tx.fetch_one("SELECT 1 FROM notifications WHERE dedupe_key LIKE 'obedience:task:%:full'") is not None
         assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="discreet", now=w.due()) == "Already answered."   # never back down
+        assert w.tasks.press(user_id=U, row_id=w.row()["id"], action="alone", now=w.due()) == "Already answered."
 
     def test_cannot_while_being_asked_and_an_exemption_cancels_the_question(self, tmp_path) -> None:
         w = World(tmp_path)
@@ -642,7 +651,12 @@ def test_chaster_sees_a_brief_text_and_the_dm_the_full_one(tmp_path) -> None:
     from obedience.service import chaster_brief
     full = ("Your gray Satisfyer Deep Diver in, with water-based lube. Warm up with the clear Crushious Bijou for 10 minutes first. "
             "Photo of the plug base only. Keep it in 20 minutes.")
-    assert chaster_brief(full) == "Your Deep Diver in. Photo of the plug base only."
+    assert chaster_brief(full) == "Your vibrating plug in. Photo of the plug base only."
+    # Owner, 2026-11-16 23:35: voters don't know the toys by name, and whether it vibrates isn't shown
+    assert chaster_brief("Facing a wall, hands behind your head, Deep Diver in and vibrating. Photo from behind, waist down only. 20 minutes.") == (
+        "Facing a wall, hands behind your head, vibrating plug in. Photo from behind, waist down only.")
+    assert chaster_brief("Kneeling upright, Deep Diver in, vibrating on its lowest setting. Photo from behind, waist down only.") == (
+        "Kneeling upright, vibrating plug in. Photo from behind, waist down only.")
     assert chaster_brief("20 minutes kneeling, hands behind your back. Photo from behind, waist down only.") == (
         "Kneeling, hands behind your back. Photo from behind, waist down only.")
     assert chaster_brief("Clamps on your nipples, kneeling upright. Photo of your chest only, no face. 10 minutes, then off slowly.") == (
@@ -811,3 +825,16 @@ def test_an_extra_task_on_request(tmp_path) -> None:
     assert "already passed" in World(tmp_path / "b").tasks.extra_task_command(U, "extra task at 08:00", MORNING)
     assert "outside your free time" in World(tmp_path / "c").tasks.extra_task_command(U, "extra task at 21:30", MORNING)
     assert "paused" in World(tmp_path / "d", paused=True).tasks.extra_task_command(U, "extra task", MORNING)
+
+
+def test_a_pose_dm_says_how_to_take_the_photo_and_chaster_does_not(tmp_path) -> None:
+    """Owner, 2026-11-16 23:35: "how am I supposed to take a picture with hands behind my head?"."""
+    from obedience.service import PHOTO_HOW, Task
+    w = World(tmp_path)
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:wall+vibe", "Facing a wall, hands behind your head, Deep Diver in and "
+                                                               "vibrating. Photo from behind, waist down only. 20 minutes.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    with w.core.transaction() as tx:
+        dm = tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")["text"]
+    assert PHOTO_HOW in dm and "self-timer" not in w.chaster.assigned[0] and "Deep Diver" not in w.chaster.assigned[0]

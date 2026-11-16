@@ -17,7 +17,7 @@ from schedule_windows.windows import WindowKind, classify
 __all__ = ["build_obedience", "build_task_board"]
 
 _REASONS = {"missed": "no photo arrived by the deadline", "late": "the photo came after the deadline",
-            "rejected": "the community rejected the photo"}
+            "rejected": "the community rejected the photo", "unanswered": "\"Are you alone right now?\" was never answered that day"}
 
 
 def build_task_board(core, obedience: ObedienceTasks, window_cfg):
