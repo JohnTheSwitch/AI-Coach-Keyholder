@@ -198,3 +198,19 @@ def test_a_written_request_is_never_paid_with_typed_lines(tmp_path) -> None:
     s.press(user_id=U, row_id=line_id(db), action="request", now=NOW)
     assert s.take(U, "\n".join([RELEASE_SENTENCE] * 20), NOW + timedelta(hours=4)) is None
     assert rows(db, "SELECT status FROM line_assignments")[0]["status"] == "open"
+
+
+def test_the_lock_length_is_read_outside_the_photo_draw(tmp_path) -> None:
+    """Live, 2026-11-17 00:00: the lock's length was read inside the day's photo draw and opened a nested transaction."""
+    from tests.supervision.test_photo_check_ins import photo_env
+    e = photo_env(tmp_path, score=0.9)
+    seen = []
+
+    def lock_days(now):
+        with e.svc._core.transaction():
+            seen.append(now)
+        return 30
+
+    e.svc.lock_days = lock_days
+    e.svc._schedule_photo(NOW)
+    assert seen

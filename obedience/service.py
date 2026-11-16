@@ -848,7 +848,9 @@ class ObedienceTasks:
     def _cancel_open(self, now: datetime, outcome: str) -> None:
         with self._core.transaction() as tx:
             # Owner, 2026-11-15: a wear exemption never cancels a training session (it needs no cage; one was lost that way).
-            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned', 'submitted') "
+            # Owner, 2026-11-17 00:00: a health exemption at 23:57 cancelled a task whose photo was in since 23:33. A task with its photo in
+            # is done; the vote decides it, an exemption never cancels it.
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status IN ('asking', 'assigned') "
                                                   "AND catalog_key NOT LIKE 'training:%'", (self.user_id,))]
         for row in rows:
             try:

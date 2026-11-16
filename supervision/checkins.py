@@ -607,13 +607,14 @@ class CheckInService:
             return
         week_start = (local_day - timedelta(days=local_day.weekday())).isoformat()
         days_left = 7 - local_day.weekday()
+        extra = self._long_lock_extra(now)          # read before the write: it opens its own transaction (live, 2026-11-17 00:00: nested)
 
         def write(tx: Transaction, _s: object) -> str | None:
             if tx.fetch_one("SELECT last_drawn_date FROM photo_check_in_consent WHERE user_id = ?", (self._user,))["last_drawn_date"] == day:
                 return None
             done = tx.fetch_one("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ? AND kind = 'photo' AND local_date >= ? AND local_date < ? "
                                 "AND status != 'skipped'", (self._user, week_start, day))["n"]
-            remaining = PHOTO_CHECK_INS_PER_WEEK[level] + self._long_lock_extra(now) - int(done)
+            remaining = PHOTO_CHECK_INS_PER_WEEK[level] + extra - int(done)
             due = None
             if remaining > 0 and self._rand() < remaining / days_left:
                 for _ in range(10):

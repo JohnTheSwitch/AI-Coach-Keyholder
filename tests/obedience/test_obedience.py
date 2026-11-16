@@ -202,6 +202,18 @@ class TestWearExemption:
         with w2.core.transaction() as tx:
             assert tx.fetch_one("SELECT COUNT(*) AS n FROM obedience_tasks")["n"] == 0
 
+    def test_a_task_with_its_photo_in_is_left_to_the_vote(self, tmp_path) -> None:
+        """Owner, 2026-11-17 00:00: a health exemption cancelled a task whose photo was already in."""
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        w.start()
+        due = w.due()
+        with w.core.transaction() as tx:
+            tx.execute("UPDATE obedience_tasks SET status = 'submitted', submitted_at = ?", (due.isoformat(),))
+        w.tasks._ports = __import__("dataclasses").replace(w.tasks._ports, in_exemption=lambda: True)
+        w.tasks.tick(due + timedelta(minutes=5))
+        assert w.row()["status"] == "submitted" and w.chaster.unassigned == 0
+
     def test_a_hygiene_opening_is_not_a_wear_exemption(self, tmp_path) -> None:
         from tests.exemptions.test_hygiene_requests import World as HygieneWorld
         from tests.exemptions.test_exemptions import WEARER
