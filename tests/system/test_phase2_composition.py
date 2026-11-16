@@ -146,6 +146,11 @@ def full_world(core, transport, **overrides):
     settings.update(overrides)
     wiring = build_rules_and_execution(config(core, **settings), core, transport=transport,
                                        check_in_sender=Sender(), **parts)
+    if wiring.release_engine is not None:
+        # The production seed is os.urandom, and about 1 run in 90 drew a Monday offset of 30-31 minutes, a target at most
+        # MIN_LEAD after a 17:00 cycle, so the plan correctly moved to Tuesday and the window assertion flaked. This seed
+        # draws 194 minutes for 2026-10-12 (a 19:44 target), the same fixed seed the release-engine tests use.
+        wiring.release_engine._seed_factory = lambda: bytes(range(32))
     ExecutionControl(core.db_path, core=core).set_halted(False, reason="test", now=local(MON, 9))
     return wiring
 
