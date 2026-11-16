@@ -154,10 +154,14 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D17 | **What holds my release, from facts** (Proposal A, approved) | `system/release_status.py`: "what is holding my release", "why am I not unlocked", "am I under supervision" answered before any model: active holds (supervision with an about-when if every check-in is answered, penalty window, lines owed) and tokens ready; never a score |
 | D18 | **Fixes from the day's held requests** | a corrected check-in nets out in short-term Trust (was counted as a miss AND an answer); a thin check-in answer is announced with the minutes left to add more |
 | D19 | **Varied check-in questions** | A pool per level and part of the day (`supervision/checkins.PROMPTS`, `pick_prompt`), never one of the last 3 again; stricter levels demand more. Proposal B (a new lock asks whether the previous period was a test) declined: "I want to keep it serious now" |
+| D20 | **`extra task`, `help`, moved sessions** | `extra task [at HH:MM]`: one more proper erotic task today (slot 1); `help` lists what he can type, grouped, and `help all` every command; a moved short session has its own slot (migration 090) so `extra training` stays free; "what holds my release" understands more ways of asking |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)
 
+- **Binding short session (proposed 2026-11-16, deferred by the owner: "not yet ... after I try it more"):** a short session he chose
+  ("Today"/"Thursday" or `extra training`) becomes mandatory that day (missed = explain, unexplained = Warning + 20 lines); the default
+  Thursday stays optional. Tightening, so buildable at once when he says so; raise again once he has done every session type.
 - **Cooling-off (asked 2026-11-16 ~19:00 Prague, ask again from 2026-11-17 19:00 Prague, together with the two above):** tasks and
   workouts verified in Chaster count as good evidence in the check-in domain (like an answered check-in, +0.02), so short-term Trust sees
   observed obedience, not only check-ins; and, if yes, the same credit backfilled for everything verified since Fri 13 Nov (the real lock).

@@ -126,3 +126,10 @@ Leak audit (owner, 2026-11-16): for an additional wearer (`generic_names`) every
 plug, suction-cup dildo...) and `gear add <piece> as <their name>` stores their own name (migration 088, `obedience_gear.label`); a picked
 task's text has the owner's item names replaced by theirs (`personalize`, `NAME_VARIANTS`, toys only: restraints, the harness and the collar
 keep their words because the safety notes are read from them). Without a label nothing changes, so the owner's texts are as before.
+
+## `extra task` in DM (owner, 2026-11-16)
+
+"I don't have a workout today, so I feel it's only right I have a proper erotic task." `extra task` or `extra task at 21:00` files ONE
+extra erotic task for today (slot 1, `plan_extra_task`, the same row `python -m cli obedience-extra` files): the alone question, Chaster,
+photo, vote and the usual consequences. Only when erotic tasks are on, no exemption or vacation, and the moment plus the photo hour fit in
+free time (the owner's CLI `--anytime` exception stays CLI only). One a day.

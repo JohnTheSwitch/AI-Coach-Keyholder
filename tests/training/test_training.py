@@ -145,3 +145,15 @@ def test_no_extra_session_on_a_training_day_or_when_todays_task_is_out(tmp_path)
     p.today_open = lambda now: False
     assert "already out" in p.extra(U, "extra training", datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)).text
     assert p.day_task(date(2026, 11, 17)) is None
+
+
+def test_a_moved_session_keeps_the_extra_free(tmp_path) -> None:
+    """Owner, 2026-11-16: Monday's short leg session moved to Tuesday must not use up the week's `extra training`."""
+    from training.service import get_planned_sessions
+    p = plan(tmp_path)
+    with p._core.transaction() as tx:
+        tx.execute("INSERT INTO training_weeks (id, user_id, iso_week, short_day, asked_at, moved_date, moved_kind) "
+                   "VALUES ('w', ?, '2026-W47', 'mon', NULL, '2026-11-17', 'legs')", (U,))
+    assert p.day_task(date(2026, 11, 17)).key == "training:short:legs_a_short"
+    assert "2026-11-17" in get_planned_sessions(p._core, U, "2026-11-16", "2026-11-22")     # still one of the week's sessions
+    assert "upper body" in p.extra(U, "extra training", datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)).text

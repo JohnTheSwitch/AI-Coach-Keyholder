@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import uuid
 from dataclasses import dataclass, replace as _replace
 from datetime import date, datetime, timedelta
@@ -49,6 +50,7 @@ logger = logging.getLogger("ai_coach_keyholder.obedience")
 __all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "credit_training", "plan_board_task", "get_obedience_state", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
+_EXTRA_TASK = re.compile(r"(extra (erotic )?task|ukol navic|úkol navíc)( (at|v) (?P<at>\d{1,2}:\d{2}))?")
 VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
 WORKOUT_SHARE = 0.25                     # about one day in four is a workout task (owner, 2026-11-14)
@@ -1043,6 +1045,36 @@ class ObedienceTasks:
     remove_wait: Callable[[str, str, datetime], str | None] | None = None
     add_hook: Callable[[str, str, datetime], object] | None = None
     _AT_ONCE = ("broken", "broke", "lost", "never_had", "never_owned", "dont_have", "don't_have", "not_mine")
+
+    def extra_task_command(self, user_id: str, text: str, now: datetime) -> str | None:
+        """`extra task` or `extra task at 21:00` (owner, 2026-11-16: "I don't have a workout today, so I feel it's only right I have a proper
+        erotic task"): ONE extra erotic task today (slot 1), run like any other (alone question, Chaster, photo, vote, the usual
+        consequences). Only in free time, with the photo hour still inside it; never during an exemption, a pause or with erotic tasks off.
+        None when the message is not this request."""
+        said = " ".join((text or "").lower().split()).strip(" .!?")
+        match = _EXTRA_TASK.fullmatch(said)
+        if user_id != self.user_id or match is None:
+            return None
+        if not self._ports.feature_on("erotic_tasks"):
+            return "Erotic tasks are switched off for you."
+        if self._ports.in_exemption() or self._ports.paused(now):
+            return "Not now: tasks are paused (an exemption or a vacation)."
+        day = self._ports.today(now)
+        at = now + timedelta(minutes=5)
+        if match.group("at"):
+            wanted = match.group("at").zfill(5)
+            probe = now
+            while self._ports.today(probe) == day and self._ports.local_clock(probe) != wanted:
+                probe += timedelta(minutes=1)
+            if self._ports.today(probe) != day:
+                return f"{wanted} has already passed today."
+            at = max(at, probe)
+        if not (self._ports.free_time(at) and self._ports.free_time(at + PHOTO_DEADLINE)):
+            return "That's outside your free time (the photo hour has to fit in it too). Pick an earlier time."
+        if plan_extra_task(self._core, self.user_id, day, at, now) is None:
+            return "You've already had your extra task today. One a day."
+        return (f"Good. An extra task at {self._ports.local_clock(at)}: I'll ask whether you're alone, then it goes to Chaster. "
+                "It counts like any task: a photo, the vote, and the usual consequences if it isn't done.")
 
     def gear_command(self, user_id: str, text: str, now: datetime) -> str | None:
         """`gear`, `gear add <piece>`, `gear remove <piece>` (`... broken` / `lost` / `never had`: at once); None for any other message."""

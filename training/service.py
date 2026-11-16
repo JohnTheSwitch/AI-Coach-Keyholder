@@ -127,12 +127,18 @@ class TrainingPlan:
         if weekday in (0, 3) and self._short_day(day) == ("mon" if weekday == 0 else "thu"):
             legs_week = day.isocalendar()[1] % 2 == 1
             return f"{self._next_legs(day)}_short" if legs_week else "upper_short"
-        kind = self._extra_on(day)
+        kind = self._moved_on(day) or self._extra_on(day)
         if kind is not None:
             return f"{self._next_legs(day)}_short" if kind == "legs" else "upper_short"
         return None
 
     # ------------------------------------------------------------------ an extra session on demand
+
+    def _moved_on(self, day: date) -> str | None:
+        """A short session moved to this day (owner, 2026-11-16). It stays one of the week's planned sessions (week bonus as before)."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT moved_kind FROM training_weeks WHERE user_id = ? AND moved_date = ?", (self.user_id, day.isoformat()))
+        return row["moved_kind"] if row is not None else None
 
     def _extra_on(self, day: date) -> str | None:
         with self._core.transaction() as tx:

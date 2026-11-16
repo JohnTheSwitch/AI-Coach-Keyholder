@@ -30,11 +30,14 @@ __all__ = ["ReleaseStatus", "is_release_question", "ANSWER_HOURS"]
 ANSWER_HOURS = (time(10, 0), time(13, 0), time(16, 0), time(19, 0))
 _DAYS_AHEAD = 14
 
+# Live, 2026-11-16 19:32: "When will I get unlocked?" and "Ok, why am I still locked?" were missed (no "get unlocked", a leading "Ok,").
+_FILLER = re.compile(r"^((ok|okay|so|and|but|hey|well|mistress|please|then|alright|um|hmm)\b[\s,.!?]*)+")
 _QUESTION = re.compile(
-    r"(what(s| is) (holding|keeping|blocking) (my|the) (release|lock|unlock)( back)?"
-    r"|why (am i|i am) (not (unlocked|released)|still locked)"
-    r"|why (cant|can not|cannot) i (get|have) (a|my) release"
-    r"|when (will|can|do) (you|i) (unlock me|release me|be (unlocked|released)|get (a|my) release)"
+    r"(what(s| is) (holding|keeping|blocking|stopping) (me|my|the) (release|lock|unlock|from being (released|unlocked))( back)?"
+    r"|why (am i|i am|arent i|am i not) (not )?(unlocked|released|still locked|locked)( still)?( yet)?"
+    r"|why (cant|can not|cannot|dont|do not) i (get|have|be) (a |my )?(release|released|unlocked)( yet)?"
+    r"|when (will|can|do|am) (you|i) (unlock me|release me|let me out|be (unlocked|released)|get(ting)? (a |my )?(release|released|unlocked|out))( please)?"
+    r"|(will|can) i (get|be) (unlocked|released)( soon| today| tomorrow)?"
     r"|am i (under|in) supervision( mode)?|is supervision (on|active)|when (does|will) (the )?supervision end"
     r"|co (mi )?(drzi|blokuje) (uvolneni|odemceni)|kdy (me )?(odemknes|pustis)|jsem pod dohledem)"
 )
@@ -45,6 +48,7 @@ def is_release_question(message: str) -> bool:
     if not isinstance(message, str) or len(message) > 120:
         return False
     text = re.sub(r"\s+", " ", _EDGES.sub("", plain_text(message).replace("'", "").replace("’", "")))
+    text = _EDGES.sub("", _FILLER.sub("", text))
     return bool(_QUESTION.fullmatch(text))
 
 

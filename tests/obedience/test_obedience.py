@@ -789,3 +789,18 @@ def test_today_open_until_the_task_is_out(tmp_path) -> None:
     with w.core.transaction() as tx:
         tx.execute("UPDATE obedience_tasks SET status = 'asked'")
     assert w.tasks.today_open(MORNING) is False
+
+
+def test_an_extra_task_on_request(tmp_path) -> None:
+    """Owner, 2026-11-16: "I don't have a workout today, so I feel it's only right I have a proper erotic task" (`extra task [at HH:MM]`)."""
+    w = World(tmp_path)
+    assert w.tasks.extra_task_command(U, "hello", MORNING) is None and w.tasks.extra_task_command("other", "extra task", MORNING) is None
+    reply = w.tasks.extra_task_command(U, "Extra task at 18:30", MORNING)
+    assert reply.startswith("Good. An extra task at 18:30") and "usual consequences" in reply
+    with w.core.transaction() as tx:
+        row = tx.fetch_one("SELECT slot, catalog_key, status, planned_at FROM obedience_tasks WHERE slot = 1")
+    assert row["status"] == "planned" and row["planned_at"].startswith("2026-11-15T18:30")
+    assert "One a day" in w.tasks.extra_task_command(U, "extra task", MORNING)
+    assert "already passed" in World(tmp_path / "b").tasks.extra_task_command(U, "extra task at 08:00", MORNING)
+    assert "outside your free time" in World(tmp_path / "c").tasks.extra_task_command(U, "extra task at 21:30", MORNING)
+    assert "paused" in World(tmp_path / "d", paused=True).tasks.extra_task_command(U, "extra task", MORNING)

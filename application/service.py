@@ -46,7 +46,7 @@ from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import ResponseCategory, UnknownIdentityError
 from application.progress import is_progress_query, read_progress, render_progress
-from application.natural_queries import CAPABILITIES_TEXT, read_only_command
+from application.natural_queries import CAPABILITIES_TEXT, COMMANDS_TEXT, read_only_command
 from application.reply_guard import finish_reply
 from application.review_consent_query import is_review_consent_query
 from application.terms_notice import TERMS_NOTICE
@@ -188,6 +188,7 @@ class ApplicationService:
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
         self.training_extra = None      # `extra training` (owner, 2026-11-16)
+        self.extra_task_command = None  # `extra task [at HH:MM]` (owner, 2026-11-16): obedience.service.ObedienceTasks.extra_task_command
         self.release_status = None      # Proposal A (owner, 2026-11-16): system.release_status.ReleaseStatus.answer, before any model
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.proof_switch = None                 # slice 8 (Q9): proof_checks.service.ProofChecks.set_switch, for an additional wearer only
@@ -345,6 +346,15 @@ class ApplicationService:
                     gear_reply = None
                 if gear_reply is not None:
                     return OutgoingMessage(text=gear_reply) if isinstance(gear_reply, str) else gear_reply
+
+            if self.extra_task_command is not None:
+                try:
+                    extra_task_reply = self.extra_task_command(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("An extra task could not be planned; the message is handled normally.")
+                    extra_task_reply = None
+                if extra_task_reply is not None:
+                    return OutgoingMessage(text=extra_task_reply)
 
             if self.release_status is not None:
                 try:
@@ -556,6 +566,8 @@ class ApplicationService:
 
     def _register_commands(self) -> None:
         self.router.register("help", "Show this list of commands", self._handle_help)
+        self.router.register("help all", "Every command, with what it does", self._handle_help_all)
+        self.router.register("commands", "", self._handle_help, listed=False)
         self.router.register("status", "Show the current penalty window, if any", self._handle_status)
         self.router.register("preferences", "Show your saved language/AI voice/personality choices", self._handle_preferences)
         self.router.register("mode", "Show your current operating mode and any pending transition", self._handle_mode_status)
@@ -680,7 +692,12 @@ class ApplicationService:
         return OutgoingMessage(text=render_progress(snapshot))
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
-        return OutgoingMessage(text=CAPABILITIES_TEXT)
+        return OutgoingMessage(text=CAPABILITIES_TEXT + "\n\n" + COMMANDS_TEXT)
+
+    def _handle_help_all(self, ctx: RequestContext) -> OutgoingMessage:
+        lines = [f"- `{command}`: {description}" for command, description in self.router.listing() if description]
+        return OutgoingMessage(text="**Every command**\n" + "\n".join(lines) + "\n\nPlus the ones in `help`: `log`, `extra training`, "
+                                    "`extra task`, `gear`, `features`, `<feature> off|on`.")
 
     def _handle_status(self, ctx: RequestContext) -> OutgoingMessage:
         """

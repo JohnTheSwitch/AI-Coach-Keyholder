@@ -66,6 +66,10 @@ class CommandRouter:
         if listed:
             self._descriptions[key] = description
 
+    def listing(self) -> list[tuple[str, str]]:
+        """Every listed command and its description, sorted (owner, 2026-11-16: `help all`)."""
+        return sorted(self._descriptions.items())
+
     def register_family(self, family: str, *, invalid_handler: Handler) -> None:
         """A family token (e.g. "mode") whose own bare, standalone
         invocation (e.g. "mode" alone, with nothing else) gets a

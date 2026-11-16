@@ -1097,6 +1097,7 @@ def main() -> None:
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
         application_service.gear_command = obedience.gear_command
+        application_service.extra_task_command = obedience.extra_task_command     # `extra task` (owner, 2026-11-16)
         from system.obedience_wiring import build_task_board               # P1 (owner, 2026-11-15): the weekly task board
         task_board = build_task_board(core, obedience, window_config_from(config))
         bot.dm_actions["board"] = ObedienceDm(task_board, resolve_user=resolve_user, now=clock.now)

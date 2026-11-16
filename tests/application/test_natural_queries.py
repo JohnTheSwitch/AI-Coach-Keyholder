@@ -48,7 +48,10 @@ class TestThroughTheApplication:
     def test_help_describes_and_lists_no_commands(self, service: ApplicationService) -> None:
         _complete_onboarding(service)
         text = service.handle_message(_incoming("help", external_message_id="m1")).text
-        assert text == CAPABILITIES_TEXT and "commands" not in text.lower() and "`" not in text
+        # Owner, 2026-11-16: "these commands are piling up. Can you do a help command?" help now lists them, grouped; `help all` lists all.
+        assert text.startswith(CAPABILITIES_TEXT) and "`extra training`" in text and "`extra task`" in text and "`log squat 105 4x9`" in text
+        everything = service.handle_message(_incoming("help all", external_message_id="m2")).text
+        assert "`vacation`" in everything and "`chaster status`" in everything and "`help all`" in everything
 
     def test_the_exact_phrases_keep_working(self, service: ApplicationService) -> None:
         """Retired from view, not from use: nobody's habit breaks."""

@@ -21,7 +21,9 @@ def status(held=(), tokens=1, end=NOW + timedelta(days=2, hours=16)):
 
 def test_the_questions_it_answers() -> None:
     for q in ("What is holding my release?", "what's holding my lock", "Why am I not unlocked?", "Am I under supervision?",
-              "When will you unlock me?", "When does supervision end?", "co mi drží uvolnění?"):
+              "When will you unlock me?", "When does supervision end?", "co mi drží uvolnění?",
+              "When will I get unlocked?", "Ok, why am I still locked?", "Why aren't I unlocked yet?", "Can I get released today?",
+              "What is stopping me from being released?"):                 # the first two: live, 2026-11-16 19:32
         assert is_release_question(q), q
     for q in ("I like my lock", "what is holding my release and also tell me a story about dragons please", "hello"):
         assert not is_release_question(q), q

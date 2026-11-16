@@ -348,7 +348,7 @@ class TestDeterministicCommandsUnaffectedByScarlett:
         result = service.handle_message(_incoming("help", external_message_id="m1"))
         # Exact contract text, unaffected by which personality is active --
         # the deterministic command path never reaches personality code.
-        assert result.text == CAPABILITIES_TEXT
+        assert result.text.startswith(CAPABILITIES_TEXT)
 
 
 # =============================================================================

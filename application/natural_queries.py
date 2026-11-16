@@ -14,13 +14,37 @@ import re
 
 from infrastructure.text import plain_text
 
-__all__ = ["read_only_command", "READ_ONLY_TARGETS", "CAPABILITIES_TEXT"]
+__all__ = ["read_only_command", "READ_ONLY_TARGETS", "CAPABILITIES_TEXT", "COMMANDS_TEXT"]
 
 CAPABILITIES_TEXT = (
     "I'm your coach and keyholder, and you can just talk to me.\n\n"
     "Ask me things like \"what's my task?\", \"am I on vacation?\", \"how am I doing?\" or \"what's my lock status?\", or tell me how your day went. "
     "If life needs a break from the device, just say you need an exemption.\n\n"
     "Anything that changes something, I'll confirm with a button or an exact phrase first. Health and safety always come first, and they never need my permission."
+)
+
+# Owner, 2026-11-16: "these commands are piling up. Can you do a help command?" `help` now also lists what he can type, grouped; `help all`
+# lists every command. Only commands that are wired in this bot are named (a line about a feature that is off says nothing harmful).
+COMMANDS_TEXT = (
+    "**Things you can type**\n\n"
+    "**Your lock**\n"
+    "- \"What is holding my release?\" or \"Am I under supervision?\": what holds it, and about when it ends\n"
+    "- `chaster status`: your lock as Chaster reports it\n\n"
+    "**Training**\n"
+    "- `log squat 105 4x9` or `log pullups 8,8,7`: record your sets (the weight goes up when every set hits the top)\n"
+    "- `extra training`: one more short session today (once a week)\n\n"
+    "**Tasks**\n"
+    "- `extra task` or `extra task at 21:00`: one more erotic task today (once a day; counts like any task)\n\n"
+    "**Your gear**\n"
+    "- `gear`: what you own\n"
+    "- `gear add <piece>`, `gear add <piece> as <your name for it>`, `gear remove <piece>` (while locked a removal waits 24 h)\n\n"
+    "**Switches**\n"
+    "- `features`: what is on and off for you\n"
+    "- `<feature> off` / `<feature> on` (while locked, off waits 24 h)\n\n"
+    "**Other**\n"
+    "- `vacation`, `photo check-ins on|off`, `weekly review on|off`, `persona`, `memory`, `forget all`, `channel discord|chaster`, `mode`\n"
+    "- Need a break from the device? Just say you need an exemption. Health and safety never need my permission.\n\n"
+    "`help all` lists every command."
 )
 
 _QUESTIONS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
