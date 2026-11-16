@@ -147,9 +147,9 @@ class TestDelivery:
         env.svc.tick(due - timedelta(minutes=1))
         assert env.sender.sent == []
         env.svc.tick(due)
-        assert env.sender.sent == [(U, PROMPTS[TrustLevel.LEVEL_2])]
+        assert len(env.sender.sent) == 1 and env.sender.sent[0][1] in {p for part in PROMPTS[TrustLevel.LEVEL_2].values() for p in part}
         row = env.rows()[0]
-        assert row["status"] == "sent" and row["prompt_text"] == PROMPTS[TrustLevel.LEVEL_2]
+        assert row["status"] == "sent" and row["prompt_text"] == env.sender.sent[0][1]
         assert datetime.fromisoformat(row["deadline_at"].replace("Z", "+00:00")) == due + RESPONSE_TIMEOUT
 
     def test_prompt_due_event_carries_ids_only(self, env) -> None:
@@ -232,7 +232,7 @@ class TestReplies:
         e.svc.tick(e.due + timedelta(minutes=6))
         row = e.rows()[0]
         assert row["status"] == "answered" and row["verdict"] == "SUFFICIENT" and row["rubric_version"] == "1"
-        assert e.evaluated == [(PROMPTS[TrustLevel.LEVEL_2], "I trained and finished my chores")]
+        assert len(e.evaluated) == 1 and e.evaluated[0][0] in {p for part in PROMPTS[TrustLevel.LEVEL_2].values() for p in part} and e.evaluated[0][1] == "I trained and finished my chores"
         assert not e.events("check_in.missed") and not e.events("check_in.insufficient")
 
     def test_reply_text_never_appears_in_an_event_payload(self, tmp_path) -> None:
@@ -297,6 +297,10 @@ class TestVerdictConsequences:
         assert row["status"] == "insufficient_pending" and row["verdict"] == "INSUFFICIENT"
         assert datetime.fromisoformat(row["follow_up_until"].replace("Z", "+00:00")) == evaluated_at + FOLLOW_UP_WINDOW
         assert not e.events("check_in.insufficient")
+        import sqlite3                                 # bug fix 2026-11-16: he is told at once, with the time left
+        with sqlite3.connect(e.svc.db_path) as conn:
+            notes = [r[0] for r in conn.execute("SELECT text FROM notifications WHERE kind = 'check_in' AND dedupe_key LIKE 'check_in:insufficient:%'")]
+        assert len(notes) == 1 and "too thin" in notes[0] and f"{int(FOLLOW_UP_WINDOW.total_seconds() // 60)} minutes" in notes[0]
 
     def test_a_sufficient_follow_up_clears_it(self, tmp_path) -> None:
         e = sent_env(tmp_path, verdict=Verdict.INSUFFICIENT)
@@ -568,3 +572,16 @@ class TestMorningMovesOnce:
         e.svc.online_since = local(MON, 14, 0)                               # nor does one after the time
         e.svc.tick(local(MON, 14, 1))
         assert [r for r in e.rows() if r["slot_index"] == 90][0]["status"] == "missed"
+
+
+def test_check_in_questions_vary_and_fit_the_time_of_day() -> None:
+    """Owner, 2026-11-16: "make the check-ins so they're not the same and so boring"."""
+    from supervision.checkins import RECENT_PROMPTS, pick_prompt
+    noon, evening = datetime(2026, 11, 17, 12, 0), datetime(2026, 11, 17, 19, 0)
+    asked = [pick_prompt(TrustLevel.LEVEL_1, noon, [], str(i)) for i in range(40)]
+    assert len(set(asked)) >= 4 and all(a in PROMPTS[TrustLevel.LEVEL_1]["day"] for a in asked)
+    assert pick_prompt(TrustLevel.LEVEL_1, evening, [], "x") in PROMPTS[TrustLevel.LEVEL_1]["evening"]
+    recent = list(PROMPTS[TrustLevel.LEVEL_2]["day"][:RECENT_PROMPTS])
+    for i in range(30):
+        assert pick_prompt(TrustLevel.LEVEL_2, noon, [r + " And a suffix." for r in recent], str(i)) not in recent
+    assert pick_prompt(TrustLevel.LEVEL_4, noon, [], "x") is None

@@ -371,6 +371,12 @@ class ReleaseEnginePeriodicTask:
             release_debt=self._debt_owed(),
         )
 
+    def holds(self) -> tuple[list[str], int]:
+        """Read-only (Proposal A, owner 2026-11-16): what holds a release now (the hard vetoes, in their order) and the tokens ready."""
+        held = [name for name, on in (("penalty_window_active", self._penalty_active), ("supervision_active", self._supervision_active),
+                                      ("release_debt", self._debt_owed)) if bool(on())]
+        return held, int(self._engine.get_balance(self._user))
+
     def _debt_owed(self) -> bool:
         """Roadmap B4: True while consequences are still owed. A read failure holds nothing (it never blocks a release by accident)."""
         if self.release_debt is None:

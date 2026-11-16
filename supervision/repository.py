@@ -108,6 +108,19 @@ class SupervisionService:
             row = tx.fetch_one("SELECT active FROM supervision_states WHERE domain_id = ?", (domain_id,))
         return bool(row["active"]) if row is not None else False
 
+    def get_active_domains(self) -> list[str]:
+        """The domains under supervision now (Proposal A, owner 2026-11-16: "what holds my release" answered from facts)."""
+        with self._core.transaction() as tx:
+            return [r["domain_id"] for r in tx.fetch_all("SELECT domain_id FROM supervision_states WHERE active = 1 ORDER BY domain_id")]
+
+    def get_estimated_end(self, domain_id: str, now: datetime, future_answers) -> datetime | None:
+        """About when supervision of `domain_id` would end if every check-in at `future_answers` is answered (never a score)."""
+        from trust_manager.checkin_scoring import CHECKIN_ANSWERED_WEIGHT
+        from trust_manager.short_term import determine_recovery_estimate_in_transaction
+        with self._core.transaction() as tx:
+            return determine_recovery_estimate_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id), threshold=EXIT_AT_OR_ABOVE,
+                                                              future_answers=future_answers, good_weight=CHECKIN_ANSWERED_WEIGHT)
+
     def get_short_term(self, domain_id: str, now: datetime) -> ShortTermTrust:
         """Owner and CLI read (never shown to the wearer)."""
         with self._core.transaction() as tx:

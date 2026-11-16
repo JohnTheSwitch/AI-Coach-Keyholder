@@ -889,6 +889,13 @@ def main() -> None:
         application_service.held_lock = wiring.held_lock
         _held_cfg = window_config_from(config)
         application_service.held_lock_clock = lambda at, c=_held_cfg: c.local(at).strftime("%d %b %H:%M")
+    # Proposal A (owner, 2026-11-16): "what is holding my release?" is answered from the release engine's own vetoes, not by the model.
+    _rt = getattr(wiring, "release_task", None)
+    if _rt is not None and getattr(wiring, "supervision", None) is not None and hasattr(_rt, "holds"):
+        from system.release_status import ReleaseStatus
+        application_service.release_status = ReleaseStatus(
+            user_id=_rt.user_id, holds=_rt.holds, supervision_domains=wiring.supervision.get_active_domains,
+            supervision_end=wiring.supervision.get_estimated_end, window_config=window_config_from(config)).answer
     from features.service import Features
     features = Features(core)                     # owner, 2026-11-16: per-wearer feature switches (`features`, `<feature> off|on`)
     application_service.features_command = features.command

@@ -90,11 +90,61 @@ RELEASE_SLOT = 100                           # above any scheduled slot index: o
 RELEASE_CHECK_IN_VALIDITY = timedelta(hours=12)
 _MAX_RESPONSE_CHARS = 4000
 
-PROMPTS = {
-    TrustLevel.LEVEL_1: "Report in. What did you actually get done today, and how are you holding up? A real answer, not a one-liner.",
-    TrustLevel.LEVEL_2: "Hey you. What did you get done today, and how are you doing?",
-    TrustLevel.LEVEL_3: "So, how did today go?",
+# Owner, 2026-11-16: "make the check-ins so they're not the same and so boring". A pool per level and part of the day (before 17:00 local:
+# the day so far; later: the day as a whole), picked at random without the last RECENT_PROMPTS ones. Each still asks for a real account
+# (the rubric judges the answer against the question it was given), and the stricter the level, the more it demands.
+PROMPTS: dict[TrustLevel, dict[str, tuple[str, ...]]] = {
+    TrustLevel.LEVEL_1: {
+        "day": (
+            "Report in. What have you done since this morning, and how is the cage treating you? A real answer, not a one-liner.",
+            "Stop and tell me: what have you actually done today so far, and what's still left? Be specific.",
+            "Status, now. Where are you, what are you doing, and how are you holding up locked? Details.",
+            "Midday check. What have you finished, what have you put off, and why? I want the honest version.",
+            "Tell me what you've obeyed today and what you've dodged. Both, and properly.",
+            "How hard is the cage on you today, and what have you done with your day despite it? A few real sentences.",
+        ),
+        "evening": (
+            "Report in. What did you actually get done today, and how are you holding up? A real answer, not a one-liner.",
+            "Your day, in full: what you did, what you skipped, and how the cage felt. No shortcuts.",
+            "Evening report. What are you proud of today, and what would I be disappointed by? Be honest.",
+            "Tell me about today: one thing you did well, one thing you didn't, and how locked you feel right now.",
+            "Account for your day. What did you do, and did you do it the way you were told?",
+            "How did denial treat you today? And what did you get done anyway? Details, please.",
+        ),
+    },
+    TrustLevel.LEVEL_2: {
+        "day": (
+            "Hey you. How's the day going so far, and what have you done?",
+            "Quick check: what are you up to right now, and how's the cage?",
+            "How's your day been so far? Tell me one thing you've done and one you still have to do.",
+            "What's on your mind right now, locked boy? And what have you got done today?",
+            "Halfway through the day: how are you doing, and what's next?",
+        ),
+        "evening": (
+            "Hey you. What did you get done today, and how are you doing?",
+            "How did today go? What went well, and what didn't?",
+            "Tell me about your day, and how being locked felt today.",
+            "What was the best part of today, and the hardest?",
+            "End of the day: what did you do, and how are you feeling now?",
+        ),
+    },
+    TrustLevel.LEVEL_3: {
+        "day": ("So, how's the day going?", "What are you up to?", "How's the cage today?", "Anything worth telling me so far today?"),
+        "evening": ("So, how did today go?", "How was your day?", "Anything good happen today?", "How are you feeling tonight?"),
+    },
 }
+RECENT_PROMPTS = 3          # the last few questions are never asked again straight away
+EVENING_FROM = time(17, 0)
+
+
+def pick_prompt(level: TrustLevel, local_now: datetime, recent: list[str], seed: str) -> str | None:
+    """The question for a check-in (None at a level that asks nothing). Pure: `recent` = the last prompts sent (newest first)."""
+    pool = PROMPTS.get(level)
+    if pool is None:
+        return None
+    options = pool["evening" if local_now.time() >= EVENING_FROM else "day"]
+    fresh = [p for p in options if not any(r and r.startswith(p) for r in recent[:RECENT_PROMPTS])] or list(options)
+    return random.Random(seed).choice(fresh)
 
 
 class SendOutcome(StrEnum):
@@ -378,7 +428,7 @@ class CheckInService:
             if awaiting is not None:            # one open text check-in at a time; this one waits (or is skipped later)
                 continue
             level = self._level() or TrustLevel(int(row["level"]))
-            prompt = PROMPTS.get(level)
+            prompt = pick_prompt(level, self._cfg.local(now), self._recent_prompts(), row["id"])
             if prompt is None:                  # level 4 now: nothing to ask
                 self._cas(row["id"], ("scheduled",), "skipped", now)
                 continue
@@ -683,7 +733,13 @@ class CheckInService:
                 self._cas(row["id"], ("responded",), "answered", now, event=None if row["slot_index"] == RELEASE_SLOT else "check_in.answered", **common)
             elif verdict is Verdict.INSUFFICIENT:
                 follow_up = row["follow_up_until"] or _iso(now + self._follow_up_window())
-                self._cas(row["id"], ("responded",), "insufficient_pending", now, follow_up_until=follow_up, **common)
+                # Bug fix 2026-11-16 (owner: "How do I realise my answer was too vague? Does it tell me?"): it did not, so the follow-up
+                # window to add more was invisible. He is told at once, with the time left.
+                minutes = max(1, int((_parse_iso(follow_up) - now).total_seconds() // 60))
+                self._cas(row["id"], ("responded",), "insufficient_pending", now, follow_up_until=follow_up,
+                          notice=(f"check_in:insufficient:{row['id']}",
+                                  f"That answer is too thin for me to count it. Add a sentence or two within {minutes} minutes: "
+                                  "what you actually did and how it's going. Otherwise it counts against you."), **common)
             else:     # UNCERTAIN / NOT_EVALUATED: zero consequence (fail closed towards no penalty)
                 self._cas(row["id"], ("responded",), "answered_uncertain", now, **common)
 
@@ -730,8 +786,14 @@ class CheckInService:
 
     # ------------------------------------------------------------------ CAS
 
+    def _recent_prompts(self) -> list[str]:
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT prompt_text FROM check_ins WHERE user_id = ? AND prompt_text IS NOT NULL AND kind IS NULL "
+                                "AND slot_index < ? ORDER BY COALESCE(sent_at, updated_at) DESC LIMIT ?", (self._user, MORNING_SLOT, RECENT_PROMPTS))
+        return [r["prompt_text"] for r in rows]
+
     def _cas(self, check_in_id: str, from_statuses: tuple[str, ...], to_status: str, now: datetime,
-             event: str | None = None, payload: dict | None = None, **columns: str | None) -> bool:
+             event: str | None = None, payload: dict | None = None, notice: tuple[str, str] | None = None, **columns: str | None) -> bool:
         allowed = {"prompt_text", "sent_at", "deadline_at", "verdict", "rubric_version", "follow_up_until", "responded_at"}
         assert set(columns) <= allowed, set(columns) - allowed
         assignments = ", ".join(f"{c} = ?" for c in columns)
@@ -750,6 +812,8 @@ class CheckInService:
                     event_type=event, source_module="supervision",
                     payload={"check_in_id": check_in_id, "trust_domain": self._domain, **(payload or {})}, occurred_at=now,
                 ))
+            if notice is not None:
+                enqueue_in_transaction(tx, user_id=self._user, kind="check_in", dedupe_key=notice[0], now=now, immediate=True, text=notice[1])
             return True
 
         return apply_transition(self._core, write=write)

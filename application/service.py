@@ -188,6 +188,7 @@ class ApplicationService:
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
         self.training_extra = None      # `extra training` (owner, 2026-11-16)
+        self.release_status = None      # Proposal A (owner, 2026-11-16): system.release_status.ReleaseStatus.answer, before any model
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.proof_switch = None                 # slice 8 (Q9): proof_checks.service.ProofChecks.set_switch, for an additional wearer only
         self.held_lock = None                    # () -> ChasterProviderObservation | None: the keyholder's view of the owner's lock (bug fix 2026-11-16)
@@ -344,6 +345,15 @@ class ApplicationService:
                     gear_reply = None
                 if gear_reply is not None:
                     return OutgoingMessage(text=gear_reply) if isinstance(gear_reply, str) else gear_reply
+
+            if self.release_status is not None:
+                try:
+                    status_reply = self.release_status(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("What holds the release could not be read; the message is handled normally.")
+                    status_reply = None
+                if status_reply is not None:
+                    return status_reply
 
             if self.training_extra is not None:
                 try:

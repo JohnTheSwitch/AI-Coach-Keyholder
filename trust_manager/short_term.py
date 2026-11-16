@@ -77,6 +77,53 @@ def determine_short_term_trust_in_transaction(tx: Transaction, domain_id: str, *
                                               window: timedelta = DEFAULT_WINDOW) -> ShortTermTrust:
     """The narrow read for other modules (Supervision reads it inside its outbox handler's transaction). Read-only."""
     rows = tx.fetch_all(
-        "SELECT evidence_type, raw_weight, evidence_confidence FROM trust_evidence WHERE domain_id = ? AND created_at > ? AND created_at <= ?",
+        "SELECT evidence_type, raw_weight, evidence_confidence, source_entity_type, source_entity_id FROM trust_evidence "
+        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?",
         (domain_id, _iso(now - window), _iso(now)))
-    return short_term_from(((r["evidence_type"], r["raw_weight"], r["evidence_confidence"]) for r in rows), window)
+    return short_term_from(_net_corrections(rows), window)
+
+
+def _net_corrections(rows) -> list[tuple[str, float, float]]:
+    """Bug fix 2026-11-16: an owner correction (`manual_review`, same source entity) reverses a piece; counted on its own it added the
+    reversal as GOOD evidence while the miss still counted as BAD. A correction now nets with the piece it corrects (both in the window: one
+    piece of the summed weight, dropped at zero); a correction whose piece already left the window is dropped with it."""
+    corrections: dict[str, list] = {}
+    for r in rows:
+        if r["source_entity_type"] == "manual_review":
+            corrections.setdefault(r["source_entity_id"], []).append(r)
+    out: list[tuple[str, float, float]] = []
+    for r in rows:
+        if r["source_entity_type"] == "manual_review":
+            continue
+        fixes = corrections.pop(r["source_entity_id"], None) if r["source_entity_id"] is not None else None
+        if not fixes:
+            out.append((r["evidence_type"], r["raw_weight"], r["evidence_confidence"]))
+            continue
+        net = float(r["raw_weight"]) * float(r["evidence_confidence"]) + sum(float(f["raw_weight"]) * float(f["evidence_confidence"]) for f in fixes)
+        if abs(net) > 1e-12:
+            out.append((r["evidence_type"], net, 1.0))
+    return out
+
+
+def determine_recovery_estimate_in_transaction(tx: Transaction, domain_id: str, *, now: datetime, window: timedelta, threshold: float,
+                                               future_answers: Iterable[datetime], good_weight: float) -> datetime | None:
+    """Owner, 2026-11-16 (Proposal A): when would short-term Trust reach `threshold` if every check-in at `future_answers` is answered?
+    The first instant (an answer, or a midnight-UTC daily evaluation, the two moments supervision is re-evaluated) at which it would.
+    None when it would not within the answers given. Read-only; a rough guide for the wearer ("about"), never a promise."""
+    future = sorted(t for t in future_answers if t > now)
+    if not future:
+        return None
+    rows = tx.fetch_all(
+        "SELECT evidence_type, raw_weight, evidence_confidence, source_entity_type, source_entity_id, created_at FROM trust_evidence "
+        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?", (domain_id, _iso(now - window), _iso(now)))
+    past = [(dict(r), datetime.fromisoformat(str(r["created_at"]).replace("Z", "+00:00"))) for r in rows]
+    added = [({"evidence_type": EvidenceType.CHECKIN_ANSWERED.value, "raw_weight": good_weight, "evidence_confidence": 1.0,
+               "source_entity_type": "projection", "source_entity_id": f"p{i}"}, t) for i, t in enumerate(future)]
+    first_day = now.replace(hour=23, minute=0, second=0, microsecond=0)
+    evaluations = {*future, *(first_day + timedelta(days=k) for k in range((future[-1] - now).days + 2))}
+    for moment in sorted(t for t in evaluations if now < t <= future[-1] + timedelta(days=1)):
+        pieces = [r for r, t in past + added if moment - window < t <= moment]
+        score = short_term_from(_net_corrections(pieces), window).score
+        if score is not None and score >= threshold:
+            return moment
+    return None

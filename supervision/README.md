@@ -128,3 +128,12 @@ out on his **first message of the day** (that message is not the report); what h
 (`answered`, which earns Trust like any answered check-in). None by its time, asked or not, is a **missed check-in** (`check_in.missed`, with the
 usual streak and escalation). Suspended during a wear exemption or the runtime halt (`morning_suspended`: then `skipped`, never a miss); a vacation
 pauses it with every other check-in. Ordinary check-ins wait while it is open (one open text check-in at a time).
+
+## Fixes and reads of 2026-11-16 (owner)
+
+- **A corrected check-in nets out** in short-term Trust (`trust_manager/short_term._net_corrections`): an owner correction (`manual_review`,
+  same source entity) used to count as a separate good piece while the miss still counted as bad.
+- **A thin answer is announced:** `insufficient_pending` queues "That answer is too thin for me to count it. Add a sentence or two within
+  N minutes..." at once; before, the follow-up window was invisible.
+- **Reads for "what holds my release"** (`system/release_status.py`, Proposal A): `get_active_domains()` and `get_estimated_end()` (about
+  when short-term Trust would reach 0.60 if every check-in is answered; a rough guide, never shown as a score).

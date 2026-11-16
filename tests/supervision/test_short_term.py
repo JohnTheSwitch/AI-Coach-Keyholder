@@ -218,3 +218,15 @@ class TestWiring:
         text = (ROOT / "system" / "startup.py").read_text(encoding="utf-8")
         assert 'register("daily_evaluation.completed", "supervision", supervision.on_daily_evaluation)' in text
         assert "supervision.on_good_opening" not in text and "supervision.on_incident_confirmation)" not in text
+
+
+def test_an_owner_correction_cancels_the_piece_it_corrects(core) -> None:  # noqa: F811
+    """Bug fix 2026-11-16: the photo check-in during a wear exemption (15 Nov) was corrected with +0.02, which counted as good evidence
+    while the miss still counted as bad."""
+    with core.transaction() as tx:
+        for i, (etype, stype, sid, w) in enumerate([("checkin_answered", "check_in", "a", 0.02), ("checkin_missed", "check_in", "m", -0.02),
+                                                    ("checkin_missed", "manual_review", "m", 0.02), ("checkin_missed", "manual_review", "gone", 0.02)]):
+            tx.execute("INSERT INTO trust_evidence (id, domain_id, created_at, evidence_type, source_entity_type, source_entity_id, raw_weight, "
+                       "evidence_confidence, explanation) VALUES (?, 'd', ?, ?, ?, ?, ?, 1.0, 'e')", (f"c{i}", iso(NOW - timedelta(hours=1)), etype, stype, sid, w))
+        st = determine_short_term_trust_in_transaction(tx, "d", now=NOW, window=timedelta(days=7))
+    assert st.pieces == 1 and st.score == 1.0 and st.bad == 0

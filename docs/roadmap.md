@@ -151,10 +151,17 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D15 | **Three levels: Beginner, Standard, Advanced** | Beginner = the owner's start (tokens 1.0, +0.025, cap 1.5; lines 10/20/10; Standard windows; erotic tasks, workouts, temptations and protocol start off); a new wearer starts there; asked to move up after 4 weeks without a severe incident; moving down only while unlocked |
 | D14 | **Approved, not built yet** | Tamper watch: built 2026-11-16 (`tamper_watch/`; settings were already covered by the settings watch); learning options 2 (pattern reports) and 3 (what works on him), both report and propose only; multi-wearer: leak audit, invitation discloses operator data use, beginner profile (proposal to the owner), operator runbook rule: never loosen a tester's settings because they asked the operator directly |
 | D16 | **Extra training session on demand** | `extra training` on a day without a session (before that day's task is out): one more short session, at most one a week, balancing legs and upper body; optional, +0.08 when verified, never part of the week bonus. Not a fixed Monday choice ("I don't know if I'll be able to do it the exact week") |
+| D17 | **What holds my release, from facts** (Proposal A, approved) | `system/release_status.py`: "what is holding my release", "why am I not unlocked", "am I under supervision" answered before any model: active holds (supervision with an about-when if every check-in is answered, penalty window, lines owed) and tokens ready; never a score |
+| D18 | **Fixes from the day's held requests** | a corrected check-in nets out in short-term Trust (was counted as a miss AND an answer); a thin check-in answer is announced with the minutes left to add more |
+| D19 | **Varied check-in questions** | A pool per level and part of the day (`supervision/checkins.PROMPTS`, `pick_prompt`), never one of the last 3 again; stricter levels demand more. Proposal B (a new lock asks whether the previous period was a test) declined: "I want to keep it serious now" |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)
 
+- **Cooling-off (asked 2026-11-16 ~19:00 Prague, ask again from 2026-11-17 19:00 Prague, together with the two above):** tasks and
+  workouts verified in Chaster count as good evidence in the check-in domain (like an answered check-in, +0.02), so short-term Trust sees
+  observed obedience, not only check-ins; and, if yes, the same credit backfilled for everything verified since Fri 13 Nov (the real lock).
+  Never extra check-ins on request (floodable). Effect now: supervision ends ~10-15 h sooner.
 - **Cooling-off (asked 2026-11-16 18:27 Prague, ask again from 2026-11-17 18:30 Prague):** remove the 24-hour cooling-off itself
   (asked right after the request below was held). Loosening while locked, so it waits too; consent withdrawals (halt, leave) stay immediate.
 - **Cooling-off (first raised 2026-11-16 10:50 Prague, ask again from 2026-11-17 10:50 Prague):** the check-ins missed before he took the lock seriously (the
