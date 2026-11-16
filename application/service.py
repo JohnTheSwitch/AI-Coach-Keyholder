@@ -187,6 +187,7 @@ class ApplicationService:
         self.lines = None
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
+        self.training_extra = None      # `extra training` (owner, 2026-11-16)
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.proof_switch = None                 # slice 8 (Q9): proof_checks.service.ProofChecks.set_switch, for an additional wearer only
         self.held_lock = None                    # () -> ChasterProviderObservation | None: the keyholder's view of the owner's lock (bug fix 2026-11-16)
@@ -316,6 +317,14 @@ class ApplicationService:
 
             said = " ".join((incoming.text or "").lower().split())
             if self.proof_switch is not None and said in ("proof checks off", "proof checks on"):
+                # Loophole fix 2026-11-16: switching spot checks off waits like the other switch-offs while locked (G3); on is immediate.
+                if self.opt_outs is not None:
+                    if said.endswith("on"):
+                        self.opt_outs.withdraw(user.id, "proof_checks", incoming.received_at)
+                    else:
+                        waiting = self.opt_outs.request_off(user.id, "proof_checks", incoming.received_at)
+                        if waiting is not None:
+                            return OutgoingMessage(text=waiting)
                 return OutgoingMessage(text=self.proof_switch(user.id, said.endswith("off"), incoming.received_at))
 
             if self.features_command is not None:
@@ -335,6 +344,15 @@ class ApplicationService:
                     gear_reply = None
                 if gear_reply is not None:
                     return OutgoingMessage(text=gear_reply) if isinstance(gear_reply, str) else gear_reply
+
+            if self.training_extra is not None:
+                try:
+                    extra_reply = self.training_extra(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("An extra training session could not be planned; the message is handled normally.")
+                    extra_reply = None
+                if extra_reply is not None:
+                    return extra_reply
 
             if self.training_log is not None and (incoming.text or "").strip().lower().startswith("log "):
                 try:
@@ -1449,6 +1467,8 @@ class ApplicationService:
         if key == "photo_check_ins" and self.photo_check_ins is not None:
             self.photo_check_ins.consent.set(user_id, False, now=now)
             return "Photo check-ins are off. An open one is closed and never counts as missed."
+        if key == "proof_checks" and self.proof_switch is not None:
+            return self.proof_switch(user_id, True, now)
         if key == "weekly_review" and self.weekly_review is not None:
             self.weekly_review.set(user_id, False, now=now)
             return "The weekly review is off. `weekly review on` starts it again."

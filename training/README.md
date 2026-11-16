@@ -6,6 +6,12 @@ on 2026-11-14 in his workout chat (`plan.py`: exercises, sets, rep ranges, start
 - **Schedule:** Saturday full leg day (A front of the thighs / B back of the thighs and glutes, alternating); Sunday full upper body in
   supersets; one short session on Monday or Thursday (legs in an odd ISO week, upper body in an even one). On Monday the bot asks which
   day; no answer means Thursday. No legs on Friday or Sunday.
+- **An extra session on demand (owner, 2026-11-16):** `extra training` (also `extra workout`, `trénink navíc`) on a day without a
+  session, before that day's task is out, makes today's task one more short session, at most one a week. It balances the week as in his
+  workout chat's four-a-week version (upper body when the week's short session is legs, and the other way round), but never legs within
+  2 days of another leg day, on a Friday or on a Sunday. Optional like every short session: verified it earns +0.08, skipped it costs
+  nothing, and it is never part of the week bonus. Stored in `training_weeks.extra_date/extra_kind` (migration 089); event
+  `training.extra_requested`.
 - **The session is that day's obedience task** (it replaces the erotic one): the DM shows every exercise with sets, reps, his current
   weight and rest; proof is a Chaster photo of the day's training log with the code, due by the end of free time.
 - **Full sessions are mandatory** (missed = asked to explain, unexplained = a Warning and 20 lines). **The short session is optional**:

@@ -69,3 +69,12 @@ def test_someone_else_cannot_press(tmp_path) -> None:
     w.opt.request_off(U, "conditioning", NOW)
     w.opt.tick(NOW + COOLING)
     assert w.opt.press(user_id="x", row_id=w.row()["id"], action="yes", now=NOW) == "That isn't yours to decide."
+
+
+def test_spot_checks_wait_like_the_other_switches(tmp_path) -> None:
+    """Loophole fix 2026-11-16: `proof checks off` (an additional wearer's switch) was immediate while locked."""
+    from opt_outs.service import SWITCHES
+    w = World(tmp_path)
+    assert "proof_checks" in SWITCHES
+    w.opt.register("proof_checks", lambda user, now: (w.applied.append("proof_checks"), "off")[1])
+    assert w.opt.request_off(U, "proof_checks", NOW).startswith("Noted.") and w.applied == []

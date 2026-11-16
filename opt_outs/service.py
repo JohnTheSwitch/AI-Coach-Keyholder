@@ -37,7 +37,8 @@ __all__ = ["OptOuts", "Switch", "SWITCHES", "COOLING", "ANSWER_WINDOW"]
 
 COOLING = timedelta(hours=24)
 ANSWER_WINDOW = timedelta(hours=24)
-SWITCHES = {"photo_check_ins": "photo check-ins", "conditioning": "Progressive Conditioning", "weekly_review": "the weekly review"}
+SWITCHES = {"photo_check_ins": "photo check-ins", "conditioning": "Progressive Conditioning", "weekly_review": "the weekly review",
+            "proof_checks": "spot checks"}      # loophole fix 2026-11-16: `proof checks off` was immediate (an additional wearer's switch)
 
 
 GEAR_PREFIX = "gear:"

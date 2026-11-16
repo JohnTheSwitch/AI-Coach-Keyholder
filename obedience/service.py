@@ -692,6 +692,32 @@ class ObedienceTasks:
         apply_transition(self._core, write=write)
         decision("obedience", "Today's obedience task was planned.", day=day.isoformat(), task=task.key, planned_at=_iso(planned))
 
+    def today_open(self, now: datetime) -> bool:
+        """Read-only: today's task is not out yet (none planned, or only planned), so an extra training session may still take its place."""
+        row = self._row_for(self._ports.today(now))
+        return row is None or row["status"] == "planned"
+
+    def take_training_today(self, now: datetime) -> bool:
+        """Bug fix 2026-11-16: "Today" for the short session came after today's task was planned (an erotic one). A task still only planned
+        (not asked, not in Chaster) becomes the training session. True when it was switched."""
+        day = self._ports.today(now)
+        row = self._row_for(day)
+        if row is None or row["status"] != "planned" or self._ports.training is None or not self._ports.feature_on("workouts"):
+            return False
+        training = self._ports.training(day)
+        if training is None:
+            return False
+
+        def write(tx: Transaction, _s: object) -> bool:
+            return bool(tx.execute("UPDATE obedience_tasks SET catalog_key = ?, text = ?, details = ?, planned_at = ? WHERE id = ? AND status = 'planned'",
+                                   (training.key, training.text, training.details, _iso(min(now + PLAN_STEP, _parse_iso(row["planned_at"]))),
+                                    row["id"])).rowcount)
+
+        switched = bool(apply_transition(self._core, write=write))
+        if switched:
+            decision("obedience", "Today's planned task became the short training session.", task=training.key)
+        return switched
+
     def _pick(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
         task = self._pick_raw(day, mode, owned)
         return _replace(task, text=self.personalize(task.text)) if task is not None else task

@@ -70,8 +70,12 @@ _TABLES = {"events": ("domain_events", "rowid, id, event_type, source_module, pa
 
 class TamperWatch:
     def __init__(self, core: CoreDatabase, *, repo: str | Path, raise_finding: Callable[[Finding, datetime], object],
-                 git: Callable[..., str | None] | None = None) -> None:
+                 git: Callable[..., str | None] | None = None, trusted_ref: str | None = None) -> None:
         self._core = core
+        # A copy run by someone else (owner, 2026-11-16: "a problem if someone else is using it and I push"): commits they pulled from the
+        # upstream they follow (e.g. `upstream/main`) are not theirs and never asked about. Unset on the owner's own install, where his own
+        # remote would be a way around the watch (push a change, then pull it).
+        self._trusted_ref = (trusted_ref or "").strip() or None
         self._repo = Path(repo)
         self._raise = raise_finding
         self._git = git or (lambda *args: _git(self._repo, *args))
@@ -93,6 +97,12 @@ class TamperWatch:
                 logger.exception("A tamper finding could not be raised.")
         self.snapshot(now, commit=self._head())
         return findings
+
+    def _upstream(self, sha: str) -> bool:
+        """The commit is part of the trusted upstream (`merge-base --is-ancestor` prints nothing; a non-zero exit comes back as None)."""
+        if self._trusted_ref is None:
+            return False
+        return self._git("merge-base", "--is-ancestor", sha, self._trusted_ref) is not None
 
     def _head(self) -> str | None:
         head = self._git("rev-parse", "HEAD")
@@ -119,7 +129,7 @@ class TamperWatch:
                 if len(parts) < 3:
                     continue
                 sha, subject, body = parts[0].strip(), parts[1].strip(), parts[2]
-                if CLAUDE_TRAILER not in body.lower():
+                if CLAUDE_TRAILER not in body.lower() and not self._upstream(sha):
                     out.append(Finding(f"commit:{sha}", "A commit to the bot's code that was not Claude's.",
                                        f"There's a change to my code that wasn't made by Claude: \"{subject[:120]}\". What did you change, and why?",
                                        f"Commit {sha[:12]} ({subject[:200]}) has no Claude co-author line; it arrived since the last start."))

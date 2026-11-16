@@ -371,7 +371,10 @@ class CoachKeyholderBot(discord.Client):
                                 await self._handle_dm(message, received_at=message.created_at, late=True)
                                 replayed += 1
                         except Exception as exc:
-                            logger.info("No missed messages could be read for one account (%s).", type(exc).__name__)
+                            # Bug fix 2026-11-16: a leftover test identity ("123", 2026-10-03) logged this on every restart. An account Discord
+                            # does not know has nothing to read; only other failures are worth the log.
+                            (logger.debug if type(exc).__name__ == "NotFound" else logger.info)(
+                                "No missed messages could be read for one account (%s).", type(exc).__name__)
         except Exception:
             logger.exception("Catching up on messages sent while offline failed; carrying on.")
         finally:
@@ -1096,6 +1099,7 @@ def main() -> None:
             from system.dm_actions import TrainingDm
             bot.dm_actions["training"] = TrainingDm(training_plan, resolve_user=resolve_user, now=clock.now)
             application_service.training_log = training_plan.log
+            application_service.training_extra = training_plan.extra
             desk = getattr(getattr(bot, "coach_dm", None), "_desk", None)
             if desk is not None:
                 desk.training_day = training_plan.is_training_day
@@ -1130,7 +1134,7 @@ def main() -> None:
         from infractions.signals import SignalKind as _TamperKind
         from tamper_watch.service import TamperWatch
         _honesty = getattr(config, "honesty_trust_domain", None) or "honesty"
-        tamper = TamperWatch(core, repo=Path(__file__).resolve().parents[1],
+        tamper = TamperWatch(core, repo=Path(__file__).resolve().parents[1], trusted_ref=getattr(config, "tamper_trusted_ref", None),
                              raise_finding=lambda f, now, s=detectors.signals: s.raise_signal(
                                  user_id=tamper_user, kind=_TamperKind.TAMPERING, subject_id=f.subject_id, trust_domain=_honesty, now=now,
                                  detail=f.detail, wearer_text=f.wearer_text, facts=f.facts))

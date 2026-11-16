@@ -28,6 +28,8 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Callable, Protocol
 
+STALE_AFTER = timedelta(hours=3)        # older exchanges are marked with their age in what the model reads (bug fix 2026-11-16)
+
 from memory_system.models import (
     WorkingMemoryCapacityError,
     WorkingMemoryRole,
@@ -98,7 +100,15 @@ class InMemoryWorkingMemory(WorkingMemoryReader, WorkingMemoryWriter):
                 cutoff = self._clock() - self._max_age
                 pairs = [p for p in pairs if self._times.get(id(p), cutoff) >= cutoff]
         turns: list[WorkingMemoryTurn] = []
-        for user_turn, assistant_turn in pairs:
+        now = self._clock() if self._clock is not None else None
+        for pair in pairs:
+            user_turn, assistant_turn = pair
+            # Bug fix 2026-11-16: yesterday evening's "I have dancing school tonight" came back after a restart and the model asked the next
+            # afternoon "What time is your dancing school tonight?". An exchange older than STALE_AFTER carries how long ago it was.
+            at = self._times.get(id(pair)) if now is not None else None
+            if at is not None and now - at >= STALE_AFTER:
+                hours = int((now - at).total_seconds() // 3600)
+                user_turn = WorkingMemoryTurn(role=user_turn.role, content=f"[sent {hours} hours ago] {user_turn.content}")
             turns.append(user_turn)
             turns.append(assistant_turn)
         return WorkingMemorySnapshot(turns=tuple(turns))  # a fresh tuple every call

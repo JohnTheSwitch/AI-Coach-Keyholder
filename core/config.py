@@ -173,6 +173,7 @@ class Config:
     platform_db_path: Path | None = None      # default: platform.sqlite next to the main database
     tenant_cap: int = 5                       # most non-removed tenants, tenant zero included (protects Chaster API rate limits)
     owner_user_id: str | None = None          # internal user id of the owner; the only identity `python -m cli freeze-lock` accepts
+    tamper_trusted_ref: str | None = None     # a copy run by someone else: commits in this git ref (e.g. upstream/main) are never asked about
     enable_chaster_messaging: bool = True    # Chaster chat channel (opt-in per user); needs the bot account connected with `messaging`
     chaster_chat_poll_seconds: int = 30
     chaster_api_budget_per_minute: int = 30   # shared request budget of the keyholder account (multi-wearer)
@@ -285,6 +286,7 @@ class Config:
             platform_db_path=Path(get("PLATFORM_DB_PATH")) if get("PLATFORM_DB_PATH") else None,
             tenant_cap=int(get("TENANT_CAP", "5") or "5"),
             owner_user_id=get("OWNER_USER_ID"),
+            tamper_trusted_ref=get("TAMPER_TRUSTED_REF"),
             enable_chaster_messaging=(get("ENABLE_CHASTER_MESSAGING", "true") or "true").strip().lower() in ("1", "true", "yes", "on"),
             chaster_chat_poll_seconds=int(get("CHASTER_CHAT_POLL_SECONDS", "30") or "30"),
             chaster_api_budget_per_minute=int(get("CHASTER_API_BUDGET_PER_MINUTE", "30") or "30"),

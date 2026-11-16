@@ -98,3 +98,27 @@ def test_dirtiness_is_read_when_the_bot_starts_not_a_minute_later(tmp_path) -> N
 
     asyncio.run(run())
     assert raised == []
+
+
+def test_commits_from_the_trusted_upstream_of_someone_elses_copy_are_not_asked_about(tmp_path) -> None:
+    """Owner, 2026-11-16: someone running their own copy pulls his commits; only their own changes are asked about."""
+    class UpstreamGit(Git):
+        def __call__(self, *args):
+            if args[0] == "merge-base":
+                return "" if args[2] == "b" * 40 and args[3] == "upstream/main" else None
+            return super().__call__(*args)
+
+    db, git, raised = core(tmp_path), UpstreamGit(), []
+    watch = TamperWatch(db, repo=tmp_path, raise_finding=lambda f, now: raised.append(f), git=git, trusted_ref="upstream/main")
+    watch.check_at_start(NOW)
+    git.head = "c" * 40
+    git.log = "b" * 40 + "\x1fowner's change\x1fowner's change\n\x1e" + "c" * 40 + "\x1fmy own change\x1fmy own change\n\x1e"
+    found = watch.check_at_start(NOW + timedelta(hours=1))
+    assert [f.subject_id for f in found] == ["commit:" + "c" * 40]
+
+
+def test_without_a_trusted_upstream_every_commit_not_by_claude_is_asked_about(tmp_path) -> None:
+    db, git, raised, watch = world(tmp_path)
+    watch.check_at_start(NOW)
+    git.head, git.log = "b" * 40, "b" * 40 + "\x1fpushed then pulled\x1fpushed then pulled\n\x1e"
+    assert len(watch.check_at_start(NOW + timedelta(hours=1))) == 1

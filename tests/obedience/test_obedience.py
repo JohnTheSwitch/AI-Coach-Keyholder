@@ -763,3 +763,29 @@ class TestOwnGearNames:
         w = World(tmp_path)
         assert w.tasks.personalize("Your gray Satisfyer Deep Diver in.") == "Your gray Satisfyer Deep Diver in."
         assert "gray Satisfyer Deep Diver" in w.tasks.gear_command(U, "gear", MORNING)
+
+
+def test_today_for_the_short_session_switches_a_task_that_is_only_planned(tmp_path) -> None:
+    """Bug fix 2026-11-16: "Today" came after the day's (erotic) task was planned, so the short session never came."""
+    import dataclasses
+    from types import SimpleNamespace
+    w = World(tmp_path)
+    w.tasks._plan(MORNING)
+    row = w.tasks._row_for(w.tasks._ports.today(MORNING))
+    assert row is not None and row["status"] == "planned"
+    session = SimpleNamespace(key="training:short:upper_short", text="Workout done: Upper body, short. Photo of the gym only.", details="x")
+    w.tasks._ports = dataclasses.replace(w.tasks._ports, training=lambda day: session)
+    assert w.tasks.take_training_today(MORNING) is True
+    row = w.tasks._row_for(w.tasks._ports.today(MORNING))
+    assert row["catalog_key"] == "training:short:upper_short" and row["status"] == "planned"
+
+
+def test_today_open_until_the_task_is_out(tmp_path) -> None:
+    """`extra training` (owner, 2026-11-16) may take today's place only while that task is not out yet."""
+    w = World(tmp_path)
+    assert w.tasks.today_open(MORNING) is True                                   # nothing planned yet
+    w.tasks._plan(MORNING)
+    assert w.tasks.today_open(MORNING) is True                                   # only planned
+    with w.core.transaction() as tx:
+        tx.execute("UPDATE obedience_tasks SET status = 'asked'")
+    assert w.tasks.today_open(MORNING) is False

@@ -111,3 +111,37 @@ def test_the_exercise_key_with_an_underscore_and_the_cable_steps(tmp_path) -> No
     from training.service import _LOG, ALIASES
     name = _LOG.match("log cable_row 34 12,12").group("name").strip().lower()
     assert (ALIASES.get(name) or ALIASES.get(name.replace("_", " ")) or (name if name in EXERCISES else None)) == "cable_row"
+
+
+
+def test_an_extra_session_on_demand(tmp_path) -> None:
+    """Owner, 2026-11-16: "I've already done the 3 this week but I have time today, so I can do the fourth"."""
+    from training.service import get_planned_sessions
+    p = plan(tmp_path)
+    tue = datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)                                 # week 47: odd, the short session is legs
+    assert p.extra(U, "hello", tue) is None and p.extra("someone", "extra training", tue) is None
+    reply = p.extra(U, "Extra training", tue)
+    assert "upper body" in reply.text
+    task = p.day_task(date(2026, 11, 17))
+    assert task.optional and task.key == "training:short:upper_short"
+    assert "One a week" in p.extra(U, "extra workout", datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)).text
+    assert p.day_task(THURSDAY).key == "training:short:legs_a_short"                         # the week's own short session stays
+    assert "2026-11-17" not in get_planned_sessions(p._core, U, "2026-11-16", "2026-11-22")  # never part of the week bonus
+    assert "2026-11-19" in get_planned_sessions(p._core, U, "2026-11-16", "2026-11-22")
+
+
+def test_an_extra_session_is_never_legs_too_close_to_a_leg_day(tmp_path) -> None:
+    p = plan(tmp_path)
+    p.day_task(SATURDAY)                                                                   # legs on Saturday 21 Nov
+    assert "legs" in p.extra(U, "extra training", datetime(2026, 11, 24, 9, 0, tzinfo=timezone.utc)).text
+    p2 = plan(tmp_path / "b")
+    p2.day_task(date(2026, 11, 28))                                                        # ...but not on the Friday before the leg day
+    assert "upper body" in p2.extra(U, "extra training", datetime(2026, 12, 4, 9, 0, tzinfo=timezone.utc)).text
+
+
+def test_no_extra_session_on_a_training_day_or_when_todays_task_is_out(tmp_path) -> None:
+    p = plan(tmp_path)
+    assert "already have a session" in p.extra(U, "extra training", datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc)).text
+    p.today_open = lambda now: False
+    assert "already out" in p.extra(U, "extra training", datetime(2026, 11, 17, 9, 0, tzinfo=timezone.utc)).text
+    assert p.day_task(date(2026, 11, 17)) is None

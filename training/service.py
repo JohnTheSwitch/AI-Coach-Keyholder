@@ -42,6 +42,8 @@ __all__ = ["TrainingPlan", "TrainingDay", "DELOAD_EVERY_WEEKS", "RETURN_LEG_DAYS
 
 DELOAD_EVERY_WEEKS = 7
 RETURN_LEG_DAYS = 2
+EXTRA_WORDS = frozenset({"extra training", "extra workout", "extra session", "extra training session", "fourth session",
+                         "trénink navíc", "trenink navic", "extra trénink", "extra trenink"})
 _LOG = re.compile(r"^\s*log\s+(?P<name>[^\d]+?)\s+(?:(?P<weight>\d+(?:[.,]\d+)?)\s*(?:kg)?\s+)?(?P<reps>\d+\s*[x×]\s*\d+|\d+(?:\s*[,;/ ]\s*\d+)*)\s*$",
                   re.IGNORECASE)
 
@@ -57,8 +59,9 @@ class TrainingDay:
 def get_planned_sessions(core, user_id: str, start: str, end: str) -> dict[str, str]:
     """Read-only: local date -> session key of the sessions the plan gave from `start` to `end` (inclusive local dates)."""
     with core.transaction() as tx:
-        rows = tx.fetch_all("SELECT local_date, session_key FROM training_sessions WHERE user_id = ? AND local_date BETWEEN ? AND ?",
-                            (user_id, start, end))
+        rows = tx.fetch_all("SELECT local_date, session_key FROM training_sessions WHERE user_id = ? AND local_date BETWEEN ? AND ? "
+                            "AND local_date NOT IN (SELECT extra_date FROM training_weeks WHERE user_id = ? AND extra_date IS NOT NULL)",
+                            (user_id, start, end, user_id))
     return {r["local_date"]: r["session_key"] for r in rows}
 
 
@@ -78,6 +81,8 @@ class TrainingPlan:
         self._core = core
         self.user_id = user_id
         self._free_time = free_time
+        self.after_today: Callable[[datetime], object] | None = None   # obedience: switch today's planned task to the short session
+        self.today_open: Callable[[datetime], bool] | None = None      # obedience: today's task is not out yet (none, or only planned)
         self._today = today
 
     # ------------------------------------------------------------------ the day's session (asked by the obedience planner)
@@ -122,7 +127,64 @@ class TrainingPlan:
         if weekday in (0, 3) and self._short_day(day) == ("mon" if weekday == 0 else "thu"):
             legs_week = day.isocalendar()[1] % 2 == 1
             return f"{self._next_legs(day)}_short" if legs_week else "upper_short"
+        kind = self._extra_on(day)
+        if kind is not None:
+            return f"{self._next_legs(day)}_short" if kind == "legs" else "upper_short"
         return None
+
+    # ------------------------------------------------------------------ an extra session on demand
+
+    def _extra_on(self, day: date) -> str | None:
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT extra_kind FROM training_weeks WHERE user_id = ? AND extra_date = ?", (self.user_id, day.isoformat()))
+        return row["extra_kind"] if row is not None else None
+
+    def extra(self, user_id: str, text: str, now: datetime) -> OutgoingMessage | None:
+        """`extra training` (owner, 2026-11-16: "I've already done the 3 this week but I have time today, so I can do the fourth"): one more
+        short session today, at most one a week. It balances the week as in his workout chat's four-a-week version (legs when the week's
+        short session is upper body, and the other way round), but never legs within 2 days of another leg day, on a Friday (Saturday is
+        the full leg day) or on a Sunday. Optional like every short session: it earns the short-session bonus when verified, skipping it
+        costs nothing, and it is never part of the week bonus. None when the message is not this request."""
+        if user_id != self.user_id or " ".join((text or "").lower().split()).strip(" .!?") not in EXTRA_WORDS:
+            return None
+        day = self._today(now)
+        if self._session_for(day) is not None:
+            return OutgoingMessage(text="You already have a session today. Ask for an extra one on a day without one.")
+        if self.today_open is not None and not self.today_open(now):
+            return OutgoingMessage(text="Today's task is already out, so the extra session can't take its place. Ask earlier in the day next time.")
+        week = f"{day.isocalendar()[0]}-W{day.isocalendar()[1]:02d}"
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT extra_date FROM training_weeks WHERE user_id = ? AND iso_week = ?", (self.user_id, week))
+            last_legs = tx.fetch_one("SELECT MAX(local_date) AS d FROM training_sessions WHERE user_id = ? AND local_date < ? "
+                                     "AND session_key LIKE 'legs_%'", (self.user_id, day.isoformat()))["d"]
+        if row is not None and row["extra_date"]:
+            return OutgoingMessage(text="You've had your extra session this week already. One a week.")
+        legs_ok = day.weekday() not in (4, 6) and (last_legs is None or (day - date.fromisoformat(last_legs)).days >= 2)
+        kind = "upper" if day.isocalendar()[1] % 2 == 1 else "legs"        # the other kind than the week's short session
+        if kind == "legs" and not legs_ok:
+            kind = "upper"
+
+        def write(tx: Transaction, _s: object) -> bool:
+            tx.execute("INSERT OR IGNORE INTO training_weeks (id, user_id, iso_week, short_day, asked_at) VALUES (?, ?, ?, NULL, NULL)",
+                       (str(uuid.uuid4()), self.user_id, week))
+            done = tx.execute("UPDATE training_weeks SET extra_date = ?, extra_kind = ? WHERE user_id = ? AND iso_week = ? AND extra_date IS NULL",
+                              (day.isoformat(), kind, self.user_id, week)).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="training.extra_requested", source_module="training", occurred_at=now,
+                                            payload={"local_date": day.isoformat(), "kind": kind}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return OutgoingMessage(text="You've had your extra session this week already. One a week.")
+        decision("training", "An extra short session was asked for today.", kind=kind)
+        if self.after_today is not None:
+            try:
+                self.after_today(now)
+            except Exception:
+                logger.exception("Today's task could not be switched to the extra session.")
+        what = "legs" if kind == "legs" else "upper body"
+        return OutgoingMessage(text=f"Good. An extra short session today: {what}. It comes as today's task with the details. "
+                                    "Verified in Chaster, it earns like any short session.")
 
     def _next_legs(self, day: date) -> str:
         with self._core.transaction() as tx:
@@ -191,7 +253,8 @@ class TrainingPlan:
                               (row_id, self.user_id, week, _iso(now))).rowcount:
                 return False
             enqueue_in_transaction(tx, user_id=self.user_id, kind="training", dedupe_key=f"training:week:{week}", now=now,
-                                   text=f"This week's short session is {kind}. Today or Thursday? No answer means Thursday.",
+                                   text=(f"This week's short session is {kind}. Today or Thursday? No answer means Thursday. "
+                                         "Time for one more this week? Write `extra training` on that day."),
                                    actions=(ActionSpec(action_id=f"training:mon:{row_id}", label="Today"),
                                             ActionSpec(action_id=f"training:thu:{row_id}", label="Thursday")))
             return True
@@ -213,6 +276,11 @@ class TrainingPlan:
 
         if not apply_transition(self._core, write=write):
             return "That's already decided for this week."
+        if action == "mon" and self.after_today is not None:
+            try:                    # bug fix 2026-11-16: today's task was already planned (an erotic one) when he chose "Today"
+                self.after_today(now)
+            except Exception:
+                logger.exception("Today's task could not be switched to the short session.")
         return "Today, then: it comes in your free time." if action == "mon" else "Thursday, then."
 
     # ------------------------------------------------------------------ logging sets
