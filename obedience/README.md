@@ -44,7 +44,8 @@ not own yet (blindfold, collar, clamps, leather cuffs, padlocks, Gildo No. 27, P
 it. Composed add-ons have variations in order of preference (`ADDONS`): eyes closed when there is no blindfold, the fluffy cuffs when there
 are no leather ones. He keeps the list in the DM: `gear` shows it, `gear add <piece>` / `gear remove <piece>` change it (table
 `obedience_gear`; a piece with no row keeps `DEFAULT_OWNED`, his inventory of 2026-11-14 minus the broken blindfold). The plug ladder counts
-only plugs on the list. Event: `obedience.gear_changed`. Owner, 2026-11-16: while locked, `gear remove` waits 24 hours and is
+only plugs on the list. Event: `obedience.gear_changed`. Owner, 2026-11-16 (`features/`): with `workouts` off there is no training plan
+and no workout task; with `erotic_tasks` off a day without a training session has no task. Owner, 2026-11-16: while locked, `gear remove` waits 24 hours and is
 asked about (`opt_outs/`, key `gear:<piece>`); `gear remove <piece> broken` / `lost` / `never had` removes it at once (the reason is noted).
 
 **"Are you alone right now?" (owner, 2026-11-15; migration 073).** An erotic day is planned without a task (`ASK_KEY`). When its moment

@@ -160,6 +160,7 @@ class CheckInService:
         # a wear exemption or the runtime halt (a vacation pauses everything anyway). `online_since`: when this process started.
         self.morning_on = False
         self.morning_suspended: Callable[[datetime], bool] = lambda now: False
+        self.morning_enabled: Callable[[], bool] = lambda: True      # owner, 2026-11-16 (features/): off = no report, never a miss
         # Bug fix 2026-11-15: a photo check-in was sent while the cage was off for a wear exemption and then counted as missed. While
         # `photo_suspended(now)` (a wear exemption in force) none is sent, and an open one is skipped instead of missed.
         self.photo_suspended: Callable[[datetime], bool] = lambda now: False
@@ -446,7 +447,7 @@ class CheckInService:
 
     def _morning_held(self, now: datetime) -> bool:
         try:
-            return bool(self.morning_suspended(now))
+            return bool(self.morning_suspended(now)) or not self.morning_enabled()
         except Exception:
             logger.exception("Could not read whether the morning report is suspended; it is (never a miss by accident).")
             return True

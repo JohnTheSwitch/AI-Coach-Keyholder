@@ -106,6 +106,7 @@ class Ports:
     skip_duties: Callable[..., int] = lambda slots, now: 0      # supervision: (slots, now)
     plan_kneel: Callable[..., str | None] | None = None         # obedience: (local date, planned_at, now) -> task id
     kneel_status: Callable[[str], str | None] = lambda day: None   # obedience: today's kneel task status
+    enabled: Callable[[], bool] = lambda: True                     # owner, 2026-11-16 (features/): the wearer's "protocol" switch
 
 
 THANKS_SLOTS = (91, 92, 93)
@@ -138,6 +139,8 @@ class ProtocolLadder:
     # ------------------------------------------------------------------ the tick
 
     def tick(self, now: datetime) -> None:
+        if not self._ports.enabled():
+            return
         for step in (self._start, self._climb, self._thanks, self._reflection, self._kneel, self._window):
             try:
                 step(now)
@@ -263,7 +266,7 @@ class ProtocolLadder:
 
     def gate(self, user_id: str, text: str, now: datetime) -> str | None:
         """A fixed reply that ends the turn, or None (the message goes on as usual). Health, safety and emergencies always pass."""
-        if user_id != self.user_id or not isinstance(text, str) or not text.strip():
+        if user_id != self.user_id or not isinstance(text, str) or not text.strip() or not self._ports.enabled():
             return None
         text = text.strip()
         try:

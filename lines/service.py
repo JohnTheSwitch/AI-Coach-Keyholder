@@ -114,9 +114,12 @@ class LineService:
             "extension.decision_recorded": lambda tx, event: self._assign(tx, event, LINES_WINDOW),
         }
 
+    # Owner, 2026-11-16 (features/): `enabled(tx)` is the wearer's "lines" switch, read in the consumer's transaction.
+    enabled: Callable[[Transaction], bool] = staticmethod(lambda tx: True)
+
     def _assign(self, tx: Transaction, event, required: int) -> None:
         incident_id = event.payload.get("incident_id")
-        if not incident_id:
+        if not incident_id or not self.enabled(tx):
             return
         rule = event.payload.get("rule_group_id")
         sentence = sentence_for(rule)

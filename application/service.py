@@ -189,6 +189,7 @@ class ApplicationService:
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
         self.proof_switch = None                 # slice 8 (Q9): proof_checks.service.ProofChecks.set_switch, for an additional wearer only
         self.protocol_gate = None                # protocol.service.ProtocolLadder.gate: fixed replies before the model (owner, 2026-11-16)
+        self.features_command = None             # features.service.Features.command: `features`, `<feature> off|on` (owner, 2026-11-16)
         self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
@@ -313,6 +314,15 @@ class ApplicationService:
             said = " ".join((incoming.text or "").lower().split())
             if self.proof_switch is not None and said in ("proof checks off", "proof checks on"):
                 return OutgoingMessage(text=self.proof_switch(user.id, said.endswith("off"), incoming.received_at))
+
+            if self.features_command is not None:
+                try:
+                    feature_reply = self.features_command(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("A feature switch could not be changed; the message is handled normally.")
+                    feature_reply = None
+                if feature_reply is not None:
+                    return OutgoingMessage(text=feature_reply)
 
             if self.gear_command is not None and (incoming.text or "").strip().lower().split()[:1] == ["gear"]:
                 try:

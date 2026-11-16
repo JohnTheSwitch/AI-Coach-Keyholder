@@ -51,7 +51,7 @@ def build_task_board(core, obedience: ObedienceTasks, window_cfg):
                      raise_missed=lambda row, now: p.raise_failure(row, "missed", now))
 
 
-def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: list, exemptions=None) -> ObedienceTasks | None:
+def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: list, exemptions=None, features=None) -> ObedienceTasks | None:
     if proof_checks is None or signals is None:
         notes.append("Daily obedience tasks are NOT active: they need the spot checks' Chaster task setup and the detector questions.")
         return None
@@ -77,7 +77,8 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                                        local_clock=p.local_clock, slot_taken=lambda: proof_checks.get_open_check() is not None,
                                        raise_failure=raise_failure,
                                        in_exemption=(lambda: False) if exemptions is None else (lambda: exemptions.wear_exemption_in_force(user_id)),
-                                       training=plan.day_task, training_tick=plan.tick))
+                                       training=plan.day_task, training_tick=plan.tick,
+                                       feature_on=(lambda f: True) if features is None else (lambda f: features.is_on(user_id, f))))
     tasks.training = plan                                     # work queue Q4c: the bot wires its `log` and its Monday buttons
     notes.append("Daily obedience tasks are active: one a day at a random moment in free time, shown in Chaster.")
     return tasks

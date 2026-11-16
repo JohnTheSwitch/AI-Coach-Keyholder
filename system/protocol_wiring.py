@@ -43,7 +43,7 @@ def build_address_provider(core):
                                   title=title)
 
 
-def build_protocol(core, *, user_id, check_ins, window_cfg, paused, todays_task_open):
+def build_protocol(core, *, user_id, check_ins, window_cfg, paused, todays_task_open, enabled=lambda: True):
     from lines.service import LineService
     from obedience.service import get_kneel_status, get_verified_task_ids_since, plan_kneel_task
     from protocol.service import ProtocolLadder, Ports
@@ -56,7 +56,7 @@ def build_protocol(core, *, user_id, check_ins, window_cfg, paused, todays_task_
         open_duty=check_ins.open_duty, answer_duties=check_ins.answer_duties,
         duty_misses=lambda since: get_duty_misses(core, user_id, since), skip_duties=check_ins.skip_duties,
         plan_kneel=lambda day, at, now: plan_kneel_task(core, user_id, day, at, now),
-        kneel_status=lambda day: get_kneel_status(core, user_id, day)))
+        kneel_status=lambda day: get_kneel_status(core, user_id, day), enabled=enabled))
 
 
 async def protocol_loop(ladder, clock, *, interval_seconds: float = 120.0) -> None:

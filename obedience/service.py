@@ -428,6 +428,7 @@ class Ports:
     in_exemption: Callable[[], bool] = lambda: False       # a wear exemption is in force: no tasks (owner, 2026-11-14)
     training: Callable[[date], object] | None = None       # Q4c: training.service.TrainingPlan.day_task (the plan's session, or None)
     training_tick: Callable[[datetime], None] | None = None  # Q4c: the Monday question about the short session
+    feature_on: Callable[[str], bool] = lambda feature: True   # owner, 2026-11-16 (features/): "workouts", "erotic_tasks"
 
 
 def get_verified_training(core: CoreDatabase, user_id: str, local_date: str) -> list[str]:
@@ -603,7 +604,7 @@ class ObedienceTasks:
             self._end_training_in_exemption(now)
             self.poll(now)                         # owner, 2026-11-15: a training session needs no cage, so its proof is still read
             return
-        if self._ports.training_tick is not None:
+        if self._ports.training_tick is not None and self._ports.feature_on("workouts"):
             try:
                 self._ports.training_tick(now)
             except Exception:
@@ -624,7 +625,10 @@ class ObedienceTasks:
             at += PLAN_STEP
         if not moments:
             return
-        training = self._ports.training(day) if self._ports.training is not None else None
+        workouts_on, erotic_on = self._ports.feature_on("workouts"), self._ports.feature_on("erotic_tasks")
+        training = self._ports.training(day) if self._ports.training is not None and workouts_on else None
+        if training is None and not erotic_on:
+            return                                  # owner, 2026-11-16 (features/): erotic tasks off and no training session today
         if training is not None:
             # Work queue Q4c: a training day's task is the plan's session, given at the start of free time so the whole evening is his.
             planned, task, details = moments[0], Task(training.key, training.text, "workout"), training.details
@@ -654,7 +658,7 @@ class ObedienceTasks:
         yesterday = (day - timedelta(days=1)).isoformat()
         yesterday_gear = set().union(*(gear_of(r["catalog_key"]) for r in rows if r["local_date"] == yesterday)) if rows else set()
         workouts = [t for t in WORKOUTS if suits(t, owned, mode)]
-        if self._rng.random() < WORKOUT_SHARE and "workout" not in yesterday_gear:
+        if self._rng.random() < WORKOUT_SHARE and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
             return self._rng.choice([t for t in workouts if t.key not in banned] or workouts)
         roll = self._rng.random()
         if roll < LADDER_SHARE and "plug" not in yesterday_gear:

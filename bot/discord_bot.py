@@ -869,6 +869,9 @@ def main() -> None:
         coach=coach_dm, exemption_reply=exemption_reply, clock=clock,
     )
     bot = build_bot(config, db, clock, application_service)
+    from features.service import Features
+    features = Features(core)                     # owner, 2026-11-16: per-wearer feature switches (`features`, `<feature> off|on`)
+    application_service.features_command = features.command
     bot.model_warmup = warm_model(ollama_model)
     bot.dm_actions["lock_report"] = application_service
     if exemption_dm is not None:
@@ -1059,7 +1062,7 @@ def main() -> None:
     from system.obedience_wiring import build_obedience
     obedience_notes: list[str] = []
     obedience = build_obedience(config, core, proof_checks=proof_checks, signals=detectors.signals, window_cfg=window_config_from(config), exemptions=bot.exemptions,
-                                notes=obedience_notes)
+                                notes=obedience_notes, features=features)
     for note in obedience_notes:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if obedience is not None:
@@ -1083,6 +1086,7 @@ def main() -> None:
             before_obedience = peer.watch.is_spot_check
             peer.watch.is_spot_check = lambda obs, before=before_obedience, ob=obedience: before(obs) or ob.is_obedience_task(obs.task_id)
     # G3 (owner, 2026-11-15): while locked, switching off photo check-ins, conditioning or the weekly review waits 24 hours and is asked about.
+    from features.service import FEATURES as _FEATURES
     from opt_outs.service import SWITCHES, OptOuts
     from system.coach_dm import goal_targets_frozen
     from system.dm_actions import OptOutDm
@@ -1092,6 +1096,9 @@ def main() -> None:
     for key in SWITCHES:
         opt_outs.register(key, lambda user, now, k=key: application_service.apply_off(k, user, now))
     application_service.opt_outs = opt_outs
+    opt_outs.register_features(features.apply_off, label=lambda key: _FEATURES[key][0] if key in _FEATURES else None)
+    features.request_off = opt_outs.request_off
+    features.withdraw = opt_outs.withdraw
     if obedience is not None:              # owner, 2026-11-16: "gear remove shouldn't work instantly"
         from obedience.service import GEAR as _GEAR
         opt_outs.register_gear(lambda user, piece, now, ob=obedience: ob.set_gear(piece, 0, now, reason="asked_after_24h"),
@@ -1175,7 +1182,9 @@ def main() -> None:
         from obedience.service import get_obedience_today
         from system.protocol_wiring import build_protocol, protocol_loop
         _cfg = window_config_from(config)
+        wiring.check_ins.morning_enabled = lambda u=wiring.check_ins.user_id: features.is_on(u, "morning_report")
         ladder = build_protocol(core, user_id=wiring.check_ins.user_id, check_ins=wiring.check_ins, window_cfg=_cfg,
+                                enabled=lambda u=wiring.check_ins.user_id: features.is_on(u, "protocol"),
                                 paused=lambda now, u=wiring.check_ins.user_id: wiring.check_ins.morning_suspended(now) or wiring.vacation.is_paused(u, now),
                                 todays_task_open=lambda now, u=wiring.check_ins.user_id: any(
                                     t["state"] == "in Chaster, photo not sent yet" for t in get_obedience_today(core, u, _cfg.local(now).date().isoformat())))
@@ -1186,7 +1195,8 @@ def main() -> None:
         from system.temptation_wiring import build_temptations
         _window_left = window_left_hours_for(core)
         temptations = build_temptations(core, user_id=wiring.check_ins.user_id, window_cfg=_cfg,
-                                        blocked=lambda now, u=wiring.check_ins.user_id: (wiring.check_ins.morning_suspended(now)
+                                        blocked=lambda now, u=wiring.check_ins.user_id: (not features.is_on(u, "temptations")
+                                                                                         or wiring.check_ins.morning_suspended(now)
                                                                                          or wiring.vacation.is_paused(u, now) or _window_left(now) is not None))
         from system.dm_actions import ObedienceDm as _TemptationDm
         bot.dm_actions["temptation"] = _TemptationDm(temptations, resolve_user=resolve_user, now=clock.now)
@@ -1255,6 +1265,8 @@ def main() -> None:
     if notice_user:
         from lines.service import LineService
         line_service = LineService(core, user_id=notice_user)
+        from features.service import get_feature_on_in_transaction
+        line_service.enabled = lambda tx, u=notice_user: get_feature_on_in_transaction(tx, u, "lines")
         bot.extra_consumers = {"lines": line_service.consumers()}
         application_service.lines = line_service
         if weekly_review is not None:
@@ -1309,6 +1321,7 @@ def main() -> None:
                 release_window = ReleaseWindow(core, user_id=notice_user, last_release=lambda rt=release_task: rt.engine.last_confirmed_release(rt.user_id),
                                                pictures=relock_pictures_fn, local_clock=lambda t, c=_rw_cfg: c.local(t).strftime("%H:%M"),
                                                raise_overrun=_raise_overrun)
+                release_window.enabled = lambda u=notice_user: features.is_on(u, "release_relock")
                 bot.release_window_loop = release_window.loop(clock)
         logger.info("Lines are active: every confirmed incident gets lines in the DM.")
     try:

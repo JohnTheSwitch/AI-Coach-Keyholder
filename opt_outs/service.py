@@ -41,6 +41,7 @@ SWITCHES = {"photo_check_ins": "photo check-ins", "conditioning": "Progressive C
 
 
 GEAR_PREFIX = "gear:"
+FEATURE_PREFIX = "feature:"
 
 
 def _gear(key: str) -> bool:
@@ -71,15 +72,32 @@ class OptOuts:
         """Owner, 2026-11-16: `gear remove <piece>` waits like a switch-off while locked."""
         self._gear_apply, self._gear_label = apply_remove, label
 
+    def register_features(self, apply_off: Callable[[str, str, datetime], str], label: Callable[[str], str | None]) -> None:
+        """Owner, 2026-11-16: the per-wearer feature switches (`features/`), key `feature:<key>`; `label(key)` is None for an unknown one."""
+        self._feature_apply, self._feature_label = apply_off, label
+
+    _feature_apply: Callable[[str, str, datetime], str] | None = None
+    _feature_label: Callable[[str], str | None] = staticmethod(lambda key: None)
+
     def _covered(self, key: str) -> bool:
-        return (self._gear_apply is not None) if _gear(key) else key in self.switches
+        if _gear(key):
+            return self._gear_apply is not None
+        if key.startswith(FEATURE_PREFIX):
+            return self._feature_apply is not None and self._feature_label(key[len(FEATURE_PREFIX):]) is not None
+        return key in self.switches
 
     def _name(self, key: str) -> str:
-        return f"the {self._gear_label(key[len(GEAR_PREFIX):])} from your gear list" if _gear(key) else SWITCHES[key]
+        if _gear(key):
+            return f"the {self._gear_label(key[len(GEAR_PREFIX):])} from your gear list"
+        if key.startswith(FEATURE_PREFIX):
+            return self._feature_label(key[len(FEATURE_PREFIX):]) or key
+        return SWITCHES[key]
 
     def _apply(self, user_id: str, key: str, now: datetime) -> str:
         if _gear(key):
             return self._gear_apply(user_id, key[len(GEAR_PREFIX):], now) if self._gear_apply is not None else "Removed."
+        if key.startswith(FEATURE_PREFIX):
+            return self._feature_apply(user_id, key[len(FEATURE_PREFIX):], now) if self._feature_apply is not None else "Switched off."
         switch = self.switches.get(key)
         return switch.apply_off(user_id, now) if switch is not None else "Switched off."
 
@@ -109,7 +127,7 @@ class OptOuts:
             return (f"Noted. While you're locked, removing {self._name(key)} isn't done at once: on {self._clock(ask_at)} I'll ask whether "
                     f"you still want it removed, and only a yes removes it. Until then tasks may still use it. If it broke or you lost it, "
                     f"say so: `gear remove <piece> broken` or `gear remove <piece> lost` removes it at once.")
-        return (f"Noted. While you're locked, switching off {SWITCHES[key]} isn't done at once: on {self._clock(ask_at)} I'll ask whether you "
+        return (f"Noted. While you're locked, switching off {self._name(key)} isn't done at once: on {self._clock(ask_at)} I'll ask whether you "
                 f"still want it off, and only a yes switches it off. Until then it stays on. Health, safety, `leave` and the emergency option "
                 f"are never delayed.")
 
@@ -135,7 +153,7 @@ class OptOuts:
                     f"it stays on the list.")
             labels = ("Yes, remove it", "Keep it")
         else:
-            text = (f"24 hours ago you asked to switch off {SWITCHES[row['switch']]}. Do you still want it off? If I don't hear from you, "
+            text = (f"24 hours ago you asked to switch off {self._name(row['switch'])}. Do you still want it off? If I don't hear from you, "
                     f"it stays on.")
             labels = ("Yes, switch it off", "Keep it on")
         actions = (ActionSpec(action_id=f"optout:yes:{row['id']}", label=labels[0]),
@@ -166,7 +184,8 @@ class OptOuts:
             self._decide(row, "kept_on", now)
             if _gear(row["switch"]):
                 return f"Good. The {self._gear_label(row['switch'][len(GEAR_PREFIX):])} stays on your gear list."
-            return f"Good. {SWITCHES[row['switch']].capitalize()} stays on."
+            name = self._name(row["switch"])
+            return f"Good. {name[:1].upper() + name[1:]} stays on."
         if not self._decide(row, "applied", now):
             return "That was already decided."
         return self._apply(user_id, row["switch"], now)

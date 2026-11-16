@@ -35,6 +35,7 @@ class ReleaseWindow:
                  raise_overrun: Callable[[dict, datetime], None] | None = None) -> None:
         self._core, self.user_id = core, user_id
         self._last, self._pictures, self._clock, self._raise = last_release, pictures, local_clock, raise_overrun
+        self.enabled: Callable[[], bool] = lambda: True       # owner, 2026-11-16 (features/): the wearer's "release relock" switch
 
     def tick(self, now: datetime) -> None:
         try:
@@ -44,6 +45,8 @@ class ReleaseWindow:
             logger.exception("The release window pass failed; it continues.")
 
     def _open(self, now: datetime) -> None:
+        if not self.enabled():
+            return                                          # switched off: no window opens, so relocking later has no consequence
         last = self._last()
         if last is None:
             return

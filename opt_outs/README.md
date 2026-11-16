@@ -8,6 +8,7 @@ Gap fix G3 (owner, 2026-11-15): "the check-ins turning off after 24h shouldn't b
 - Owner, 2026-11-16 ("gear remove shouldn't work instantly"): `gear remove <piece>` while locked waits the same way (key `gear:<piece>`,
   "Yes, remove it" / "Keep it"); until then tasks may still use the piece. `gear remove <piece> broken` / `lost` / `never had` removes it at
   once and is noted in the decision log. `gear add <piece>` withdraws a waiting removal. Adding is always immediate.
+- Owner, 2026-11-16: the per-wearer feature switches (`features/`) wait the same way (key `feature:<key>`).
 - Switching the same thing back on while a request waits withdraws it. Unlocked: everything applies at once, as before.
 - Never delayed: the runtime halt, leaving, health, the emergency option, and `research off` (a privacy right that also asks for erasure).
 
