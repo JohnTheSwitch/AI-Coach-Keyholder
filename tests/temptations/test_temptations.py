@@ -18,7 +18,7 @@ class TestCatalogue:
         by_key = {t.key: t for t in CATALOG}
         prostate = by_key["prostate_training"]
         assert prostate.modes == frozenset({"alone"}) and "never counted as a release" in prostate.dm_note
-        assert chaster_brief(prostate.text) == "Prostate training: the Deep Diver in, lying down, hands off the cage. Photo of the plug base only."
+        assert chaster_brief(prostate.text) == "Prostate training: the vibrating plug in, lying down, hands off the cage. Photo of the plug base only."
         assert suits(by_key["sensory_kneel_eyes"], DEFAULT_OWNED, "alone") and "airpods" in DEFAULT_OWNED
         assert not suits(by_key["door_wait"], DEFAULT_OWNED, "alone")                 # needs the harness and a leash
         assert suits(by_key["door_wait"], DEFAULT_OWNED | {"bondage_harness", "leash"}, "alone")
