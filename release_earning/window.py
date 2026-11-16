@@ -19,7 +19,7 @@ from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 from notifications.queue import enqueue_in_transaction
 
-__all__ = ["ReleaseWindow", "WINDOW", "GRACE", "GIVE_UP"]
+__all__ = ["ReleaseWindow", "WINDOW", "GRACE", "GIVE_UP", "session_end"]
 
 logger = logging.getLogger("ai_coach_keyholder.release_earning")
 
@@ -29,12 +29,30 @@ GIVE_UP = timedelta(hours=6)
 EARLIEST = timedelta(minutes=15)   # decided by Claude, 2026-11-16: a picture from the first 15 minutes (before the release itself) doesn't count
 
 
+def session_end(cfg, confirmed: datetime) -> datetime | None:
+    """When the release session that `confirmed` opened ends (free time over or the local date changes), as `release_engine` decides it;
+    after that a lock that is still locked is frozen again. None when it cannot be told within a day."""
+    from schedule_windows.windows import WindowKind, classify
+    day, at = cfg.local(confirmed).date(), confirmed
+    for _ in range(24 * 12):
+        at += timedelta(minutes=5)
+        if classify(cfg, at) is not WindowKind.DISCRETIONARY or cfg.local(at).date() != day:
+            return at - timedelta(minutes=5) if at - timedelta(minutes=5) > confirmed else at
+    return None
+
+
 class ReleaseWindow:
     def __init__(self, core: CoreDatabase, *, user_id: str, last_release: Callable[[], tuple[str, datetime] | None],
                  pictures: Callable[[datetime, datetime], bool | None], local_clock: Callable[[datetime], str],
-                 raise_overrun: Callable[[dict, datetime], None] | None = None) -> None:
+                 raise_overrun: Callable[[dict, datetime], None] | None = None,
+                 stayed_locked: Callable[[datetime, datetime], bool | None] | None = None,
+                 open_until: Callable[[datetime], datetime | None] | None = None) -> None:
         self._core, self.user_id = core, user_id
         self._last, self._pictures, self._clock, self._raise = last_release, pictures, local_clock, raise_overrun
+        # Owner, 2026-11-16 21:50: the backstop unfroze his lock, he chose to stay locked, and at 22:38 he was asked to explain an "overrun".
+        # A release never opened needs no relock picture (`stayed_locked`); the DM says until when the lock can be opened (`open_until`:
+        # the release session's end, after which the lock is frozen again).
+        self._stayed, self._open_until = stayed_locked, open_until
         self.enabled: Callable[[], bool] = lambda: True       # owner, 2026-11-16 (features/): the wearer's "release relock" switch
 
     def tick(self, now: datetime) -> None:
@@ -61,10 +79,20 @@ class ReleaseWindow:
                 write_event(tx, DomainEvent(event_type="release_earning.window_opened", source_module="release_earning", occurred_at=now,
                                             payload={"authorization_id": auth_id}))
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="release_window", dedupe_key=f"release_window:{auth_id}", now=now, immediate=True,
-                                       text=f"Your release window: 2 hours. After you relock, send the verification picture in Chaster by "
-                                            f"{self._clock(due)}.")
+                                       text=self._text(confirmed, due))
 
         apply_transition(self._core, write=write)
+
+    def _text(self, confirmed: datetime, due: datetime) -> str:
+        try:
+            until = self._open_until(confirmed) if self._open_until is not None else None
+        except Exception:
+            logger.exception("The release session's end could not be read; the window text leaves it out.")
+            until = None
+        head = (f"Your lock is open to you until {self._clock(until)}; after that it is frozen again. " if until is not None and until < due
+                else "")
+        return (f"{head}Your release window: 2 hours. If you open it, relock and send the verification picture in Chaster by "
+                f"{self._clock(due)}. If you stay locked, nothing is needed.")
 
     def _check(self, now: datetime) -> None:
         with self._core.transaction() as tx:
@@ -72,6 +100,15 @@ class ReleaseWindow:
                                                   (self.user_id, _iso(now - GRACE)))]
         for row in rows:
             confirmed, due = _parse_iso(row["confirmed_at"]), _parse_iso(row["due_at"])
+            if self._stayed is not None:
+                try:
+                    stayed = self._stayed(confirmed, due + GRACE)
+                except Exception:
+                    logger.exception("Whether the lock stayed locked could not be read; the pictures decide.")
+                    stayed = None
+                if stayed:
+                    self._close(row, "not_opened", now)
+                    continue
             try:
                 seen = self._pictures(confirmed + EARLIEST, due + GRACE)
             except Exception:

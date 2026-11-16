@@ -22,3 +22,10 @@ When a release is confirmed (`release_engine.last_confirmed_release`), a DM give
 Chaster. A picture between the confirmation and the window's end + 10 minutes closes it; none = he is asked to explain
 (RELEASE_WINDOW_OVERRUN, warning level, 20 lines "I relock on time when my keyholder says so."). Unreadable pictures are retried and dropped
 after 6 hours (unknown never counts). No lock action. Owns `release_windows`.
+
+**A release he never opens (owner, 2026-11-16 21:50; migration 091).** The 72-hour backstop unfroze his lock at 20:24, he chose to stay
+locked, the lock was frozen again at 22:00, and at 22:38 he was asked to explain an "overrun". Now the window closes as `not_opened`, with
+nothing asked, when the lock seen at the release was read only as locked through the window's end + 10 minutes
+(`system.keyholder_lock_source.get_lock_stayed_locked`; an opened or ended lock, or a different lock, means it was opened; no reading = the
+pictures decide as before). The DM also says until when the lock can be opened (`session_end`: the release session's end, after which the
+re-freeze raises the barrier again) and that staying locked needs nothing.

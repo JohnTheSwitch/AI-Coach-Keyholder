@@ -487,7 +487,8 @@ class TenantFactory:
                                      window=(parse_iso(row["confirmed_at"]), now))
 
             release_window = ReleaseWindow(core, user_id=wearer_id, last_release=lambda rt=release_task: rt.engine.last_confirmed_release(rt.user_id),
-                                           pictures=pictures, local_clock=lambda t, c=window: c.local(t).strftime("%H:%M"), raise_overrun=raise_overrun)
+                                           pictures=pictures, local_clock=lambda t, c=window: c.local(t).strftime("%H:%M"), raise_overrun=raise_overrun,
+                                           stayed_locked=lambda a, b: get_lock_stayed_locked(core, a, b), open_until=lambda t, c=window: session_end(c, t))
             release_window.enabled = lambda: get_feature_on(core, wearer_id, "release_relock")
             runtime.release_window = release_window
 

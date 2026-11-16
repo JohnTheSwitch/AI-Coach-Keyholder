@@ -838,3 +838,11 @@ def test_a_pose_dm_says_how_to_take_the_photo_and_chaster_does_not(tmp_path) -> 
     with w.core.transaction() as tx:
         dm = tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")["text"]
     assert PHOTO_HOW in dm and "self-timer" not in w.chaster.assigned[0] and "Deep Diver" not in w.chaster.assigned[0]
+
+
+def test_an_extra_erotic_task_is_never_a_workout(tmp_path) -> None:
+    """Owner, 2026-11-16 22:40: the extra erotic task's discreet version was "calf raises with the bar"."""
+    w = World(tmp_path)
+    for mode in ("alone", "discreet"):
+        for _ in range(200):
+            assert not w.tasks._pick(MORNING.date(), mode, erotic_only=True).key.startswith("workout_")

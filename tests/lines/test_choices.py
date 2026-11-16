@@ -126,6 +126,49 @@ class TestReleaseWindow:
         w.tick(NOW + timedelta(hours=9))
         assert rows(db2, "SELECT outcome FROM release_windows")[0]["outcome"] == "unknown" and raised2 == []
 
+    def test_a_release_never_opened_asks_nothing(self, tmp_path) -> None:
+        """Owner, 2026-11-16 21:50: the backstop unfroze his lock, he stayed locked, and was asked to explain an "overrun"."""
+        from release_earning.window import ReleaseWindow
+        db, raised = core(tmp_path), []
+        w = ReleaseWindow(db, user_id=U, last_release=lambda: ("auth-1", NOW), pictures=lambda a, b: False, local_clock=lambda t: t.strftime("%H:%M"),
+                          raise_overrun=lambda row, now: raised.append(1), stayed_locked=lambda a, b: True,
+                          open_until=lambda c: c + timedelta(minutes=35))
+        w.tick(NOW + timedelta(minutes=1))
+        text = rows(db, "SELECT text FROM notifications WHERE kind = 'release_window'")[0]["text"]
+        assert f"until {(NOW + timedelta(minutes=35)).strftime('%H:%M')}; after that it is frozen again" in text and "stay locked, nothing" in text
+        w.tick(NOW + timedelta(hours=2, minutes=11))
+        assert rows(db, "SELECT outcome FROM release_windows")[0]["outcome"] == "not_opened" and raised == []
+
+    def test_opened_or_unknown_falls_back_to_the_pictures(self, tmp_path) -> None:
+        from release_earning.window import ReleaseWindow
+        for stayed in (False, None):
+            db, raised = core(tmp_path / str(stayed)), []
+            ReleaseWindow(db, user_id=U, last_release=lambda: ("auth-1", NOW), pictures=lambda a, b: False, local_clock=lambda t: t.strftime("%H:%M"),
+                          raise_overrun=lambda row, now: raised.append(1), stayed_locked=lambda a, b, s=stayed: s).tick(NOW + timedelta(hours=2, minutes=11))
+            assert raised == [1], stayed
+
+
+def test_whether_the_lock_stayed_locked(tmp_path) -> None:
+    import uuid
+    from infrastructure.time_format import iso
+    from system.keyholder_lock_source import get_lock_stayed_locked
+    db = core(tmp_path)
+
+    def seen(at, status="locked", lock="L1"):
+        with db.transaction() as tx:
+            tx.execute("INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, fetched_at, created_at) "
+                       "VALUES (?, ?, 'observed', 'keyholder_search', ?, 0, ?, ?)", (str(uuid.uuid4()), lock, status, iso(at), iso(at)))
+
+    end = NOW + timedelta(hours=2, minutes=10)
+    assert get_lock_stayed_locked(db, NOW, end) is None                        # nothing read yet
+    seen(NOW - timedelta(minutes=5))
+    seen(NOW + timedelta(hours=1))
+    assert get_lock_stayed_locked(db, NOW, end) is None                        # nothing after the window yet
+    seen(end + timedelta(minutes=5))
+    assert get_lock_stayed_locked(db, NOW, end) is True
+    seen(end + timedelta(minutes=15), lock="L2")                               # a new lock: the old one was opened
+    assert get_lock_stayed_locked(db, NOW, end) is False
+
 
 def test_photo_check_ins_grow_with_the_lock(tmp_path) -> None:
     from tests.supervision.test_photo_check_ins import photo_env

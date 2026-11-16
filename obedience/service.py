@@ -730,8 +730,8 @@ class ObedienceTasks:
             decision("obedience", "Today's planned task became the short training session.", task=training.key)
         return switched
 
-    def _pick(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
-        task = self._pick_raw(day, mode, owned)
+    def _pick(self, day: date, mode: str = ALONE, owned: frozenset | None = None, *, erotic_only: bool = False) -> Task:
+        task = self._pick_raw(day, mode, owned, erotic_only=erotic_only)
         return _replace(task, text=self.personalize(task.text)) if task is not None else task
 
     def labels(self) -> dict[str, str]:
@@ -757,7 +757,7 @@ class ObedienceTasks:
         name = (labels or {}).get(gear)
         return name or (ROLE[gear] if self.generic_names else GEAR[gear])
 
-    def _pick_raw(self, day: date, mode: str = ALONE, owned: frozenset | None = None) -> Task:
+    def _pick_raw(self, day: date, mode: str = ALONE, owned: frozenset | None = None, *, erotic_only: bool = False) -> Task:
         """Workout about one day in four; otherwise the plug ladder (never two days running: a rest day between plug sessions), a composed
         pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, never yesterday's main gear, only gear he owns, and only
         tasks that suit `mode` (alone: the full versions; discreet: quiet and short)."""
@@ -774,7 +774,8 @@ class ObedienceTasks:
         yesterday_gear = set().union(*(gear_of(r["catalog_key"]) for r in rows if r["local_date"] == yesterday)) if rows else set()
         workouts = [t for t in WORKOUTS if suits(t, owned, mode)]
         workout_share = min(1.0, WORKOUT_SHARE * (AVOID_WEIGHT if "workout" in avoided else 1.0))
-        if self._rng.random() < workout_share and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
+        # Owner, 2026-11-16 22:40: the extra erotic task (slot 1) drew "calf raises with the bar"; an extra task is erotic only.
+        if not erotic_only and self._rng.random() < workout_share and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
             return self._rng.choice([t for t in workouts if t.key not in banned] or workouts)
         roll = self._rng.random()
         if roll < min(0.5, LADDER_SHARE * (AVOID_WEIGHT if "plug" in avoided else 1.0)) and "plug" not in yesterday_gear:
@@ -797,7 +798,8 @@ class ObedienceTasks:
         if fresh:
             weights = [AVOID_WEIGHT if task_parts(t.key) & avoided else 1.0 for t in fresh]
             return self._rng.choices(fresh, weights=weights)[0] if avoided else self._rng.choice(fresh)
-        return compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode) or self._rng.choice(workouts)
+        return (compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode)
+                or (self._rng.choice(extras) if erotic_only and extras else self._rng.choice(workouts)))
 
     def _avoided(self, day: date) -> tuple[set[str], frozenset]:
         """(task keys, their parts) he avoided in the AVOID_DAYS before `day`: postponed ("someone's around") or failed. Never the health or
@@ -880,12 +882,12 @@ class ObedienceTasks:
         one of them goes in his ass. Once per task; a training session gets none. Never a consequence."""
         import json
         with self._core.transaction() as tx:
-            rows = [dict(r) for r in tx.fetch_all("SELECT id, local_date FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
+            rows = [dict(r) for r in tx.fetch_all("SELECT id, local_date, slot FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
                                                   "AND prepared IS NULL AND planned_at <= ? AND planned_at > ?",
                                                   (self.user_id, ASK_KEY, _iso(now + PREP_AHEAD), _iso(now)))]
         for row in rows:
             day = date.fromisoformat(row["local_date"])
-            picks = {m: self._pick(day, m) for m in (ALONE, DISCREET)}
+            picks = {m: (self._pick(day, m, erotic_only=True) if row.get("slot") == 1 else self._pick(day, m)) for m in (ALONE, DISCREET)}
             anal = [m for m, t in picks.items() if uses_anal(t.text)]
             stored = json.dumps({m: {"key": t.key, "text": t.text, "note": t.dm_note} for m, t in picks.items()})
 
@@ -937,7 +939,8 @@ class ObedienceTasks:
             if mode is None:
                 return False                                            # waits for his answer (no timer since 2026-11-16)
             prepared = self._prepared(row, mode)
-            task = prepared or self._pick(self._ports.today(now), mode)
+            task = prepared or (self._pick(self._ports.today(now), mode, erotic_only=True) if row.get("slot") == 1
+                                else self._pick(self._ports.today(now), mode))
             key, text, note = task.key, task.text, task.dm_note
         task_id = self._chaster.assign(lock_id, (text if row.get("details") else chaster_brief(text))[:200])   # training texts are brief already
         deadline = now + PHOTO_DEADLINE + timedelta(minutes=task_minutes(text))   # owner, 2026-11-16 (A0): the task's own time + 1 hour
@@ -960,7 +963,7 @@ class ObedienceTasks:
             if PHOTO_BEHIND in text:
                 note = f"{note} {PHOTO_HOW}".strip()
             message = (f"{head}\n{text}\n" + (f"Only between us: {note}\n" if note else "")
-                       + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}." + (f" {DISCRETION} {SAFETY}" if full else "")
+                       + f"Photo with Chaster's code by {self._ports.local_clock(deadline)}." + ((f" {SAFETY}" if key.startswith("workout_") else f" {DISCRETION} {SAFETY}") if full else "")
                        + (f" {extra}" if extra else ""))
             actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Someone's around (+2 h, once)"),
                        ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))

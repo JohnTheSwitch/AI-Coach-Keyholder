@@ -137,3 +137,7 @@ free time (the owner's CLI `--anytime` exception stays CLI only). One a day.
 **What Chaster's voters see (owner, 2026-11-16 23:35).** `chaster_brief` names the toys by what they are (the Deep Diver is a "vibrating plug",
 the Bijou a "clear plug", the Gildo a "glass plug", the Rimfire a "large plug") and leaves out whether it vibrates; the DM keeps the full text.
 A task photographed from behind adds a DM-only line on how (`PHOTO_HOW`: phone propped up on the self-timer, or one hand on the phone).
+
+**An extra task is erotic (owner, 2026-11-16 22:40).** The extra erotic task (slot 1, `extra task`) drew "calf raises with the bar" as its
+discreet version: `_pick(..., erotic_only=True)` never gives a workout to slot 1. A workout task's DM no longer says "do it in your room with
+the door closed" (the gear is in the gym).

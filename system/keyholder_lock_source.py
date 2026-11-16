@@ -32,7 +32,7 @@ from system.managed_lock_source import PROVIDER, LockCheck, _time, _user_id
 
 logger = logging.getLogger("ai_coach_keyholder.system.keyholder_lock_source")
 
-__all__ = ["KeyholderLockObservationSource", "check_keyholder_lock"]
+__all__ = ["KeyholderLockObservationSource", "check_keyholder_lock", "get_lock_stayed_locked"]
 
 SOURCE = "keyholder_search"
 
@@ -44,6 +44,25 @@ def check_keyholder_lock(raw: object, *, lock_id: str) -> str:
     if raw.get("status") != "locked":
         return LockCheck.NOT_FOUND
     return LockCheck.OBSERVED
+
+
+def get_lock_stayed_locked(core: CoreDatabase, since: datetime, until: datetime) -> bool | None:
+    """Owner, 2026-11-16: a release he never used. True when the lock observed at `since` was seen only as locked from then on, at least
+    once at or after `until`; False when it was seen in any other state (opened, ended) or a different lock was seen after `until`; None
+    when nothing tells (no reading before `since` or none after `until` yet). Read-only."""
+    with core.transaction() as tx:
+        before = tx.fetch_one("SELECT lock_id FROM managed_lock_observations WHERE outcome = 'observed' AND fetched_at <= ? "
+                              "ORDER BY fetched_at DESC, rowid DESC LIMIT 1", (_iso(since),))
+        if before is None:
+            return None
+        rows = tx.fetch_all("SELECT lock_id, status, fetched_at FROM managed_lock_observations WHERE outcome = 'observed' AND fetched_at > ? "
+                            "ORDER BY fetched_at, rowid", (_iso(since),))
+    later = [r for r in rows if r["fetched_at"] >= _iso(until)]
+    if not later:
+        return None
+    if any(r["lock_id"] == before["lock_id"] and r["status"] != "locked" for r in rows) or later[-1]["lock_id"] != before["lock_id"]:
+        return False
+    return True
 
 
 class KeyholderLockObservationSource:

@@ -1350,7 +1350,8 @@ def main() -> None:
             # The release window (owner, 2026-11-16; P4, queue B3): 2 hours to relock and send a picture; none = asked to explain.
             if relock_pictures_fn is not None and detectors.signals is not None:
                 from infractions.signals import SignalKind as _Kind
-                from release_earning.window import ReleaseWindow
+                from release_earning.window import ReleaseWindow, session_end
+                from system.keyholder_lock_source import get_lock_stayed_locked
                 _rw_cfg = window_config_from(config)
 
                 def _raise_overrun(row, now, signals=detectors.signals, domain=config.hygiene_trust_domain or "hygiene"):
@@ -1363,7 +1364,9 @@ def main() -> None:
 
                 release_window = ReleaseWindow(core, user_id=notice_user, last_release=lambda rt=release_task: rt.engine.last_confirmed_release(rt.user_id),
                                                pictures=relock_pictures_fn, local_clock=lambda t, c=_rw_cfg: c.local(t).strftime("%H:%M"),
-                                               raise_overrun=_raise_overrun)
+                                               raise_overrun=_raise_overrun,
+                                               stayed_locked=lambda a, b, c=core: get_lock_stayed_locked(c, a, b),
+                                               open_until=lambda t, c=_rw_cfg: session_end(c, t))
                 release_window.enabled = lambda u=notice_user: features.is_on(u, "release_relock")
                 bot.release_window_loop = release_window.loop(clock)
         logger.info("Lines are active: every confirmed incident gets lines in the DM.")
