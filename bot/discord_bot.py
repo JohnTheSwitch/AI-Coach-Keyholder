@@ -173,6 +173,7 @@ class CoachKeyholderBot(discord.Client):
         self.settings_watch_loop = None          # settings_watch.service.SettingsWatch.loop: changed settings asked about (G4)
         self.opt_outs_loop = None                # opt_outs.service.OptOuts.loop: switch-offs asked about after 24 h while locked (G3)
         self.health_pattern_loop = None          # system.health_pattern.HealthPattern.loop: the weekly question from the 3rd health use (G2)
+        self.temptations_loop = None             # temptations.service.Temptations.loop (owner, 2026-11-16; queue B7)
         self.release_window_loop = None          # release_earning.window.ReleaseWindow.loop (owner, 2026-11-16; queue B3)
         self.protocol_loop = None                # protocol.service.ProtocolLadder via system/protocol_wiring.py (owner, 2026-11-16)
         self.task_board_loop = None              # task_board.service.TaskBoard.loop: the weekly task board (P1, owner 2026-11-15)
@@ -247,6 +248,8 @@ class CoachKeyholderBot(discord.Client):
             self._protocol_task = asyncio.create_task(self.protocol_loop, name="protocol")
         if self.release_window_loop is not None:
             self._release_window_task = asyncio.create_task(self.release_window_loop, name="release-window")
+        if self.temptations_loop is not None:
+            self._temptations_task = asyncio.create_task(self.temptations_loop, name="temptations")
         if self.settings_watch_loop is not None:
             self._settings_watch_task = asyncio.create_task(self.settings_watch_loop, name="settings-watch")
         if self.opt_outs_loop is not None:
@@ -1172,6 +1175,16 @@ def main() -> None:
                                     t["state"] == "in Chaster, photo not sent yet" for t in get_obedience_today(core, u, _cfg.local(now).date().isoformat())))
         application_service.protocol_gate = ladder.gate
         bot.protocol_loop = protocol_loop(ladder, clock)
+        # Temptations that cost (owner, 2026-11-16; P5, queue B7).
+        from system.protocol_wiring import window_left_hours_for
+        from system.temptation_wiring import build_temptations
+        _window_left = window_left_hours_for(core)
+        temptations = build_temptations(core, user_id=wiring.check_ins.user_id, window_cfg=_cfg,
+                                        blocked=lambda now, u=wiring.check_ins.user_id: (wiring.check_ins.morning_suspended(now)
+                                                                                         or wiring.vacation.is_paused(u, now) or _window_left(now) is not None))
+        from system.dm_actions import ObedienceDm as _TemptationDm
+        bot.dm_actions["temptation"] = _TemptationDm(temptations, resolve_user=resolve_user, now=clock.now)
+        bot.temptations_loop = temptations.loop(clock)
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
         if TrustManager(config.db_path, core=core).get_domain_state(domain) is not None:

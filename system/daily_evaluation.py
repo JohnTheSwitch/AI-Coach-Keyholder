@@ -71,6 +71,7 @@ class DayFacts:
     week_complete: bool = False   # Sunday: every planned session of the week verified (health-cancelled or slotless ones excused)
     raises: int = 0               # weight increases earned through `log` that day
     surprise: Decimal = Decimal(0)   # research a (owner, 2026-11-15): surprise rewards of tasks verified that day
+    cost: Decimal = Decimal(0)    # B7 (owner, 2026-11-16): accepted temptations that day, taken off the pool (never below 0)
     board: Decimal = Decimal(0)   # P1 (owner, 2026-11-15): rewards of task-board tasks verified that day
 
     @property
@@ -159,8 +160,16 @@ class DailyEvaluationTask:
             violations=sum(1 for c in day_incidents if c.trust_domain == self._domain), any_violations=len(day_incidents),
             training_full=len(training) - short, training_short=short,
             week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training else 0,   # raises only with a verified session
-            board=self._board(lo, hi), surprise=self._surprise(lo, hi),
+            board=self._board(lo, hi), surprise=self._surprise(lo, hi), cost=self._cost(lo, hi),
         )
+
+    def _cost(self, lo: str, hi: str) -> Decimal:
+        try:
+            from temptations.service import get_temptation_costs
+            return get_temptation_costs(self._core, self._user, lo, hi)
+        except Exception:
+            logger.exception("Temptation costs could not be read; the day counts without them.")
+            return Decimal(0)
 
     def _surprise(self, lo: str, hi: str) -> Decimal:
         try:
@@ -227,7 +236,8 @@ class DailyEvaluationTask:
             threshold = self._conditioning.threshold_in(tx, self._user) if self._conditioning is not None else 1
             done, total = ((facts.goals_met, facts.goals_assigned) if facts.goals_assigned
                            else (facts.check_ins_ok, facts.check_ins_due))
-            result = apply_day(pool_before, done, total, score, threshold, earning=facts.any_violations == 0, bonus=facts.training_bonus)
+            result = apply_day(pool_before, done, total, score, threshold, earning=facts.any_violations == 0, bonus=facts.training_bonus,
+                               cost=facts.cost)
             if result.tokens_earned:
                 self._engine._earn_in_transaction(
                     tx, user_id=self._user, amount=result.tokens_earned, reason_code=TOKEN_SOURCE,

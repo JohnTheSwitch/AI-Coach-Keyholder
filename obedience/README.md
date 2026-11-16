@@ -103,3 +103,16 @@ alone?" picks one of them. The heads-up goes out only when a version goes in his
 "may use" when only one does. The photo deadline is the task's own time (`task_minutes`: warm-up, holding and wearing times) + PHOTO_DEADLINE;
 "Someone's around" adds the same. Discretion, safety and gear notes appear in full at most once a week (`reminders/`); a restraint task
 always keeps "Key and shears within reach."
+
+
+## Prostate training, sensory deprivation, waiting at the door (owner, 2026-11-15/16; autonomous queue B4-B6)
+
+- `prostate_training` (alone only): the Deep Diver in, lying down, hands off the cage, 25 minutes. Doing the session counts; a hands-free
+  orgasm is allowed and never counts as a release or touches tokens. Like every fixed task, at most once in REPEAT_DAYS (14), and never on a
+  training day (that day's task is the session).
+- Sensory deprivation: the `deaf` add-on ("AirPods in with noise cancellation on", gear `airpods`, owned by default) and the
+  `sensory_kneel` tasks (blindfold or eyes closed). 15 minutes at most (`DEAF_MINUTES`), hands always free, never with cuffs behind the back
+  or a gag.
+- `door_wait` (needs the harness and a `leash`): kneeling at the door, the leash from the harness waist ring to the door handle, 10 minutes;
+  the safety note says never the collar, a one-handed clip, shears within reach. Decided by Claude: not yet a release-task option (he owns
+  neither piece); added when he does.

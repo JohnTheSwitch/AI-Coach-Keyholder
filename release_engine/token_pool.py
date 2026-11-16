@@ -53,7 +53,7 @@ def daily_progress(completed: int, total: int, trust: float | Decimal) -> Decima
 
 
 def apply_day(pool: float | Decimal, completed: int, total: int, trust: float | Decimal,
-              threshold: float | Decimal = _ONE, *, earning: bool = True, bonus: float | Decimal = 0) -> PoolDay:
+              threshold: float | Decimal = _ONE, *, earning: bool = True, bonus: float | Decimal = 0, cost: float | Decimal = 0) -> PoolDay:
     """One day's progress. A token is paid each time the pool reaches `threshold` (1.0 by default; Phase F4 Progressive Conditioning uses
     base(mode) * factor) and the threshold is subtracted. A stored pool above a lowered threshold simply pays out.
     `earning=False` (owner, 2026-11-13: a day with a confirmed incident) adds nothing. `bonus` (owner, 2026-11-15: verified training
@@ -68,6 +68,7 @@ def apply_day(pool: float | Decimal, completed: int, total: int, trust: float | 
         raise ValueError("a bonus is never negative")
     progress = (daily_progress(completed, total, trust) + _dec(bonus)).quantize(_QUANT) if earning else Decimal(0).quantize(_QUANT)
     p += progress
+    p = max(Decimal(0), p - _dec(cost)).quantize(_QUANT)      # owner, 2026-11-16 (B7): accepted temptations; never below 0
     earned = 0
     while p >= t:
         p -= t

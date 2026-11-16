@@ -94,8 +94,10 @@ GEAR: dict[str, str] = {
     "clamps": "nipple clamps",
     "gag": "Ouch! ball gag",
     "bondage_harness": "Hidden Desire bondage harness (collar, waist strap, velcro cuffs)",
+    "airpods": "AirPods with noise cancellation",          # owner, 2026-11-15 (B5): sensory deprivation
+    "leash": "leash",                                       # B6: waiting at the door (clips to the harness waist ring only)
 }
-DEFAULT_OWNED = frozenset({"deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs",
+DEFAULT_OWNED = frozenset({"airpods", "deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs",
                            "gag"})
 ALL_GEAR = frozenset(GEAR)
 GEAR_ALIASES = {"gildo": "gildo_27", "plug_joy": "plug_joy_medium", "plug_and_joy": "plug_joy_medium", "rimfire": "rimfire_s",
@@ -141,6 +143,7 @@ POSES: tuple[tuple[str, str, int], ...] = (                # (key, words, max mi
     ("facedown", "lying face down, legs apart", 30),
 )
 DISCREET_MINUTES = 15
+DEAF_MINUTES = 15                      # B5: sensory deprivation 15 minutes at most
 CLAMP_MINUTES = 10
 # Each add-on: variations in order of preference, (gear needed, words, modes). The first one he has gear for and that suits the mode is used;
 # with none, the add-on is left out. A variation with no gear ("eyes closed") keeps a task alive while a piece is missing.
@@ -157,13 +160,15 @@ ADDONS: dict[str, tuple[tuple[frozenset, str, frozenset], ...]] = {
     "gag": ((frozenset({"gag"}), "", ALONE_ONLY),),
     "thighs": ((frozenset({"rope_cotton"}), "thighs tied with the red rope, shears within reach", BOTH),),
     "collar": ((frozenset({"collar"}), "wearing your collar", BOTH),),
+    # Owner, 2026-11-15/16 (B5): sensory deprivation, never with cuffs behind the back, 15 minutes at most, hands free.
+    "deaf": ((frozenset({"airpods"}), "AirPods in with noise cancellation on", BOTH),),
     "clamps": ((frozenset({"clamps"}), "clamps on your nipples", BOTH),),
 }
 # Owner, 2026-11-15 (limits talk): blindfolded in cuffs is fine with the cuffs in front (hands can always reach the blindfold) or, after
 # BACK_BLIND_AFTER verified behind-back tasks, behind; never rope on the limbs while blindfolded; one restraint at a time; the gag only with
 # hands free.
 RESTRAINTS = {"cuffs", "cuffs_back", "thighs"}
-_ADDON_BAN = {("blind", "thighs"), ("cuffs", "thighs"), ("cuffs", "cuffs_back"), ("cuffs_back", "thighs"),
+_ADDON_BAN = {("deaf", "cuffs_back"), ("deaf", "gag"), ("blind", "thighs"), ("cuffs", "thighs"), ("cuffs", "cuffs_back"), ("cuffs_back", "thighs"),
               ("gag", "cuffs"), ("gag", "cuffs_back"), ("gag", "thighs")}
 _POSE_BAN = {("cuffs", "wall"), ("cuffs", "corner"), ("thighs", "wall"), ("thighs", "fours"),
              ("cuffs_back", "wall"), ("cuffs_back", "corner"), ("cuffs_back", "fours")}   # hands are behind / legs must move
@@ -229,6 +234,19 @@ EXTRAS: tuple[Task, ...] = (
          "erotic", frozenset({"bondage_harness"}), DISCREET_ONLY, frozenset({"harness"})),
     Task("plug_quiet", "The clear Bijou in, lying on your bed. Photo of the plug base only. Then keep it in 30 minutes at your desk.",
          "erotic", _BJ, DISCREET_ONLY, frozenset({"plug"})),
+    # Owner, 2026-11-15/16 (B4, P7): prostate training, alone only; doing the session counts, an orgasm is not required, and a hands-free one
+    # never counts as a release or touches tokens. At most once in REPEAT_DAYS like every fixed task.
+    Task("prostate_training", "Prostate training: the Deep Diver in, lying down, hands off the cage. Photo of the plug base only. "
+         "25 minutes, vibration your choice.", "erotic", frozenset({"deep_diver"}), ALONE_ONLY, frozenset({"plug"}),
+         dm_note="Doing the session is what counts. A hands-free orgasm is allowed and is never counted as a release."),
+    # B5: sensory deprivation, hands always free.
+    Task("sensory_kneel", "Kneeling, blindfolded, AirPods in with noise cancellation on, hands on your thighs. " + PHOTO_BEHIND + " 15 minutes.",
+         "erotic", frozenset({"blindfold", "airpods"}), BOTH, frozenset({"blind", "deaf"})),
+    Task("sensory_kneel_eyes", "Kneeling, eyes closed the whole time, AirPods in with noise cancellation on, hands on your thighs. " + PHOTO_BEHIND
+         + " 15 minutes.", "erotic", frozenset({"airpods"}), BOTH, frozenset({"blind", "deaf"})),
+    # B6: waiting at the door on a leash: the harness waist ring to the door handle, never the collar.
+    Task("door_wait", "Kneeling at the door, the leash from your harness waist ring to the door handle. Photo of the leash on the handle only. "
+         "10 minutes.", "erotic", frozenset({"bondage_harness", "leash"}), ALONE_ONLY, frozenset({"harness", "leash"})),
 )
 WORKOUTS: tuple[Task, ...] = (
     Task("workout_squats", "The bar in your rack after 5 sets of squats. Photo of the bar and your legs only.", "workout"),
@@ -282,6 +300,8 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
         cap = min(cap, CLAMP_MINUTES)
     if "gag" in addons:
         cap = min(cap, GAG_MINUTES)
+    if "deaf" in addons:
+        cap = min(cap, DEAF_MINUTES)
     if "blind" in addons and set(addons) & RESTRAINTS:
         cap = min(cap, BLIND_RESTRAINED_MINUTES)
     minutes = rng.choice([m for m in (10, 15, 20, 25, 30) if m <= cap])
@@ -367,6 +387,8 @@ def safety_notes(text: str) -> str:
         notes.append("The collar stays loose enough for two fingers and is never tied, clipped or locked to anything.")
     if "clamp" in t:
         notes.append("Clamps come off after 10 minutes at most, slowly, one at a time.")
+    if "leash" in t:
+        notes.append("The leash clips only to the harness waist ring, never the collar; the clip opens with one hand and shears are within reach.")
     return " ".join(notes)
 
 

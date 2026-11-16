@@ -75,6 +75,7 @@ class WeekFacts:
     recovery_hours: float = 0.0
     health_uses: int | None = None                        # G2 (owner, 2026-11-15): None when not wired; counted, never judged here
     health_detail: str = ""
+    month: dict | None = None                             # B8 (owner, 2026-11-16): the first Sunday of a month, last month's numbers
     promises: tuple = ()                                  # B2 (owner, 2026-11-16): what he wrote he'd do better, the week before
     settings_changed: tuple = ()                          # G4 (owner, 2026-11-15): "quiet hours 22:00-07:00 -> 23:00-08:00", ...
 
@@ -91,6 +92,8 @@ def _it(n: int) -> str:
     return "it" if n == 1 else "they"
 
 
+MONTHLY_ASK = ("Once a month we look at the arrangement: keep everything as it is, make something stricter, or ask to loosen something? "
+               "Tell me which and what.")   # B8 (owner, 2026-11-16): the answer is read by Claude; nothing changes by itself
 WELLBEING_ASK = "And honestly: how are you, body and mind? Any answer is fine; it never counts against you."   # owner, 2026-11-16 (6d)
 
 
@@ -135,6 +138,11 @@ def _render_week(f: WeekFacts) -> str:
         lines.append(tokens)
     else:
         lines.append("Check-ins and tokens: no finished days to count yet.")
+    if f.month is not None:
+        m = f.month
+        lines.append(f"Your month ({m['name']}): {m['tokens']} token{'s' if m['tokens'] != 1 else ''} earned, {m['check_ins_ok']} of "
+                     f"{m['check_ins_due']} check-ins answered over {m['days']} counted days.")
+        lines.append(MONTHLY_ASK)
     for promise in f.promises:
         lines.append(f"The week before, you wrote you'd do better: \"{promise[:200]}\" Did you? Tell me honestly.")
     if f.lines_assigned is not None:
@@ -220,6 +228,8 @@ class WeeklyReview:
             counts["lines_assigned"] = sum(int(r.get("required") or 0) for r in rows)
             counts["lines_done"] = sum(int(r.get("done") or 0) for r in rows)
             counts["lines_owed"] = int(self.lines_owed()) if self.lines_owed is not None else 0
+        if week_start.day <= 7 or (end - timedelta(days=1)).day <= 7:
+            counts["month"] = self._month(end - timedelta(days=1))
         if self.promises_between is not None:
             counts["promises"] = tuple(self.promises_between(week_start - timedelta(days=7), week_start))
         if self.recovery_between is not None:
@@ -234,6 +244,17 @@ class WeeklyReview:
             from settings_watch.service import LABELS
             counts["settings_changed"] = tuple(f"{LABELS.get(c['key'], c['key'])} {c['old']} -> {c['new']}" for c in self.settings_between(week_start, end))
         return WeekFacts(start=week_start, end=end, **counts)
+
+    def _month(self, sunday: date) -> dict | None:
+        """B8: on the first Sunday of a month, the previous month's numbers from the daily evaluations."""
+        if sunday.day > 7:
+            return None
+        first = sunday.replace(day=1)
+        start = (first - timedelta(days=1)).replace(day=1)
+        rows = [r for r in self._ports.evaluations(start, first - timedelta(days=1)) if not r.get("paused")]
+        return {"name": start.strftime("%B"), "days": len(rows), "tokens": sum(int(r.get("tokens_earned") or 0) for r in rows),
+                "check_ins_ok": sum(int(r.get("check_ins_ok") or 0) for r in rows),
+                "check_ins_due": sum(int(r.get("check_ins_due") or 0) for r in rows)}
 
     # ------------------------------------------------------------------ Sunday evening
 
