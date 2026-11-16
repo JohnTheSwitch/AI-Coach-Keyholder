@@ -54,3 +54,4 @@ test_llm.py
 
 # hive_mind_receiver virtual environments (keep them outside the repository; this is a safety net)
 .venv-*/
+windows/AI_Coach_Bot.vbs.disabled

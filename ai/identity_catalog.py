@@ -106,7 +106,7 @@ IDENTITY_CATALOG: tuple[IdentityCatalogEntry, ...] = (
         identity_id="scarlett", group=IdentityGroup.FEMALE, default_name="Scarlett",
         localized_names={},
         archetype="Bold, direct, unapologetically firm",
-        communication_profile=CommunicationProfile(warmth=0.5, humor=0.4, teasing=0.5, assertiveness=0.9, formality=0.3, verbosity=0.4),
+        communication_profile=CommunicationProfile(warmth=0.5, humor=0.5, teasing=0.8, assertiveness=0.9, formality=0.3, verbosity=0.4),
     ),
     IdentityCatalogEntry(
         identity_id="marcus", group=IdentityGroup.MALE, default_name="Marcus",

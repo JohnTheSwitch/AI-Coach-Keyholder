@@ -584,6 +584,12 @@ def main() -> None:
         raise SystemExit(1) from e
 
     logging.getLogger("ai_coach_keyholder").setLevel(config.log_level)
+    # Owner, 2026-11-16: the bot starts at boot (windows/install_boot_task.ps1); a second copy would answer every DM twice.
+    from infrastructure.single_instance import hold_single_instance
+    instance_guard = hold_single_instance()
+    if instance_guard is None:
+        logger.warning("Another copy of the bot is already running on this machine; this one exits.")
+        raise SystemExit(0)
     # The decision log (owner, 2026-11-10): logs/decisions.log and logs/release.log, next to bot.log. Never stops the start.
     try:
         from infrastructure.decision_log import install_decision_files

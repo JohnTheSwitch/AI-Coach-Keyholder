@@ -132,18 +132,20 @@ safety and emergencies bypass every item. Models never change state; every check
 Not in this queue (still needs him): P6 Deep Diver control (PC Bluetooth is broken, Code 43; and it acts on his body), P9 full version, the
 live trial, the token-pace review on 2026-11-27 (already scheduled).
 
-## Ideas (not approved; each needs the owner's yes)
+## Decided 2026-11-16 (owner)
 
-- **Found overnight 2026-11-16 (Claude's review; each needs his yes):**
-  - **`gear remove` is an instant loophole.** Removing the Deep Diver (or any piece) stops every task that uses it at once. Proposal: while
-    locked, a removal takes effect after 24 hours and a "Still want it removed?" question (like G3); "it broke" or "I lost it" is immediate
-    and noted. Adding stays immediate. (Close to P9, which he deferred, so asked separately.)
-  - **The coach proposes commitments from small talk.** "Plan outfit for Saturday's ball" came from a remark about dancing. Proposal: an
-    unsolicited proposal only when his message itself talks about a plan, goal or to-do.
-  - **The chat model drifts into the Iron Contract and invents plans** ("What time is your dancing school tonight?"). Proposal: the Iron
-    Contract fragment only when he asks about rules or the contract; today's tasks (added overnight) already ground the rest.
-  - **Check-ins missed early last week (10 of 13 unanswered, mostly Mon-Wed).** Not a bug found yet; worth asking him whether the
-    times were bad (e.g. at the gym or the dancing school), which the check-in hours could avoid.
+| # | Item | What |
+|---|---|---|
+| D1 | **`gear remove` waits** (done, `26816d6`) | While locked a removal waits 24 h and is asked about (opt_outs); `broken` / `lost` / `never had` is immediate and noted |
+| D2 | **Per-wearer feature switches** (done, `5e85316`, `features/`, migration 086) | `features`, `<feature> off/on`: workouts, erotic tasks, protocol, morning report, lines, temptations, release relock (only the relock after a token release; every other check stays mandatory). Off waits 24 h while locked |
+| D3 | **No Iron Contract drift** (done, `1e0c1ce`) | The contract's text only when he asks about rules; otherwise a short locked marker |
+| D4 | **Coach proposals from small talk** (done, `1e0c1ce`; "a good idea, but not yet perfect") | Outside a check-in answer, a proposal only when his message names something he needs, wants or plans to do |
+| D5 | **Teasing tone** | Scarlett teases playfully about the cage, denial and waiting (teasing 0.8); never degrading or feminizing, never about a real failure, never a release hint |
+| D6 | **Bot starts at boot** | `windows/install_boot_task.ps1` (he runs it once as administrator): scheduled tasks for Ollama and the bot at startup, no login needed; the bot refuses to run twice |
+| D7 | **Check-in misses of 9-12 Nov** | Not a timing problem: "I didn't yet take it seriously. Now I am seriously locked." Nothing to change |
+| D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
+
+## Ideas (not approved; each needs the owner's yes)
 
 - **The bot controls the Deep Diver** through Intiface Central (Satisfyer support; first try the PC's built-in Bluetooth, the owner will
   test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.

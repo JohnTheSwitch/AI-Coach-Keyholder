@@ -219,3 +219,11 @@ task from `install_task.ps1`, never both at once.
 
 `powershell -ExecutionPolicy Bypass -File windows\restart_bot_hidden.ps1` stops the running bot and starts `scripts\start_bot.bat` with no console
 window at all (owner, 2026-11-14: closing the visible "AI Coach Keyholder bot" window stopped the bot). Output still goes to `logs\bot.log`.
+
+## Start at boot (owner, 2026-11-16)
+
+`install_boot_task.ps1`, run once from an administrator PowerShell, registers two scheduled tasks that run as this user at system
+startup without a login (S4U, no stored password): "AI Coach Ollama" (`ollama serve`) and "AI Coach Bot" (`scripts\start_bot.bat`,
+30 s after boot). It moves the Startup-folder `AI_Coach_Bot.vbs` aside so the bot does not start twice; `-Uninstall` undoes both.
+`restart_bot_hidden.ps1` starts the bot through the task when it exists. The bot itself refuses to run twice
+(`infrastructure/single_instance.py`, localhost port 8429).

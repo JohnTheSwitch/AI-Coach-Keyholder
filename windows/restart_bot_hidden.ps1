@@ -12,6 +12,12 @@ Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'bot\.disco
     ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -Confirm:$false -ErrorAction Stop } catch {} }
 Start-Sleep -Seconds 3
 
+# Owner, 2026-11-16: with the boot task (windows\install_boot_task.ps1) the bot is started through it, so it keeps running after a logoff.
+$task = Get-ScheduledTask -TaskName "AI Coach Bot" -ErrorAction SilentlyContinue
+if ($task) {
+    try { Start-ScheduledTask -TaskName "AI Coach Bot"; Write-Output "Bot started through the boot task; see logs\bot.log."; return } catch {
+        Write-Output "The boot task could not be started ($($_.Exception.Message)); starting the bot directly." }
+}
 # Start-Process -WindowStyle Hidden (2026-11-14: Win32_Process.Create with a Win32_ProcessStartup object returned 21, invalid parameter).
 $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$bat`"" -WorkingDirectory $repo -WindowStyle Hidden -PassThru
 Write-Output "Bot started without a window (process $($proc.Id)); see logs\bot.log."
