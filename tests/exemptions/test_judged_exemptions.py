@@ -283,3 +283,13 @@ class TestTheReasonHeAlreadyGave:
         w = world(tmp_path, APPROVE)
         card, reply = self._ask(w, "I need a wear exemption")
         assert "What is it for?" in card.text and reply.text == REASON_QUESTION
+
+    def test_a_clear_health_reason_skips_the_category(self, tmp_path) -> None:
+        """Owner, 2026-11-17: no category buttons when what he wrote is clearly a health need."""
+        w = world(tmp_path, APPROVE)
+        card = w.service.start(WEARER, w.at, said="I have a rash under the ring and need it off for a while please.")
+        assert "health need" in card.text and w.exemption()["category"] == "health"
+        assert all(a.action_id.split(":")[1].startswith("h") for a in card.actions)                 # durations only, no category
+        ident = card.actions[0].action_id.split(":")[2]
+        reply = w.dm.press(discord_user_id=WEARER_DISCORD, action=card.actions[0].action_id.split(":")[1], ident=ident)
+        assert "approved" in reply.text.lower() and not w.service.awaiting_reason(WEARER)

@@ -203,6 +203,10 @@ class ExemptionService:
         """`said` (owner, 2026-11-15: "it asked me for the reason even though I gave it"): the request and what he wrote just before it. When it
         is a real sentence (SAID_MIN_WORDS), it becomes the reason and the judge decides right after the duration, without asking again."""
         said = " ".join(said.split())[:1500] if isinstance(said, str) and len(said.split()) >= SAID_MIN_WORDS else None
+        # Owner, 2026-11-17: when what he already wrote is clearly a health need (decided in code, the judge's own health test), the category
+        # buttons are skipped: it is filed as Health and he goes straight to how long.
+        from infractions.judge import is_health_or_safety
+        health = said is not None and is_health_or_safety(said)
 
         def write(tx: Transaction, _s: object) -> tuple[str, str | None]:
             row = tx.fetch_one("SELECT id, status FROM wear_exemptions WHERE user_id = ? AND status IN ('requested', 'approved')", (user_id,))
@@ -210,7 +214,8 @@ class ExemptionService:
                 return row["status"], row["id"]
             tx.execute("DELETE FROM wear_exemptions WHERE user_id = ? AND status = 'draft'", (user_id,))     # an abandoned draft holds nothing
             new_id = str(uuid4())
-            tx.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, reason) VALUES (?, ?, 'draft', ?, ?)", (new_id, user_id, _iso(now), said))
+            tx.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, reason, category) VALUES (?, ?, 'draft', ?, ?, ?)",
+                       (new_id, user_id, _iso(now), said, "health" if health else None))
             return "draft", new_id
 
         status, ident = apply_transition(self._core, write=write)
@@ -218,6 +223,10 @@ class ExemptionService:
             return OutgoingMessage(text=f"Your exemption request is {'still being decided' if self._judge is not None else 'with your keyholder'}. {SAFETY_LINE}")
         if status == "approved":
             return self._running_card(ident)
+        if health:
+            decision("exemptions", "Exemption asked for with a clear health reason: the category is Health without asking.", exemption_id=ident)
+            return OutgoingMessage(text=f"That's a health need, so no need to pick what it's for. How long do you need? {SAFETY_LINE}",
+                                   actions=tuple(ActionSpec(action_id=f"exemption:h{hours}:{ident}", label=_hours(hours)) for hours in DURATIONS))
         ask = "Of course. Pick what it's for and how long; I'll go by what you already told me." if said else "Of course. What is it for?"
         return OutgoingMessage(text=f"{ask} {SAFETY_LINE}",
                                actions=tuple(ActionSpec(action_id=f"exemption:cat_{code}:{ident}", label=label) for code, label in CATEGORIES.items()))

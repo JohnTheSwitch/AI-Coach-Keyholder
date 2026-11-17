@@ -26,6 +26,7 @@ judge (infractions/judge.py):
 - After the category and the length (now also 3 and 12 hours: "till evening" had to be 24), the bot asks what it is for. The next message is the
   reason (`ApplicationService.exemption_reason`, right after commands, before the status matchers and the model: live, "I need to be unlocked till
   evening" got the lock status and "I need 10 hours" the model's own refusal).
+- **A clear health reason skips the category (owner, 2026-11-17):** when the request and what he wrote just before it already hold the reason and the judge's own code test finds it a health need, the category buttons are skipped: it is filed as Health and the length buttons come at once.
 - **Code first:** the health category, or a reason mentioning health, pain, an injury or an emergency, is approved without any model (3.9, 3.10).
 - **Then the model** answers approve / decline / unclear. Unclear gets exactly one follow-up question; unclear again is a decline. A request within
   24 hours of a declined one is judged as an appeal and must bring something new. The reason is data, never instructions.
