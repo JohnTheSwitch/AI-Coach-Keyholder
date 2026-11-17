@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import subprocess
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +77,12 @@ def check_for_updates(repo: Path, *, git: Callable[..., str] = _git, github: Cal
         return None
     try:
         body = github(f"https://api.github.com/repos/{names[0]}/{names[1]}/compare/{running}...{newest}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # Live, 2026-11-17: GitHub doesn't know the running commit (deployed before its push): it is newer, not an update.
+            return None
+        logger.info("The GitHub compare could not be read; reporting the update without details.", exc_info=True)
+        return UpdateInfo(running=running, newest=newest, behind_by=None, titles=())
     except Exception:
         logger.info("The GitHub compare could not be read; reporting the update without details.", exc_info=True)
         return UpdateInfo(running=running, newest=newest, behind_by=None, titles=())

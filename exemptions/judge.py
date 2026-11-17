@@ -28,7 +28,7 @@ from infractions.judge import is_health_or_safety
 
 logger = logging.getLogger("ai_coach_keyholder.exemptions.judge")
 
-__all__ = ["Ruling", "ExemptionRuling", "ExemptionJudge", "parse_ruling", "MAX_REASON"]
+__all__ = ["Ruling", "ExemptionRuling", "ExemptionJudge", "parse_ruling", "asks_for_more", "MAX_REASON"]
 
 MAX_REASON = 1500
 
@@ -103,6 +103,18 @@ class ExemptionJudge:
         return parse_ruling(raw)
 
 
+_ASKS_FOR_MORE = re.compile(
+    r"\?\s*$"
+    r"|\bplease\s+(?:provide|tell|describe|explain|share|give|say)\b"
+    r"|\b(?:can|could|would)\s+you\s+(?:tell|describe|explain|provide|share|say|give)\b"
+    r"|\bmore\s+(?:information|info|details?|context)\b", re.IGNORECASE)
+
+
+def asks_for_more(reason: str) -> bool:
+    """A ruling that asks the person for more information is a question, whatever the model labelled it."""
+    return isinstance(reason, str) and _ASKS_FOR_MORE.search(reason) is not None
+
+
 def parse_ruling(raw: object) -> ExemptionRuling | None:
     if not isinstance(raw, str):
         return None
@@ -116,6 +128,9 @@ def parse_ruling(raw: object) -> ExemptionRuling | None:
         return None
     reason = data.get("reason")
     reason = " ".join(reason.split())[:300] if isinstance(reason, str) else ""
+    if ruling is Ruling.DECLINE and asks_for_more(reason):
+        # Live, 2026-11-17: a health renewal was "declined" with "Please provide more information about the bruise ...": that is a question.
+        return ExemptionRuling(Ruling.UNCLEAR, reason, question=reason[:300])
     question = data.get("question")
     question = " ".join(question.split())[:300] if isinstance(question, str) else ""
     if ruling is Ruling.UNCLEAR and not question:

@@ -50,6 +50,14 @@ class TestTheCheck:
         info = check_for_updates(Path("."), git=fake_git(), github=broken)
         assert info is not None and info.behind_by is None and info.titles == ()
 
+    def test_a_running_commit_github_does_not_know_is_not_an_update(self) -> None:
+        """Live, 2026-11-17: deployed before the push, the compare 404s; that was reported as an update."""
+        import urllib.error
+
+        def missing(url):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        assert check_for_updates(Path("."), git=fake_git(), github=missing) is None
+
     def test_not_a_github_repository(self) -> None:
         assert check_for_updates(Path("."), git=fake_git(origin="https://example.com/x.git"), github=compare()) is None
 

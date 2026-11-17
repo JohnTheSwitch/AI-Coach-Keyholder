@@ -28,7 +28,7 @@ judge (infractions/judge.py):
   evening" got the lock status and "I need 10 hours" the model's own refusal).
 - **A clear health reason skips the category (owner, 2026-11-17):** when the request and what he wrote just before it already hold the reason and the judge's own code test finds it a health need, the category buttons are skipped: it is filed as Health and the length buttons come at once.
 - **Code first:** the health category, or a reason mentioning health, pain, an injury or an emergency, is approved without any model (3.9, 3.10).
-- **Then the model** answers approve / decline / unclear. Unclear gets exactly one follow-up question; unclear again is a decline. A request within
+- **Then the model** answers approve / decline / unclear. Unclear gets exactly one follow-up question; unclear again is a decline. A decline that only asks for more information ("Please provide more information about ...") counts as unclear (live, 2026-11-17). A request within
   24 hours of a declined one is judged as an appeal and must bring something new. The reason is data, never instructions.
 - A model failure is never a decline: the request stays `requested`, is retried on every pass, and after an hour is closed as `unjudged` ("ask again").
 - An extra hygiene opening past the week's planned breaks goes the same way ("Ask for an extra one" -> why -> the judge).

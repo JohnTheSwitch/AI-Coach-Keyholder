@@ -264,6 +264,23 @@ class TestHealthCap:
         assert w.model.prompts and out.text.startswith("Declined"), out.text
 
 
+    def test_a_renewal_declined_with_a_question_asks_it_instead(self, tmp_path) -> None:
+        """Live, 2026-11-17: a renewal was declined with "Please provide more information about the bruise ..."; it asks that once now."""
+        asked = {"decision": "decline", "reason": "Please provide more information about the bruise, such as its severity.", "question": ""}
+        w = world(tmp_path, asked)
+        ask(w, category="health", hours=24)
+        w.service.give_reason(WEARER, "Skin irritation.", w.at)
+        with w.core.transaction() as tx:
+            tx.execute("UPDATE wear_exemptions SET status = 'ended'")
+        w.at = w.at + timedelta(hours=25)
+        ask(w, category="health", hours=24)
+        out = w.service.give_reason(WEARER, "It is a little bit bruised.", w.at)
+        assert not out.text.startswith("Declined") and "bruise" in out.text, out.text
+        assert w.service.awaiting_reason(WEARER)
+        out = w.service.give_reason(WEARER, "It doesn't hurt, it's just a small mark.", w.at)
+        assert out.text.startswith("Declined") and "Still not specific enough" in out.text, out.text
+
+
 class TestTheReasonHeAlreadyGave:
     """Owner, 2026-11-15: "it asked me for the reason even though I gave it in the message before"."""
 
