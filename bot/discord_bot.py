@@ -1096,6 +1096,11 @@ def main() -> None:
         (logger.warning if "NOT active" in note else logger.info)(note)
     if obedience is not None:
         from system.dm_actions import ObedienceDm
+        # Owner, 2026-11-17: the bot runs his Deep Diver through Intiface Central on this PC, only after "It's in: run it" on a task.
+        from toy_control.session import ToySessions
+        from toy_control.store import ToyLevels
+        obedience.toy = ToySessions()
+        obedience.toy_levels = ToyLevels(core, user_id=obedience.user_id)
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
         application_service.gear_command = obedience.gear_command

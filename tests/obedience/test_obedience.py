@@ -864,3 +864,69 @@ def test_the_daily_task_is_never_a_workout_either(tmp_path) -> None:
     for mode in ("alone", "discreet"):
         for _ in range(300):
             assert not w.tasks._pick(MORNING.date(), mode).key.startswith("workout_")
+
+
+def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> None:
+    """Owner, 2026-11-17 (option 1): "It's in: run it" on a Deep Diver task runs the toy for the task's time; Stop ends it."""
+    from obedience.service import TOY_OFFER, Task
+    from application.models import OutgoingMessage
+
+    class Toy:
+        def __init__(self):
+            self.started, self.stopped, self.on = [], 0, False
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+            if self.on:
+                return False
+            self.on, self.problem, self.done = True, on_problem, on_done
+            self.started.append((minutes, mode, profile, base))
+            return True
+
+        def stop(self):
+            was, self.on = self.on, False
+            self.stopped += was
+            return was
+
+    from toy_control.store import ToyLevels
+    w = World(tmp_path)
+    toy = w.tasks.toy = Toy()
+    w.tasks.toy_levels = ToyLevels(w.core, user_id=U)
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:wall+vibe", "Facing a wall, hands behind your head, Deep Diver in and "
+                                                               "vibrating. Photo from behind, waist down only. 20 minutes.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    row = w.row()
+    with w.core.transaction() as tx:
+        n = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
+    assert TOY_OFFER in n["text"] and f"obedience:toy:{row['id']}" in n["actions_json"] and toy.started == []
+    reply = w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING)
+    assert isinstance(reply, OutgoingMessage) and "20 minutes" in reply.text
+    assert toy.started == [(20, row["mode"], "default" if row["mode"] == "alone" else "discreet", 0.5)]
+    assert reply.actions[0].action_id == f"obedience:toystop:{row['id']}"
+    assert "already running" in w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING).text
+    toy.problem("refused")
+    with w.core.transaction() as tx:
+        assert "couldn't reach your Deep Diver" in tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:toy_problem:%'")["text"]
+    assert w.tasks.press(user_id=U, row_id=row["id"], action="toystop", now=MORNING) == "Stopped." and toy.stopped == 1
+    toy.done()                                                                     # afterwards: how was it?
+    with w.core.transaction() as tx:
+        ask = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:toy_done:%'")
+    assert ask["text"] == "How was that?" and f"obedience:toyweak:{row['id']}" in ask["actions_json"]
+    assert "stronger next time" in w.tasks.press(user_id=U, row_id=row["id"], action="toyweak", now=MORNING)
+    assert w.tasks.toy_levels.level() == 0.6
+    assert w.tasks.press(user_id=U, row_id=row["id"], action="toymuch", now=MORNING) == "Already noted."
+    assert w.tasks.press(user_id="other", row_id=row["id"], action="toy", now=MORNING) == "That isn't yours to decide."
+
+
+def test_no_toy_button_without_the_deep_diver_or_without_the_toy(tmp_path) -> None:
+    from obedience.service import TOY_OFFER, Task
+    w = World(tmp_path)
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:wall+blind", "Facing a wall, blindfolded. Photo from behind, waist down only. "
+                                                               "20 minutes.", "erotic")
+    w.tasks.toy = object()
+    w.tasks.tick(MORNING)
+    w.start()
+    with w.core.transaction() as tx:
+        n = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
+    assert TOY_OFFER not in n["text"] and "obedience:toy:" not in n["actions_json"]
+    assert "nothing to run" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="toy", now=MORNING)

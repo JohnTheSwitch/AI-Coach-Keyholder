@@ -141,3 +141,9 @@ A task photographed from behind adds a DM-only line on how (`PHOTO_HOW`: phone p
 **An extra task is erotic (owner, 2026-11-16 22:40).** The extra erotic task (slot 1, `extra task`) drew "calf raises with the bar" as its
 discreet version: `_pick(..., erotic_only=True)` never gives a workout to slot 1. A workout task's DM no longer says "do it in your room with
 the door closed" (the gear is in the gym).
+
+## The bot runs the Deep Diver (owner, 2026-11-17)
+
+A task with the Deep Diver in has a button "It's in: run it": the bot then runs a session shaped for the task (warm-up, build, teasing,
+finish; see `toy_control/README.md`) through Intiface Central on the PC, with a Stop button, and asks "How was that?" (Too weak / Right /
+Too much) to set his level for next time. Without a reachable toy he gets a DM to run it himself as written.

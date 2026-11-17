@@ -36,7 +36,7 @@ from dataclasses import dataclass, replace as _replace
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from application.models import ActionSpec
+from application.models import ActionSpec, OutgoingMessage
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.decision_log import decision
@@ -423,6 +423,19 @@ def uses_anal(text: str) -> bool:
     return any(w in t for w in _ANAL)
 
 
+TOY_OFFER = "Press \"It's in: run it\" once it's in and I'll control it myself; if I can't reach it, run it yourself as written."
+TOY_STOPPED = "Stopped."
+TOY_PROBLEM = "I couldn't reach your Deep Diver (Intiface open on the PC, toy on and near it?). Run it yourself as the task says."
+TOY_DEFAULT_MINUTES = 20
+TOY_ASK = "How was that?"
+TOY_ANSWERS = (("toyweak", "Too weak"), ("toyright", "Right"), ("toymuch", "Too much"))
+
+
+def uses_toy(text: str) -> bool:
+    """Owner, 2026-11-17: the tasks the bot can run the vibration for: the ones with his Deep Diver in."""
+    return "Deep Diver" in text
+
+
 def task_minutes(text: str) -> int:
     """Owner, 2026-11-16 (A0): the task's own time (warm-up, holding and wearing times added up), for the photo deadline."""
     import re
@@ -659,6 +672,8 @@ class ObedienceTasks:
         self.user_id = user_id
         self._chaster = chaster
         self._ports = ports
+        self.toy = None              # toy_control.session.ToySessions (owner, 2026-11-17): set by the bot for the owner only
+        self.toy_levels = None       # toy_control.store.ToyLevels: his own level, moved by his answer after each session
         self._rng = rng or random.SystemRandom()
         # Owner, 2026-11-16 (multi-wearer): DEFAULT_OWNED is the owner's inventory; an additional wearer starts with nothing and adds gear.
         self.default_owned: frozenset = DEFAULT_OWNED
@@ -979,6 +994,9 @@ class ObedienceTasks:
                        + (f" {extra}" if extra else ""))
             actions = (ActionSpec(action_id=f"obedience:later:{row['id']}", label="Someone's around (+2 h, once)"),
                        ActionSpec(action_id=f"obedience:cannot:{row['id']}", label="I can't now (health or safety)"))
+            if self.toy is not None and uses_toy(text):            # owner, 2026-11-17: the bot runs the Deep Diver once he says it's in
+                message += f" {TOY_OFFER}"
+                actions = (ActionSpec(action_id=f"obedience:toy:{row['id']}", label="It's in: run it"),) + actions
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("UPDATE obedience_tasks SET status = 'assigned', lock_id = ?, task_id = ?, deadline = ?, catalog_key = ?, text = ?, mode = ? "
@@ -1281,10 +1299,16 @@ class ObedienceTasks:
         row = self._row(row_id)
         if row is None or row["user_id"] != user_id:
             return "That isn't yours to decide."
-        if action not in ("cannot", "later", "alone", "discreet"):
+        if action == "toystop":
+            return TOY_STOPPED if self.toy is not None and self.toy.stop() else "Nothing is running."
+        if action in ("toyweak", "toyright", "toymuch"):
+            return self._toy_feedback(row, action, now)
+        if action not in ("cannot", "later", "alone", "discreet", "toy"):
             return "That isn't one of the options."
         if row["status"] not in ("planned", "asking", "assigned", "submitted"):
             return "That task is already decided."
+        if action == "toy":
+            return self._run_toy(row, now)
         if action == "later":
             return self._postpone(row, now)
         if action in ("alone", "discreet"):
@@ -1299,6 +1323,46 @@ class ObedienceTasks:
         self._close(row, "cancelled", "health_or_safety", now)
         decision("obedience", "An obedience task was cancelled for health or safety; no consequence.", task=row["catalog_key"])
         return "Cancelled, no consequence. Look after yourself first."
+
+    def _run_toy(self, row: dict, now: datetime):
+        """Owner, 2026-11-17: "It's in: run it" on an assigned task that uses the Deep Diver. A session shaped for the task, built around his
+        own level (`self.toy_levels`), and afterwards "Too weak / Right / Too much" moves that level."""
+        if self.toy is None or row["status"] != "assigned" or not uses_toy(row["text"] or ""):
+            return "There's nothing to run for this task."
+        from toy_control.session import MAX_MINUTES, profile_for
+        minutes = min(task_minutes(row["text"] or "") or TOY_DEFAULT_MINUTES, MAX_MINUTES)
+        mode = row["mode"] or DISCREET
+        profile = profile_for(row["catalog_key"] or "", mode, minutes)
+        levels = self.toy_levels
+        level = levels.level() if levels is not None else 0.5
+        user_id, row_id = self.user_id, row["id"]
+
+        def tell(key: str, text: str, actions=()) -> None:
+            def write(tx: Transaction, _s: object) -> None:
+                enqueue_in_transaction(tx, user_id=user_id, kind="obedience_task", dedupe_key=f"obedience:{key}:{row_id}:{_iso(now)}",
+                                       now=now, immediate=True, text=text, actions=actions)
+            apply_transition(self._core, write=write)
+
+        def done() -> None:
+            if levels is not None:
+                tell("toy_done", TOY_ASK, tuple(ActionSpec(action_id=f"obedience:{a}:{row_id}", label=label) for a, label in TOY_ANSWERS))
+
+        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM),
+                              on_done=done):
+            return OutgoingMessage(text="It's already running.", actions=(ActionSpec(action_id=f"obedience:toystop:{row_id}", label="Stop"),))
+        if levels is not None:
+            levels.record_start(task_ref=row_id, mode=mode, profile=profile, level=level, now=now)
+        decision("obedience", "The bot is running the toy for a task.", task=row["catalog_key"], minutes=minutes, mode=mode, profile=profile)
+        return OutgoingMessage(text=f"Running it for {minutes} minutes; I decide how strong and when. Your task goes on as written. "
+                               "Press Stop if you need to; the toy's own button always works too.",
+                               actions=(ActionSpec(action_id=f"obedience:toystop:{row_id}", label="Stop"),))
+
+    def _toy_feedback(self, row: dict, action: str, now: datetime) -> str:
+        from toy_control.store import FEEDBACK
+        if self.toy_levels is None or self.toy_levels.feedback(task_ref=row["id"], answer=FEEDBACK[action], now=now) is None:
+            return "Already noted."
+        return {"toyweak": "Noted: stronger next time.", "toyright": "Noted. I'll keep it about there and keep nudging it up.",
+                "toymuch": "Noted: gentler next time."}[action]
 
     def _postpone(self, row: dict, now: datetime) -> str:
         """Once per task: the photo deadline moves to POSTPONE from now. A second press, or one after a photo was sent, changes nothing."""

@@ -126,7 +126,8 @@ class ObedienceDm:
         user = self._resolve(discord_user_id)
         if user is None:
             return _NOT_YOURS
-        return OutgoingMessage(text=self._tasks.press(user_id=user, row_id=ident, action=action, now=self._now()))
+        answer = self._tasks.press(user_id=user, row_id=ident, action=action, now=self._now())
+        return answer if isinstance(answer, OutgoingMessage) else OutgoingMessage(text=answer)     # the toy's Stop button (2026-11-17)
 
 
 class OptOutDm:
