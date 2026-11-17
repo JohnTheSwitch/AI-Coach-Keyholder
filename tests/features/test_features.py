@@ -83,3 +83,11 @@ def test_the_protocol_is_silent_when_off() -> None:
     ladder = ProtocolLadder(None, user_id=U, ports=ports)
     assert ladder.gate(U, "this is unfair", NOW) is None
     ladder.tick(NOW)                                   # never touches the (missing) database
+
+
+def test_an_unavailable_feature_stays_off_and_says_why(tmp_path) -> None:
+    db, features, _ = wired(tmp_path, locked=False)
+    features.unavailable = {"workouts": "Not for you yet."}
+    assert features.command(U, "workouts on", NOW) == "Not for you yet."
+    assert not features.is_on(U, "workouts") and features.is_on(U, "lines")
+    assert "- workouts: not available yet" in features.command(U, "features", NOW)

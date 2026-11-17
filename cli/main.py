@@ -374,6 +374,28 @@ def build_setup_context():
     return config, core, model.check_ready
 
 
+def run_patterns(*, out, now, factory=None) -> int:
+    """Read-only (learning options 2 and 3, owner 2026-11-16): his patterns and what works on him. `factory()` returns (core, user id,
+    local) in tests."""
+    from cli.patterns import patterns_report
+    if factory is not None:
+        core, user_id, local = factory()
+    else:
+        from core.config import Config
+        from infrastructure.database import Database as CoreDatabase
+        from system.composition import window_config_from
+        config = Config.load()
+        core = CoreDatabase(config.db_path)
+        user_id = config.check_in_user_id or config.chaster_execution_wearer_user_id or config.owner_user_id
+        local = window_config_from(config).local
+    if not user_id:
+        print("No wearer is configured.", file=out)
+        return 3
+    from supervision.models import SERIOUS_FROM
+    print(patterns_report(core, user_id, now(), local, counts_from=SERIOUS_FROM), file=out)
+    return 0
+
+
 def run_economy(*, out, now, factory=None) -> int:
     """Read-only token pace report (roadmap slice 4). `factory()` returns (core, user id, today) in tests."""
     from cli.economy import economy_report, render_economy
@@ -779,6 +801,53 @@ def _slave_training(args, services, out, now) -> int:
     return 0
 
 
+def _tenant_custom_tasks(args, services, out, now) -> int:
+    """Owner, 2026-11-17: read another wearer's limits and tasks (`limits`) or send them a task to approve (`task-propose`)."""
+    from custom_tasks.service import CustomTasks
+    from infrastructure.database import Database as CoreDatabase
+    from obedience.service import GEAR_ALIASES, ROLE
+    from tenancy.registry import resolve_db_path
+
+    tenant = services.registry.get(args.tenant_id)
+    if tenant is None or tenant.status.value == "removed" or tenant.is_tenant_zero:
+        print("No such tenant (your own tasks are the built-in catalogue).", file=out)
+        return 3
+    path = resolve_db_path(tenant, services.tenant_dir)
+    if not path.exists() or not tenant.discord_id:
+        print("That tenant has no database yet.", file=out)
+        return 3
+    core = CoreDatabase(path)
+    with core.transaction() as tx:
+        row = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = ?", (tenant.discord_id,))
+    if row is None:
+        print("That wearer has not written to the bot yet.", file=out)
+        return 3
+    custom = CustomTasks(core, user_id=row["user_account_id"])
+    if args.tenant_command == "limits":
+        for key, value in custom.limits().items():
+            print(f"{key}: {value or '(not given)'}", file=out)
+        with core.transaction() as tx:
+            gear = [r["gear"] for r in tx.fetch_all("SELECT gear FROM obedience_gear WHERE user_id = ? AND owned = 1", (custom.user_id,))]
+        print("gear: " + (", ".join(f"{g} ({ROLE.get(g, g)})" for g in sorted(gear)) or "(none)"), file=out)
+        for t in custom.tasks():
+            print(f"  {t.number}. [{t.status}] {t.text}", file=out)
+        return 0
+    needs = set()
+    for word in filter(None, (args.needs or "").replace(" ", "").split(",")):
+        piece = word if word in ROLE else GEAR_ALIASES.get(word)
+        if piece is None:
+            print(f"Unknown gear '{word}'. Pieces: {', '.join(sorted(ROLE))}.", file=out)
+            return 3
+        needs.add(piece)
+    try:
+        number = custom.propose(text=args.text, needs=frozenset(needs), modes=args.modes, now=now())
+    except ValueError as exc:
+        print(f"Not sent: {exc}.", file=out)
+        return 3
+    print(f"Task {number} sent to {tenant.display_name} for approval (the running bot delivers the DM).", file=out)
+    return 0
+
+
 def _tenant_execution(admin, services, args, now):
     """Sets or clears the execution halt inside ONE tenant's own database (owner only; the file must already exist)."""
     from chaster_execution.control import ExecutionControl
@@ -1084,6 +1153,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
     dr.add_argument("--yes", action="store_true")
     for dp in dsub.choices.values():
         dp.add_argument("--owner-id", required=True, help="your internal user id (must equal OWNER_USER_ID)")
+    sub.add_parser("patterns", help="READ-ONLY (learning options 2 and 3, owner 2026-11-16): his patterns and what works on him, as proposals.")
     sub.add_parser("economy", help="READ-ONLY (owner, 2026-11-13): how fast tokens are earned over 7 / 14 / 30 days and what held progress back.")
     setup = sub.add_parser("setup", help="Owner, 2026-11-13: `check` (read-only: what is set up and what is missing) or `init` (create the "
                                           "Trust domains the configuration names, with consent).")
@@ -1164,6 +1234,13 @@ def main(argv: list[str], *, out: TextIO | None = None,
     group.add_argument("--enable", action="store_true")
     group.add_argument("--disable", action="store_true")
     group.add_argument("--status", action="store_true")
+    lim = tsub.add_parser("limits", help="Owner, 2026-11-17: READ-ONLY: a wearer's limits, gear and their own tasks with each one's status.")
+    lim.add_argument("tenant_id")
+    tp = tsub.add_parser("task-propose", help="Owner, 2026-11-17: send a wearer one erotic task written from their limits; given only after they approve it.")
+    tp.add_argument("tenant_id")
+    tp.add_argument("--text", required=True, help="the Chaster task: what to do and exactly what the photo shows")
+    tp.add_argument("--needs", default="", help="gear the task needs, comma-separated (e.g. collar,blindfold)")
+    tp.add_argument("--modes", choices=("alone", "discreet", "both"), default="alone", help="when it may be given (default: only alone)")
     ex = tsub.add_parser("execution", help="Halt or clear ONE tenant's execution runtime (a new tenant starts halted).")
     ex.add_argument("tenant_id")
     ex.add_argument("action", choices=("halt", "clear"))
@@ -1238,6 +1315,12 @@ def main(argv: list[str], *, out: TextIO | None = None,
                 print(_PAIR_TEXT[paired.outcome.value] + (f" Lock: '{paired.title}' of Chaster user {paired.wearer_username}."
                                                           if paired.title or paired.wearer_username else ""), file=out)
                 return 0 if paired.outcome.value.startswith("paired") else 3
+        elif cmd in ("limits", "task-propose"):
+            refusal = admin.authorize(args.owner_id, cmd.replace("-", "_"))
+            if refusal is not None:
+                result = refusal
+            else:
+                return _tenant_custom_tasks(args, services, out, now)
         elif cmd == "execution":
             result = _tenant_execution(admin, services, args, now)
         elif cmd == "halt":
@@ -1326,6 +1409,8 @@ def main(argv: list[str], *, out: TextIO | None = None,
         return 0 if outcome.value in ("confirmed", "dismissed") else 4 if outcome.value == "failed" else 3
     if args.command == "economy":
         return run_economy(out=out, now=now)
+    if args.command == "patterns":
+        return run_patterns(out=out, now=now)
     if args.command == "setup":
         return run_setup(args, out=out, now=now, factory=setup_factory, domain_factory=domain_factory, review_factory=review_factory,
                          lock_tasks=lock_tasks_reader(config_factory, now) if args.setup_command == "check" else None)

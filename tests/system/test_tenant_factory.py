@@ -100,7 +100,7 @@ class TestFactory:
         runtime = w.factory.build(t.id)
         assert runtime.db_path == w.platform.tenant_dir / f"{t.id}.sqlite" and runtime.db_path.exists()
         with runtime.core.transaction() as tx:
-            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 92
+            assert tx.fetch_one("SELECT MAX(version) AS v FROM schema_version")["v"] == 93
             identity = tx.fetch_one("SELECT user_account_id FROM user_channel_identities WHERE channel = 'discord' AND external_id = '2000002'")
         assert identity["user_account_id"] == runtime.wearer_user_id
 
@@ -456,7 +456,7 @@ class TestImportBoundaries:
         assert offenders == []
 
     def test_the_main_database_schema_is_unchanged_by_phase_e2(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 92
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 93
 
 
 class TestParity5Exemptions:
@@ -609,6 +609,30 @@ class TestParity12Obedience:
         assert get_feature_on(runtime.core, runtime.wearer_user_id, "workouts")
         assert runtime.obedience is None and any("obedience" in n for n in runtime.notes)           # no spot checks / detectors here
 
+    def test_workouts_cannot_be_switched_on_while_the_plan_is_the_owners(self, w) -> None:
+        """Leak audit (2026-11-17): the training plan is the owner's own programme; another wearer never gets it."""
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        user = runtime.wearer_user_id
+        reply = runtime.features.command(user, "workouts on", NOW)
+        assert reply.startswith("Workouts aren't available for you yet") and not runtime.features.is_on(user, "workouts")
+        runtime.features.set(user, "workouts", True, NOW)                                           # even a row saying on
+        assert not runtime.features.is_on(user, "workouts")
+        assert "- workouts: not available yet" in runtime.features.command(user, "features", NOW)
+        assert runtime.features.command(user, "temptations on", NOW) == "Temptations aren't available for you yet."
+
+    def test_their_erotic_tasks_are_their_own_approved_ones(self, w) -> None:
+        """Owner, 2026-11-17: limits in the DM, tasks written by the owner, approved by the wearer; never the owner's catalogue."""
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        user, service = runtime.wearer_user_id, runtime.application_service
+        assert runtime.custom_tasks is not None and service.custom_tasks_command is not None
+        assert runtime.features.command(user, "erotic tasks on", NOW).startswith("Erotic tasks aren't available for you yet")
+        assert service.custom_tasks_command(user, "limits hard no pain", NOW).startswith("Saved.")
+        runtime.custom_tasks.propose(text="Task one. Photo of the cage only.", now=NOW)
+        service.custom_tasks_command(user, "task approve 1", NOW)
+        assert runtime.features.command(user, "erotic tasks on", NOW) == "Erotic tasks is on again."
+
     def test_with_spot_checks_and_detectors_the_gear_list_starts_empty(self, w) -> None:
         from types import SimpleNamespace as NS
         from system.tenant_factory import tenant_config
@@ -621,6 +645,7 @@ class TestParity12Obedience:
         cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
         w.factory._obedience(runtime, runtime.application_service, cfg, runtime.core)
         assert runtime.obedience is not None and runtime.obedience.owned_gear() == frozenset()
+        assert runtime.obedience.custom is runtime.custom_tasks                                  # their own tasks only
         assert "obedience" in runtime.dm_actions and runtime.application_service.gear_command is not None
         assert runtime.obedience.gear_command(runtime.wearer_user_id, "gear add collar", NOW).startswith("Added: collar")
         assert runtime.obedience.owned_gear() == frozenset({"collar"})

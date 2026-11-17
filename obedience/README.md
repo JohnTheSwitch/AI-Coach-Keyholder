@@ -147,3 +147,6 @@ the door closed" (the gear is in the gym).
 A task with the Deep Diver in has a button "It's in: run it": the bot then runs a session shaped for the task (warm-up, build, teasing,
 finish; see `toy_control/README.md`) through Intiface Central on the PC, with a Stop button, and asks "How was that?" (Too weak / Right /
 Too much) to set his level for next time. Without a reachable toy he gets a DM to run it himself as written.
+
+
+**Another wearer (2026-11-17):** `ObedienceTasks.custom` makes their erotic task come only from their own approved tasks (`custom_tasks/`), never this catalogue; with none that fits, `CUSTOM_FALLBACK`. The coach is told the short training session is optional.

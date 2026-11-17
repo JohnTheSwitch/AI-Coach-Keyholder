@@ -809,6 +809,10 @@ def test_today_for_the_short_session_switches_a_task_that_is_only_planned(tmp_pa
     assert w.tasks.take_training_today(MORNING) is True
     row = w.tasks._row_for(w.tasks._ports.today(MORNING))
     assert row["catalog_key"] == "training:short:upper_short" and row["status"] == "planned"
+    # Bug fix 2026-11-17: "I wanna do a leg day today" got "that's not changing anything": the coach is told the short session is optional.
+    from obedience.service import get_obedience_today
+    [task] = get_obedience_today(w.core, U, row["local_date"])
+    assert task["kind"].startswith("optional short training session") and "costs nothing" in task["kind"]
 
 
 def test_today_open_until_the_task_is_out(tmp_path) -> None:

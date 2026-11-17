@@ -51,9 +51,13 @@ locked with the bot as keyholder, and neither the tenant halt nor the platform h
 - **Beginner level** (`advanced_mode`): tokens base 1.0, +0.025 per release up to 1.5; lines 10 / 20, release lines 10; asked to move up after 4
   weeks without a severe incident (`system/graduation.py`). `mode request standard` moves up; going down only while unlocked.
 - **Off at the start** (`features`): erotic tasks, workouts, temptations, protocol. The wearer switches them on (`<feature> on`).
+- **Erotic tasks are their own** (owner, 2026-11-17): they give limits in the DM (`limits hard|soft|likes <text>`); you read them with
+  `python -m cli tenants limits <tenant> --owner-id <you>`, write tasks with Claude and send each with `python -m cli tenants task-propose
+  <tenant> --text "..." [--needs a,b] [--modes alone|discreet|both] --owner-id <you>`; they approve each one (`tasks`, `task approve <n>`).
+  `erotic tasks on` waits for the first approved task. See `custom_tasks/README.md`.
 - **Gear list empty**: `gear add <piece>` or `gear add <piece> as <their name>`; pieces are listed by role (`gear`).
-- **Workouts:** the training plan in `training/plan.py` is the owner's programme. Do not let a wearer switch `workouts` on until a plan of
-  their own exists (see `docs/operations/multi_wearer_leak_audit.md`).
+- **Workouts:** the training plan in `training/plan.py` is the owner's programme, so `workouts on` is refused for another wearer (and the
+  switch counts as off) until a plan of their own exists (see `docs/operations/multi_wearer_leak_audit.md`).
 - Before inviting anyone, set up a small private Discord server with the bot and invite the wearer there: Discord lets a person DM a bot
   only when they share a server.
 

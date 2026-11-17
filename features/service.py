@@ -66,8 +66,25 @@ class Features:
         # opt_outs (G3): (user_id, opt-out key, now) -> the waiting reply, or None to apply at once; and the withdraw on switching back on.
         self.request_off: Callable[[str, str, datetime], str | None] | None = None
         self.withdraw: Callable[[str, str, datetime], object] | None = None
+        # Leak audit (2026-11-17): features that cannot be switched on for this wearer yet, with the reason they are told. Such a feature
+        # counts as off whatever its row says (another wearer must never get the owner's own training plan).
+        # A value is the reason itself, or a callable(user_id) -> the reason, or None once it is available (2026-11-17: erotic tasks wait for
+        # the wearer's first approved task, custom_tasks/).
+        self.unavailable: dict[str, object] = {}
+
+    def why_unavailable(self, user_id: str, feature: str) -> str | None:
+        why = self.unavailable.get(feature)
+        if callable(why):
+            try:
+                return why(user_id)
+            except Exception:
+                logger.exception("Whether a feature is available could not be read; it counts as not available.")
+                return "That isn't available right now."
+        return why
 
     def is_on(self, user_id: str, feature: str) -> bool:
+        if self.why_unavailable(user_id, feature) is not None:
+            return False
         return get_feature_on(self._core, user_id, feature)
 
     def set(self, user_id: str, feature: str, on: bool, now: datetime) -> bool:
@@ -124,11 +141,14 @@ class Features:
         return None
 
     def listing(self, user_id: str) -> str:
-        rows = [f"- {words}: {'on' if self.is_on(user_id, key) else 'off'} ({about})" for key, (words, about) in FEATURES.items()]
+        rows = [f"- {words}: {'not available yet' if self.why_unavailable(user_id, key) else 'on' if self.is_on(user_id, key) else 'off'} ({about})"
+                for key, (words, about) in FEATURES.items()]
         return ("Your features:\n" + "\n".join(rows) + "\nChange one with `<feature> off` or `<feature> on`. While you're locked, switching "
                 "off waits 24 hours and I ask again. Check-ins, Trust, penalties, health and the emergency option have no switch.")
 
     def _switch_on(self, user_id: str, key: str, now: datetime) -> str:
+        if (why := self.why_unavailable(user_id, key)) is not None:
+            return why
         if self.withdraw is not None:
             try:
                 self.withdraw(user_id, f"feature:{key}", now)

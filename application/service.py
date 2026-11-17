@@ -197,6 +197,7 @@ class ApplicationService:
         self.protocol_gate = None                # protocol.service.ProtocolLadder.gate: fixed replies before the model (owner, 2026-11-16)
         self.features_command = None             # features.service.Features.command: `features`, `<feature> off|on` (owner, 2026-11-16)
         self.gear_command = None                 # obedience.service.ObedienceTasks.gear_command: `gear`, `gear add <piece>` (owner, 2026-11-15)
+        self.custom_tasks_command = None         # custom_tasks.service.CustomTasks.command: `limits ...`, `tasks`, `task approve <n>` (another wearer, 2026-11-17)
         # (user_id, text, now) -> OutgoingMessage | None: the wearer's reason for an exemption, when one was asked for (exemptions/service.py).
         self.exemption_reason = None
         # (text) -> bool: the same deterministic reading, asked before the model so the reply is a keyholder's reaction (CONFESSION_NOTE).
@@ -346,6 +347,15 @@ class ApplicationService:
                     gear_reply = None
                 if gear_reply is not None:
                     return OutgoingMessage(text=gear_reply) if isinstance(gear_reply, str) else gear_reply
+
+            if self.custom_tasks_command is not None:
+                try:
+                    custom_reply = self.custom_tasks_command(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The limits or own tasks could not be handled; the message is handled normally.")
+                    custom_reply = None
+                if custom_reply is not None:
+                    return OutgoingMessage(text=custom_reply)
 
             if self.extra_task_command is not None:
                 try:

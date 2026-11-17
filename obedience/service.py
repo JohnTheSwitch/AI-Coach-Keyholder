@@ -297,6 +297,9 @@ WORKOUTS: tuple[Task, ...] = (
     Task("workout_cable", "4 sets of cable rows on the Laubr. Photo of the stack and the handle only.", "workout"),
     Task("workout_log", "Workout done. Photo of the gym only.", "workout"),
 )
+# Owner, 2026-11-17: another wearer with no approved task that fits today gets only what their spot checks (which they agreed to) already
+# ask: nothing they did not approve.
+CUSTOM_FALLBACK = Task("custom:fallback", "Show your locked cage. Photo of the cage only.", "erotic")
 CATALOG: tuple[Task, ...] = EXTRAS + WORKOUTS                # the fixed tasks (composed and ladder tasks are built when picked)
 _BY_KEY = {t.key: t for t in CATALOG}
 
@@ -537,8 +540,12 @@ def get_obedience_today(core: CoreDatabase, user_id: str, local_date: str) -> li
                             (user_id, local_date))
     out = []
     for r in rows:
-        kind = "training session" if r["catalog_key"].startswith("training:") else (
-            "task-board task" if r["catalog_key"].startswith("board:") else "obedience task")
+        # Bug fix 2026-11-17: "I wanna do a leg day today" got "that's not changing anything, you're going to do it": the short session is
+        # optional (Q4c), so the model must know it, and that wanting to do it is not pushback.
+        kind = ("optional short training session (his own choice: skipping it costs nothing; wanting to do it deserves encouragement)"
+                if r["catalog_key"].startswith("training:short:") else
+                "training session" if r["catalog_key"].startswith("training:") else (
+            "task-board task" if r["catalog_key"].startswith("board:") else "obedience task"))
         state = _STATE_WORDS.get(r["status"], r["status"])
         if r["status"] == "passed" and r["outcome"] != "verified":
             state = "closed without a verdict, no consequence"
@@ -678,6 +685,9 @@ class ObedienceTasks:
         # Owner, 2026-11-16 (multi-wearer): DEFAULT_OWNED is the owner's inventory; an additional wearer starts with nothing and adds gear.
         self.default_owned: frozenset = DEFAULT_OWNED
         self.generic_names = False         # an additional wearer: pieces are listed by ROLE, and their own names replace the owner's items
+        # Owner, 2026-11-17: another wearer's erotic tasks are only the ones the owner wrote from their limits and they approved
+        # (custom_tasks/); None for the owner, whose catalogue is his own.
+        self.custom = None
 
     # ------------------------------------------------------------------ plan and start
 
@@ -786,6 +796,8 @@ class ObedienceTasks:
         pose task, or one of the extras. Nothing used in the last REPEAT_DAYS days, never yesterday's main gear, only gear he owns, and only
         tasks that suit `mode` (alone: the full versions; discreet: quiet and short)."""
         owned = effective(self.owned_gear() if owned is None else owned)
+        if self.custom is not None:
+            return self._pick_custom(day, mode, owned)
         since = (day - timedelta(days=REPEAT_DAYS)).isoformat()
         with self._core.transaction() as tx:
             rows = [dict(r) for r in tx.fetch_all("SELECT local_date, catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? "
@@ -825,6 +837,22 @@ class ObedienceTasks:
             return self._rng.choices(fresh, weights=weights)[0] if avoided else self._rng.choice(fresh)
         return (compose(self._rng, banned, yesterday_gear, owned, mode) or compose(self._rng, set(), set(), owned, mode)
                 or (self._rng.choice(extras) if erotic_only and extras else self._rng.choice(workouts)))
+
+    def _pick_custom(self, day: date, mode: str, owned: frozenset) -> Task:
+        """Another wearer (owner, 2026-11-17): only their approved tasks that suit the mode and their gear, not one used in the last
+        REPEAT_DAYS days when another is left, never yesterday's. With none (all rejected later, or the gear for them removed): CUSTOM_FALLBACK,
+        which needs nothing and shows only what their spot checks already show."""
+        since = (day - timedelta(days=REPEAT_DAYS)).isoformat()
+        with self._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT local_date, catalog_key FROM obedience_tasks WHERE user_id = ? AND local_date >= ? AND local_date < ?",
+                                (self.user_id, since, day.isoformat()))
+        recent = {r["catalog_key"] for r in rows}
+        yesterday = {r["catalog_key"] for r in rows if r["local_date"] == (day - timedelta(days=1)).isoformat()}
+        fits = [t for t in self.custom.approved() if mode in t.modes and t.needs <= owned and t.key not in yesterday]
+        if not fits:
+            return CUSTOM_FALLBACK
+        task = self._rng.choice([t for t in fits if t.key not in recent] or fits)
+        return Task(task.key, task.text, "erotic", task.needs, task.modes)
 
     def _avoided(self, day: date) -> tuple[set[str], frozenset]:
         """(task keys, their parts) he avoided in the AVOID_DAYS before `day`: postponed ("someone's around") or failed. Never the health or

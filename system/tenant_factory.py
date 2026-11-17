@@ -111,6 +111,7 @@ class TenantRuntime:
     lines: object | None = None                       # lines.service.LineService for THIS wearer (parity 11)
     extra_consumers: dict | None = None               # further outbox consumers of THIS tenant (lines)
     obedience: object | None = None                   # obedience.service.ObedienceTasks for THIS wearer (parity 12)
+    custom_tasks: object | None = None                # custom_tasks.service.CustomTasks: their limits and their own approved tasks (2026-11-17)
     release_window: object | None = None              # release_earning.window.ReleaseWindow for THIS wearer (parity 13)
     protocol: object | None = None                    # protocol.service.ProtocolLadder for THIS wearer (parity 14)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
@@ -368,6 +369,12 @@ class TenantFactory:
 
     # ------------------------------------------------------------------ parity 10: feature switches and the 24-hour switch-off wait
 
+    # Leak audit (2026-11-17): the training plan and the workout tasks are the owner's own programme (his rack, weights, schedule and
+    # gear), so another wearer cannot switch them on until a plan of their own exists (roadmap D8).
+    # Temptations are not built for another wearer (their text names the owner's Deep Diver), so the switch must not pretend they are.
+    UNAVAILABLE = {"workouts": "Workouts aren't available for you yet: the training plan is set up per wearer and yours doesn't exist yet.",
+                   "temptations": "Temptations aren't available for you yet."}
+
     def _switches(self, runtime, service, cfg, core: CoreDatabase, wiring) -> None:
         """Owner, 2026-11-16 (multi-wearer first): the wearer's own `features` switches and G3's wait (photo check-ins, conditioning, the
         weekly review and every feature switch-off wait 24 hours while locked, then are asked about), over THIS tenant's database."""
@@ -378,6 +385,7 @@ class TenantFactory:
         from system.dm_actions import OptOutDm, discord_user_resolver
         window = window_config_from(cfg)
         features = Features(core)
+        features.unavailable = dict(self.UNAVAILABLE)
         opt_outs = OptOuts(core, locked=goal_targets_frozen(wiring.iron_contract),
                            local_clock=lambda t, c=window: c.local(t).strftime("%a %d %b %H:%M"))
         for key in SWITCHES:
@@ -501,10 +509,16 @@ class TenantFactory:
         """Owner, 2026-11-16 (multi-wearer first): the daily obedience task for an additional wearer, on THEIR confirmed paired lock through
         their spot checks' Chaster setup, missed ones through their own detector questions. Erotic tasks and workouts start OFF (their
         limits and gear are not known yet; `erotic tasks on` / `workouts on` start them) and the gear list starts empty (`gear add`).
-        The training plan is the owner's own programme: a wearer who switches workouts on gets it as it is until onboarding sets theirs."""
+        The training plan is the owner's own programme, so `workouts` cannot be switched on for another wearer (UNAVAILABLE)."""
         if runtime.features is None:
             return
         runtime.features.seed_off(runtime.wearer_user_id, self.SEEDED_OFF, self._shared.clock.now())
+        # Owner, 2026-11-17: their erotic tasks are written by the owner from their limits and approved by them one by one (custom_tasks/).
+        from custom_tasks.service import CustomTasks
+        custom = CustomTasks(core, user_id=runtime.wearer_user_id)
+        runtime.custom_tasks = custom
+        service.custom_tasks_command = custom.command
+        runtime.features.unavailable["erotic_tasks"] = custom.not_yet
         from advanced_mode.repository import AdvancedModeAdministration       # owner, 2026-11-16: a new wearer starts at Beginner
         AdvancedModeAdministration(core.db_path, core=core).start_new_wearer_at_beginner(now=self._shared.clock.now())
         if runtime.proof_checks is None or runtime.detectors is None or runtime.detectors.signals is None:
@@ -520,6 +534,7 @@ class TenantFactory:
             return
         obedience.default_owned = frozenset()
         obedience.generic_names = True                    # leak audit: pieces by role, and the wearer's own names in task texts
+        obedience.custom = custom                         # only their own approved tasks, never the owner's catalogue
         runtime.obedience = obedience
         service.gear_command = obedience.gear_command
         service.extra_task_command = obedience.extra_task_command
