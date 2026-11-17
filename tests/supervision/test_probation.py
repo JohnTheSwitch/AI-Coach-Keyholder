@@ -71,3 +71,36 @@ class TestHygiene:
         w.opening.state = SimpleNamespace(is_open=False, relocked_at=w.at + timedelta(minutes=45))
         w.service.end_early("wearer-1", ident, w.at + timedelta(minutes=46))
         assert w.q("SELECT COUNT(*) AS n FROM domain_events WHERE event_type = 'hygiene_opening.relocked_on_time'")[0]["n"] == 0
+
+
+class TestAVerifiedTaskEarnsLikeACheckIn:
+    """Owner, 2026-11-17: "should tasks and workouts verified in Chaster count toward ending supervision, the same as an answered check-in?
+    - yes"."""
+
+    def _handler(self, e):
+        from recovery_plan.repository import RecoveryPlanManager
+        from system.penalty_policy import make_penalty_engine
+        from system.startup import build_consumer_registry
+        registry = build_consumer_registry(e.tm, make_penalty_engine(e.core), RecoveryPlanManager(e.core.db_path, core=e.core))
+        [reg] = [r for r in registry._registrations["obedience.task_decided"] if r.consumer_name == "trust_manager"]
+        return reg.handler
+
+    def test_a_verified_task_raises_the_score_once(self, tmp_path) -> None:
+        from tests.supervision.test_checkins import Env, local, MON
+        from trust_manager.checkin_scoring import TASK_VERIFIED_WEIGHT
+        e = Env(tmp_path, score=0.6)
+        handler = self._handler(e)
+        before = e.tm.get_domain_state("d").score
+
+        def decided(task_id, status, outcome, domain="d", at=local(MON, 20)):
+            with e.core.transaction() as tx:
+                handler(tx, SimpleNamespace(payload={"obedience_task_id": task_id, "status": status, "outcome": outcome, "trust_domain": domain},
+                                            occurred_at=at))
+        decided("t1", "passed", "verified")
+        decided("t1", "passed", "verified", at=local(MON, 21))                     # once per task
+        decided("t2", "failed", "rejected")
+        decided("t3", "passed", "verified", domain=None)                           # no domain wired: earns nothing
+        assert TASK_VERIFIED_WEIGHT == CHECKIN_ANSWERED_WEIGHT
+        assert abs(e.tm.get_domain_state("d").score - (before + TASK_VERIFIED_WEIGHT)) < 1e-9
+        with e.core.transaction() as tx:
+            assert tx.fetch_one("SELECT COUNT(*) AS n FROM trust_evidence WHERE evidence_type = 'task_verified'")["n"] == 1

@@ -12,7 +12,7 @@ from trust_manager.models import EvidenceType
 
 __all__ = [
     "CHECKIN_MISSED_WEIGHT", "CHECKIN_MISSED_WEIGHTS", "CHECKIN_INSUFFICIENT_WEIGHT", "CHECKIN_EVIDENCE_CONFIDENCE", "checkin_evidence_spec",
-    "COMMITMENT_NOT_KEPT_WEIGHT", "CHECKIN_ANSWERED_WEIGHT", "HYGIENE_ON_TIME_WEIGHT", "COMMITMENT_KEPT_WEIGHT",
+    "COMMITMENT_NOT_KEPT_WEIGHT", "CHECKIN_ANSWERED_WEIGHT", "TASK_VERIFIED_WEIGHT", "HYGIENE_ON_TIME_WEIGHT", "COMMITMENT_KEPT_WEIGHT",
 ]
 
 # Owner-specified matrix (v0.39 section 11.9): the drop grows with the number of CONSECUTIVE missed check-ins.
@@ -25,6 +25,11 @@ CHECKIN_ANSWERED_WEIGHT = 0.02
 
 # Owner, 2026-11-13: hygiene Trust had no way up at all. A planned opening relocked on time earns the same.
 HYGIENE_ON_TIME_WEIGHT = 0.02
+
+# Owner, 2026-11-17 ("should tasks and workouts verified in Chaster count toward ending supervision, the same as an answered check-in?
+# - yes"): a daily obedience task, a training session or a board task verified by the Chaster community earns as much as an answered
+# check-in, in the check-in domain. Never backfilled (he answered plain "yes"), never for a task credited by the owner's own word.
+TASK_VERIFIED_WEIGHT = CHECKIN_ANSWERED_WEIGHT
 
 # An answer that stayed insufficient after the follow-up window.
 CHECKIN_INSUFFICIENT_WEIGHT = -0.01

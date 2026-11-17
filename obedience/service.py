@@ -688,6 +688,7 @@ class ObedienceTasks:
         # Owner, 2026-11-17: another wearer's erotic tasks are only the ones the owner wrote from their limits and they approved
         # (custom_tasks/); None for the owner, whose catalogue is his own.
         self.custom = None
+        self.trust_domain: str | None = None        # owner, 2026-11-17: the check-in domain a verified task earns in (None: it earns nothing)
 
     # ------------------------------------------------------------------ plan and start
 
@@ -1452,7 +1453,8 @@ class ObedienceTasks:
                               (status, outcome, _iso(now), surprise, row["id"])).rowcount
             if done:
                 write_event(tx, DomainEvent(event_type="obedience.task_decided", source_module="obedience", occurred_at=now,
-                                            payload={"obedience_task_id": row["id"], "status": status, "outcome": outcome}))
+                                            payload={"obedience_task_id": row["id"], "status": status, "outcome": outcome,
+                                                     "trust_domain": self.trust_domain}))
                 if text:
                     enqueue_in_transaction(tx, user_id=self.user_id, kind="obedience_task", dedupe_key=f"obedience:decided:{row['id']}", now=now,
                                            immediate=True, text=text)

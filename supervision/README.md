@@ -96,6 +96,9 @@ row, and one miss started it over.
   `checkin_answered` evidence of **+0.02** (as much as a first miss costs). The release check-in never earns; `answered_uncertain` neither.
 - **Hygiene:** hygiene Trust had no way up. A planned opening relocked on time emits `hygiene_opening.relocked_on_time` (exemptions), recorded as
   `hygiene_on_time` evidence of **+0.02**. A health opening or a late relock earns nothing.
+- **A task verified in Chaster** (owner, 2026-11-17): an obedience, training or board task the community verified is `task_verified`
+  evidence of **+0.02** in the check-in domain, like an answered check-in (`obedience.task_decided` -> trust_manager). Not backfilled; an
+  owner credit (`obedience-credit-training`) earns nothing.
 - The probation (7 clean days) and quiet-days (14 days, hygiene) exits built first that day were replaced the same day by short-term Trust,
   which gives the same timings from one rule. Their columns (`probation_days`, `probation_since`, `probation_proofs`, migration 056) and
   `recovery_streak` stay and are no longer used.

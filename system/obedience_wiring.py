@@ -84,6 +84,7 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                                        training=plan.day_task, training_tick=plan.tick,
                                        feature_on=(lambda f: True) if features is None else (lambda f: features.is_on(user_id, f))))
     tasks.training = plan                                     # work queue Q4c: the bot wires its `log` and its Monday buttons
+    tasks.trust_domain = domain                               # owner, 2026-11-17: a task verified in Chaster earns like an answered check-in
     plan.after_today = tasks.take_training_today              # bug fix 2026-11-16: "Today" switches a task that is only planned
     plan.today_open = tasks.today_open                        # `extra training` only while today's task is not out yet
     notes.append("Daily obedience tasks are active: one a day at a random moment in free time, shown in Chaster.")

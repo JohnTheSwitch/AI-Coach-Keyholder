@@ -22,7 +22,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from trust_manager.checkin_scoring import (
-    CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_KEPT_WEIGHT, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, PROOF_VERIFIED_WEIGHT, checkin_evidence_spec,
+    CHECKIN_EVIDENCE_CONFIDENCE, COMMITMENT_KEPT_WEIGHT, COMMITMENT_NOT_KEPT_WEIGHT, HYGIENE_ON_TIME_WEIGHT, TASK_VERIFIED_WEIGHT, PROOF_VERIFIED_WEIGHT, checkin_evidence_spec,
 )
 from trust_manager.goal_scoring import (
     GoalAssessmentDirection,
@@ -781,6 +781,14 @@ class TrustManager:
             tx, trust_domain=trust_domain, evidence_type=EvidenceType.HYGIENE_ON_TIME, source_entity_type="wear_exemption", source_entity_id=exemption_id,
             weight=HYGIENE_ON_TIME_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="hygiene_opening", now=now,
             explanation="A planned hygiene opening was relocked on time.",
+        )
+
+    def _record_task_verified_in_transaction(self, tx: Transaction, *, obedience_task_id: str, trust_domain: str, now: datetime) -> TrustEvidence | None:
+        """Owner, 2026-11-17: one positive piece of evidence per obedience task verified in Chaster (`obedience.task_decided`, passed and verified)."""
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=trust_domain, evidence_type=EvidenceType.TASK_VERIFIED, source_entity_type="obedience_task", source_entity_id=obedience_task_id,
+            weight=TASK_VERIFIED_WEIGHT, confidence=CHECKIN_EVIDENCE_CONFIDENCE, triggered_by="obedience_task", now=now,
+            explanation="A task was verified in Chaster.",
         )
 
     def _record_commitment_evidence_in_transaction(

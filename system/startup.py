@@ -148,6 +148,15 @@ def build_consumer_registry(
                                                              now=event.occurred_at)
 
     registry.register("hygiene_opening.relocked_on_time", "trust_manager", on_hygiene_on_time)
+
+    def on_obedience_task_decided(tx, event) -> None:
+        # Owner, 2026-11-17: a task verified in Chaster counts toward ending supervision like an answered check-in.
+        p = event.payload
+        if p.get("status") == "passed" and p.get("outcome") == "verified" and p.get("trust_domain"):
+            trust_manager._record_task_verified_in_transaction(tx, obedience_task_id=p["obedience_task_id"], trust_domain=p["trust_domain"],
+                                                               now=event.occurred_at)
+
+    registry.register("obedience.task_decided", "trust_manager", on_obedience_task_decided)
     registry.register("check_in.insufficient", "trust_manager", on_check_in_insufficient)
 
     def on_commitment_missed(tx, event) -> None:

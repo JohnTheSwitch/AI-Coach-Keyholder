@@ -162,6 +162,7 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D25 | **Health skips the exemption category** | A request whose reason he already gave is clearly a health need (code test, `is_health_or_safety`): no category buttons, filed as Health, straight to the length (owner, 2026-11-17) |
 | D26 | **Workouts and temptations for another wearer** | Their own training plan (JSON from the owner with Claude, `tenants training-propose`) and their own temptations (`task-propose --temptation`), each approved by the wearer before it can be given; `workouts on` / `temptations on` wait for that; migration 094 (owner, 2026-11-17: "make everything including workouts and temptations available - of course after setting up"); their own training days (`schedule`: leg day, upper-body day, one or two short-session days; owner: "There has to be option for different training days") |
 | D27 | **Everything available to another wearer, if they choose** | Task board (generic tasks), recovery tasks, lines on paper, weekly review, health uses (G2), Chaster status in conversation; new switches `task board` and `recovery tasks` (off at the start for a new wearer, on for the owner). Not possible: toy control (this PC's Bluetooth) (owner, 2026-11-17) |
+| D28 | **A verified task earns like an answered check-in** | An obedience, training or board task verified in Chaster: +0.02 in the check-in Trust domain (`task_verified`), so it counts toward ending supervision; not backfilled, never for an owner credit (owner, 2026-11-17: "yes") |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)
@@ -169,10 +170,6 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 - **Binding short session (proposed 2026-11-16, deferred by the owner: "not yet ... after I try it more"):** a short session he chose
   ("Today"/"Thursday" or `extra training`) becomes mandatory that day (missed = explain, unexplained = Warning + 20 lines); the default
   Thursday stays optional. Tightening, so buildable at once when he says so; raise again once he has done every session type.
-- **Asked 2026-11-16 ~19:00 Prague, answer pending (no longer held: the cooling-off is removed):** tasks and
-  workouts verified in Chaster count as good evidence in the check-in domain (like an answered check-in, +0.02), so short-term Trust sees
-  observed obedience, not only check-ins; and, if yes, the same credit backfilled for everything verified since Fri 13 Nov (the real lock).
-  Never extra check-ins on request (floodable). Effect now: supervision ends ~10-15 h sooner.
 - **The bot controls the Deep Diver** (built as D23, option 1; this note is history) through Intiface Central (Satisfyer support; first try the PC's built-in Bluetooth, the owner will
   test it (2026-11-15, Claude reminds him); he does not want to buy a dongle; the toy then pairs with the PC instead of the phone app): random teasing, a buzz when a task is overdue, edging the bot runs.
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first. Groundwork built 2026-11-16 (not wired):
