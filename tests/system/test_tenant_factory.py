@@ -713,3 +713,48 @@ class TestParity14MorningAndProtocol:
         from system.tenant_gateway import invitation_text
         text = invitation_text("Alex")
         assert "as the operator they can see them" in text and "beginner level" in text
+
+
+class TestEverythingAvailableIfTheyChoose:
+    """Owner, 2026-11-17: "Just make all the things available for other users, if they choose so, just customisable to their needs"."""
+
+    def test_health_uses_are_counted_and_recovery_tasks_start_off(self, w) -> None:
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        user = runtime.wearer_user_id
+        assert "health pattern" in [name for name, _ in runtime.extra_ticks]
+        assert not runtime.features.is_on(user, "recovery_tasks")
+        assert runtime.features.command(user, "recovery tasks on", NOW) in ("Recovery tasks is on again.", "Recovery tasks is on.")
+        runtime.cycle()                                                                              # the extra passes run without error
+
+    def test_with_spot_checks_recovery_tasks_and_paper_lines_are_wired(self, w) -> None:
+        from types import SimpleNamespace as NS
+        from system.tenant_factory import tenant_config
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        runtime.proof_checks = NS(user_id=runtime.wearer_user_id, chaster=NS(), get_open_check=lambda: None,
+                                  ports=NS(lock_id=lambda: None, halted=lambda: True, paused=lambda now: False, today=lambda now: now.date(),
+                                           local_clock=lambda t: "x", quiet_between=lambda a, b: False))
+        cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
+        runtime.extra_ticks.clear()
+        w.factory._recovery_paper_review(runtime, runtime.application_service, cfg, runtime.core, runtime.wiring, None)
+        names = [name for name, _ in runtime.extra_ticks]
+        assert "recovery tasks" in names and "recovery" in runtime.dm_actions
+        assert ("lines on paper" in names) == (runtime.lines is not None)
+
+    def test_the_task_board_is_generic_and_starts_off(self, w) -> None:
+        from types import SimpleNamespace as NS
+        from system.tenant_factory import tenant_config
+        from task_board.service import GENERIC_BOARD
+        t = w.wearer("Alex", "2000002")
+        runtime = w.factory.build(t.id)
+        runtime.proof_checks = NS(user_id=runtime.wearer_user_id, chaster=NS(), get_open_check=lambda: None,
+                                  ports=NS(lock_id=lambda: None, halted=lambda: True, paused=lambda now: False, today=lambda now: now.date(),
+                                           local_clock=lambda t: "x"))
+        runtime.detectors = NS(signals=NS(raise_signal=lambda **kw: True))
+        cfg = tenant_config(w.config, db_path=runtime.db_path, wearer_user_id=runtime.wearer_user_id)
+        w.factory._obedience(runtime, runtime.application_service, cfg, runtime.core)
+        board = runtime.dm_actions["board"]._tasks
+        assert "task board" in [name for name, _ in runtime.extra_ticks] and not runtime.features.is_on(runtime.wearer_user_id, "task_board")
+        assert all("Deep Diver" not in t.text and "air bike" not in t.text and "gym" not in t.text for t in GENERIC_BOARD)
+        assert board._pool is GENERIC_BOARD

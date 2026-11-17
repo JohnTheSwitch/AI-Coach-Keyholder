@@ -1083,7 +1083,7 @@ def main() -> None:
     if recovery_tasks is not None:
         from system.dm_actions import RecoveryDm
         bot.dm_actions["recovery"] = RecoveryDm(recovery_tasks, resolve_user=resolve_user, now=clock.now)
-        bot.recovery_tasks_loop = recovery_loop(recovery_tasks, clock)
+        bot.recovery_tasks_loop = recovery_loop(recovery_tasks, clock, enabled=lambda u=recovery_tasks.user_id: features.is_on(u, "recovery_tasks"))
         if peer.watch is not None:
             peer.watch.is_spot_check = (lambda obs, checks=proof_checks, rec=recovery_tasks:
                                         checks.is_check_task(obs.task_id) or rec.is_recovery_task(obs.task_id))
@@ -1106,7 +1106,8 @@ def main() -> None:
         application_service.gear_command = obedience.gear_command
         application_service.extra_task_command = obedience.extra_task_command     # `extra task` (owner, 2026-11-16)
         from system.obedience_wiring import build_task_board               # P1 (owner, 2026-11-15): the weekly task board
-        task_board = build_task_board(core, obedience, window_config_from(config))
+        task_board = build_task_board(core, obedience, window_config_from(config),
+                                      enabled=lambda u=obedience.user_id: features.is_on(u, "task_board"))
         bot.dm_actions["board"] = ObedienceDm(task_board, resolve_user=resolve_user, now=clock.now)
         bot.task_board_loop = task_board.loop(clock)
         training_plan = getattr(obedience, "training", None)

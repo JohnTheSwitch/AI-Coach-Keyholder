@@ -14,3 +14,7 @@ No study tasks (he doesn't study).
 
 Table `board_tasks` (migration 079), written only here. Events: `task_board.offered`, `task_board.taken`, `task_board.decided`. This module
 never calls Chaster; wiring: `system/obedience_wiring.build_task_board`.
+
+## Another wearer and the switch (owner, 2026-11-17)
+
+`task board` (features/): off, no new board is posted. Another wearer draws only from `GENERIC_BOARD` (nothing of the owner's) and their own approved erotic tasks; the switch starts off for them.

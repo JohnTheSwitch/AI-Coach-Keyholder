@@ -38,6 +38,8 @@ FEATURES: dict[str, tuple[str, str]] = {
     "morning_report": ("morning report", "the morning report"),
     "lines": ("lines", "lines for confirmed incidents and release lines"),
     "temptations": ("temptations", "temptation offers"),
+    "task_board": ("task board", "the weekly task board (chores, fitness, discipline and one erotic task, each with a reward)"),
+    "recovery_tasks": ("recovery tasks", "chores offered during a Penalty Window, each verified one taking 2 hours off it"),
     # Owner, 2026-11-16: only the relock after a release earned with a token; hygiene, exemption and relock-picture checks stay mandatory.
     "release_relock": ("release relock", "the 2-hour window to relock after a token release (off: no consequence for relocking later)"),
 }

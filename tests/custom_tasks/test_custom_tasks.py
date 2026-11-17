@@ -191,3 +191,30 @@ def test_only_their_approved_temptations_are_offered(tmp_path) -> None:
     assert tempt.press(user_id=U, row_id="o19", action="accept", now=NOW) == "Accepted: Edge for 10 minutes, no cumming. If you slip, you tell me."
     assert w.tasks._pick(date(2026, 11, 20), ALONE) == CUSTOM_FALLBACK
     assert "Temptation: " in custom.command(U, "tasks", NOW) or "(temptation)" in custom.command(U, "tasks", NOW)
+
+
+def test_their_own_training_days(tmp_path) -> None:
+    """Owner, 2026-11-17: "There has to be option for different training days"."""
+    w = World(tmp_path)
+    custom = _custom(w)
+    custom.propose_plan({**PLAN, "schedule": {"legs": "wednesday", "upper": "sat", "short": ["tuesday", "friday"]}}, NOW)
+    assert "Wednesday: the full leg day" in custom.command(U, "training plan", NOW) and "Tuesday or Friday" in custom.command(U, "training plan", NOW)
+    custom.command(U, "training plan approve", NOW)
+    plan = _plan(w, custom)
+    week = {date(2026, 11, 23) + timedelta(days=i): None for i in range(7)}                       # Mon 23 .. Sun 29 Nov
+    assert [d.weekday() for d in week if plan.day_task(d) is not None] == [2, 4, 5]               # Wed legs, Fri short (no answer), Sat upper
+    tuesday = datetime(2026, 11, 24, 15, 0, tzinfo=timezone.utc)
+    plan.tick(tuesday)
+    assert any("Today or Friday? No answer means Friday." in t for t in _notices(w))
+    plan.tick(datetime(2026, 11, 23, 15, 0, tzinfo=timezone.utc))                               # Monday: not their asking day
+    assert sum("Today or" in t for t in _notices(w)) == 1
+
+
+def test_a_bad_schedule_is_refused(tmp_path) -> None:
+    custom = _custom(World(tmp_path))
+    for schedule in ({"legs": "sat", "upper": "sat"}, {"short": ["mon", "tue", "wed"]}, {"legs": "someday"}, {"short": ["sat"]}):
+        try:
+            custom.propose_plan({**PLAN, "schedule": schedule}, NOW)
+        except ValueError:
+            continue
+        raise AssertionError(schedule)

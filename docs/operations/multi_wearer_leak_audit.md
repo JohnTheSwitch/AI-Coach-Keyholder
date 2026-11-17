@@ -14,8 +14,8 @@ schedule, and the prompt texts (`conversation_engine/`, `ai/persona_voices.py`, 
 | Training plan (rack, weights, Saturday/Sunday schedule, the vest) | `training/plan.py` | Off at the start (`workouts` seeded off) | **Closed in code (2026-11-17)**: never given to another wearer; `workouts on` waits for their own plan, written by the owner and approved by them (`custom_tasks/`) |
 | Workout tasks (pull-ups with the vest, push-ups on handles with the Deep Diver) | `obedience/service.py` `WORKOUTS` | Off with `workouts` | **Closed** with the training plan (the switch cannot be turned on) |
 | Temptations name the Deep Diver | `temptations/service.py` | Off at the start (`temptations` seeded off) | Owner: fixed (offered only while the Deep Diver is on his gear list). Additional wearers: only their own approved temptation texts (2026-11-17); the owner's text never |
-| Task board extras (push-ups with the Deep Diver) | `task_board/service.py` | Owner-only (not in parity yet) | Open when the board gets parity |
-| Toy control (Deep Diver over Intiface) | `toy_control/` | Not wired for anyone | n/a |
+| Task board extras (push-ups with the Deep Diver, his gym, air bike, treadmill, cable stack) | `task_board/service.py` | `GENERIC_BOARD` only, behind their `task board` switch (off at the start) | **Closed (2026-11-17)** |
+| Toy control (Deep Diver over Intiface) | `toy_control/` | Owner only: it runs over this PC's Bluetooth, so a remote wearer's toy cannot reach it | n/a |
 
 Rule for the operator (owner, 2026-11-16): a tester's settings are never loosened because they asked the operator directly; any loosening
 goes through the bot's own rules (the 24-hour wait), exactly as for the owner.

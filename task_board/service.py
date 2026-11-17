@@ -37,7 +37,7 @@ from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.task_board")
 
-__all__ = ["TaskBoard", "BoardTask", "BOARD", "OFFER_COUNT", "WEEK_CAP", "EROTIC_SHARE", "erotic_reward", "get_board_rewards"]
+__all__ = ["TaskBoard", "BoardTask", "BOARD", "GENERIC_BOARD", "OFFER_COUNT", "WEEK_CAP", "EROTIC_SHARE", "erotic_reward", "get_board_rewards"]
 
 OFFER_COUNT = 3
 WEEK_CAP = Decimal("0.10")
@@ -101,6 +101,13 @@ def erotic_reward(key: str, needs: frozenset) -> Decimal:
 
 _BY_KEY = {t.key: t for t in BOARD}
 
+# Owner, 2026-11-17 ("make all the things available for other users, if they choose so"): another wearer's board draws only from these,
+# which name nothing of the owner's (his gym corner, air bike, treadmill, cable stack, handles, Deep Diver); their erotic task comes from
+# their own approved tasks.
+GENERIC_KEYS = frozenset({"sink", "desk", "laundry", "vacuum", "sheets", "fridge", "shower", "windows", "wardrobe", "meal_prep", "steps",
+                          "stretch", "lines30", "kneel20", "no_social", "collar_evening"})
+GENERIC_BOARD: tuple[BoardTask, ...] = tuple(t for t in BOARD if t.key in GENERIC_KEYS)
+
 
 def get_board_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str) -> Decimal:
     """Read-only: the rewards of board tasks verified in [lo, hi) (the daily evaluation adds them to the token pool)."""
@@ -116,7 +123,7 @@ class TaskBoard:
                  start_task: Callable[[dict, datetime], str | None], task_state: Callable[[str], tuple[str, str | None] | None],
                  raise_missed: Callable[[dict, datetime], None], paused: Callable[[datetime], bool] = lambda now: False,
                  erotic_pick: Callable[[date], BoardTask | None] | None = None, training_today: Callable[[datetime], bool] = lambda now: False,
-                 rng: random.Random | None = None) -> None:
+                 rng: random.Random | None = None, pool: tuple[BoardTask, ...] = BOARD, enabled: Callable[[], bool] = lambda: True) -> None:
         """`start_task(row, now)` plans the Chaster part (returns the obedience task id, None when today's board slot is used);
         `task_state(obedience_id)` -> (status, outcome); `day_end(d)` = the end of that day's free time; `raise_missed(row, now)` asks him."""
         self._core = core
@@ -133,6 +140,8 @@ class TaskBoard:
         self._erotic = erotic_pick
         self._training_today = training_today
         self._rng = rng or random.SystemRandom()
+        self._pool = pool                     # owner, 2026-11-17: GENERIC_BOARD for another wearer
+        self._enabled = enabled               # the wearer's `task board` switch: off, no new board (taken tasks are still followed)
 
     # ------------------------------------------------------------------ the weekly board
 
@@ -146,13 +155,13 @@ class TaskBoard:
     def _post(self, now: datetime) -> None:
         day = self._today(now)
         monday = day - timedelta(days=day.weekday())
-        if day != monday or self._paused(now) or not self._free(now):
+        if day != monday or self._paused(now) or not self._free(now) or not self._enabled():
             return
         with self._core.transaction() as tx:
             if tx.fetch_one("SELECT 1 FROM board_tasks WHERE user_id = ? AND week = ?", (self.user_id, monday.isoformat())) is not None:
                 return
         owned = self._owned()
-        pool = [t for t in BOARD if t.needs <= owned]
+        pool = [t for t in self._pool if t.needs <= owned]
         picks = self._rng.sample(pool, min(OFFER_COUNT, len(pool)))
         if self._erotic is not None and picks and self._rng.random() < EROTIC_SHARE:
             erotic = self._erotic(monday)

@@ -18,7 +18,7 @@ from system.penalty_policy import make_penalty_engine
 
 logger = logging.getLogger("ai_coach_keyholder.system.recovery_wiring")
 
-__all__ = ["build_recovery_tasks", "recovery_loop"]
+__all__ = ["build_recovery_tasks", "recovery_loop", "recovery_tick"]
 
 
 def build_recovery_tasks(core, *, proof_checks, window_cfg, notes: list) -> RecoveryTasks | None:
@@ -44,11 +44,17 @@ def build_recovery_tasks(core, *, proof_checks, window_cfg, notes: list) -> Reco
     return tasks
 
 
-async def recovery_loop(tasks: RecoveryTasks, clock, *, interval_seconds: float = 120.0) -> None:
+def recovery_tick(tasks: RecoveryTasks, now, enabled=lambda: True) -> None:
+    """One pass: an open task is always followed to its end; a new one is offered only while the wearer's `recovery tasks` switch is on."""
+    tasks.poll(now)
+    if enabled():
+        tasks.offer(now)
+
+
+async def recovery_loop(tasks: RecoveryTasks, clock, *, interval_seconds: float = 120.0, enabled=lambda: True) -> None:
     while True:
         try:
-            await asyncio.to_thread(tasks.poll, clock.now())
-            await asyncio.to_thread(tasks.offer, clock.now())
+            await asyncio.to_thread(recovery_tick, tasks, clock.now(), enabled)
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -57,12 +57,16 @@ locked with the bot as keyholder, and neither the tenant halt nor the platform h
   `erotic tasks on` waits for the first approved task. See `custom_tasks/README.md`.
 - **Gear list empty**: `gear add <piece>` or `gear add <piece> as <their name>`; pieces are listed by role (`gear`).
 - **Workouts are their own** (owner, 2026-11-17): write their plan with Claude as JSON (format: `plan_from_json` in `training/plan.py`; the
-  schedule is the owner's: Saturday legs A/B, Sunday upper, one optional short session) and send it with `python -m cli tenants
+  days are theirs: `"schedule": {"legs": ..., "upper": ..., "short": [one or two days]}`, the owner's when left out) and send it with `python -m cli tenants
   training-propose <tenant> --file plan.json --owner-id <you>`. They read it with `training plan` and answer `training plan approve|reject`;
   `workouts on` waits for an approved plan, and rejecting it later stops the sessions at once. `log`, `extra training` and the Monday
   buttons work for them as for you.
 - **Temptations are their own** (owner, 2026-11-17): `python -m cli tenants task-propose <tenant> --temptation --text "..." [--needs a,b]
   --owner-id <you>`; approved like a task (`tasks`). `temptations on` waits for one; only approved ones fitting their gear are offered.
+- **Everything else, if they choose** (owner, 2026-11-17: "make all the things available for other users, if they choose so, just
+  customisable to their needs"): the weekly task board (generic tasks only; `task board on`), recovery tasks during a Penalty Window
+  (`recovery tasks on`), lines on paper as a Chaster task, the weekly review (`weekly review`), health uses counted (G2), and the read-only
+  Chaster status in conversation. Owner-only by nature: toy control (this PC's Bluetooth), tamper watch, update check, keyholder inbox.
 - Before inviting anyone, set up a small private Discord server with the bot and invite the wearer there: Discord lets a person DM a bot
   only when they share a server.
 

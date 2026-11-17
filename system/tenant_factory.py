@@ -116,6 +116,9 @@ class TenantRuntime:
     release_window: object | None = None              # release_earning.window.ReleaseWindow for THIS wearer (parity 13)
     protocol: object | None = None                    # protocol.service.ProtocolLadder for THIS wearer (parity 14)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
+    # Owner, 2026-11-17 ("make all the things available for other users, if they choose so"): further passes of THIS wearer, each
+    # (name, callable(now)); run once per cycle, a failure stays in its pass.
+    extra_ticks: list = field(default_factory=list)
 
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
         """The tenant's own application entry (the Discord routing of E3 calls it). It never sees another tenant's data."""
@@ -142,6 +145,11 @@ class TenantRuntime:
                 logger.exception("An obedience pass of tenant %s failed; will retry next cycle.", self.tenant_id)
         if self.temptations is not None:
             self.temptations.tick(self.clock.now())         # owner, 2026-11-17: never raises (it logs and carries on)
+        for name, tick in self.extra_ticks:
+            try:
+                tick(self.clock.now())
+            except Exception:
+                logger.exception("The %s pass of tenant %s failed; will retry next cycle.", name, self.tenant_id)
         if self.detectors is not None:
             try:
                 self.detectors.run(self.clock.now())        # parity 6: the wearer's own detectors and questions, in this tenant only
@@ -304,8 +312,13 @@ class TenantFactory:
         if coach_dm is not None:
             from conversation_engine.context_providers.coach_provider import CoachContextProvider
             providers = providers + (CoachContextProvider(read=coach_dm.context),)
+        tool_executor = None
+        if getattr(s.config, "chaster_llm_tools_enabled", False) and tokens is not None:
+            # Owner, 2026-11-17: the read-only `get_chaster_status` over THIS wearer's own Chaster connection, as the owner's.
+            from chaster.llm_tools import ChasterToolExecutor
+            tool_executor = ChasterToolExecutor(token_manager=tokens, lock_client=s.lock_client)
         engine = ConversationEngine(model=s.model, working_memory_reader=memory, working_memory_writer=memory,
-                                    queue=SubjectConversationQueue(), providers=providers, tool_executor=None,
+                                    queue=SubjectConversationQueue(), providers=providers, tool_executor=tool_executor,
                                     structured_output=s.config.conversation_structured_output, structured_sink=memory_sink,
                                     runtime_sink=wiring.telemetry_buffer.record)
         chat = self._chat_stack(tenant.id, path, core, wearer.id, connections)
@@ -360,6 +373,7 @@ class TenantFactory:
         self._lines(runtime, service, core, wiring, wearer.id)        # after the exemptions: owed lines hold an opening
         self._obedience(runtime, service, cfg, core)                  # after the spot checks and the detectors it needs
         self._temptations(runtime, cfg, core, wiring)                 # after obedience (their gear) and the switches
+        self._recovery_paper_review(runtime, service, cfg, core, wiring, coach_dm)   # after the spot checks, lines and obedience
         self._release_and_relock(runtime, cfg, core, wiring, tokens, connections)   # after the lines and the obedience it reads
         self._morning_and_protocol(runtime, service, cfg, core, wiring)           # after the exemptions, switches and obedience
         if dispatcher is not None:
@@ -508,7 +522,7 @@ class TenantFactory:
     # ------------------------------------------------------------------ parity 12: obedience tasks
 
     # A new wearer's limits and gear are unknown until onboarding asks (roadmap D8): these start off and the gear list starts empty.
-    SEEDED_OFF = ("erotic_tasks", "workouts", "temptations", "protocol")   # owner, 2026-11-16: the beginner level starts with these off
+    SEEDED_OFF = ("erotic_tasks", "workouts", "temptations", "protocol", "recovery_tasks", "task_board")   # owner, 2026-11-16: the beginner level starts with these off
 
     def _obedience(self, runtime, service, cfg, core: CoreDatabase) -> None:
         """Owner, 2026-11-16 (multi-wearer first): the daily obedience task for an additional wearer, on THEIR confirmed paired lock through
@@ -550,6 +564,12 @@ class TenantFactory:
         from system.dm_actions import TrainingDm
         service.training_log, service.training_extra = obedience.training.log, obedience.training.extra
         runtime.dm_actions["training"] = TrainingDm(obedience.training, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+        # Owner, 2026-11-17: the weekly task board, generic tasks only (nothing of the owner's), behind their `task board` switch (off at the start).
+        from system.obedience_wiring import build_task_board
+        features, wearer = runtime.features, runtime.wearer_user_id
+        board = build_task_board(core, obedience, window_config_from(cfg), generic=True, enabled=lambda: features.is_on(wearer, "task_board"))
+        runtime.extra_ticks.append(("task board", board.tick))
+        runtime.dm_actions["board"] = ObedienceDm(board, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
         if runtime.opt_outs is not None:
             from obedience.service import GEAR
             opt_outs = runtime.opt_outs
@@ -586,6 +606,59 @@ class TenantFactory:
 
         runtime.temptations = build_temptations(core, user_id=wearer, window_cfg=window_config_from(cfg), blocked=blocked, offer_text=offer_text)
         runtime.dm_actions["temptation"] = ObedienceDm(runtime.temptations, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+
+    # ------------------------------------------------------------------ recovery tasks, lines on paper, the weekly review, health uses
+
+    def _recovery_paper_review(self, runtime, service, cfg, core: CoreDatabase, wiring, coach_dm) -> None:
+        """Owner, 2026-11-17 ("make all the things available for other users, if they choose so, just customisable to their needs"), the
+        owner's own pieces for THIS wearer, over THIS database:
+        - verified recovery tasks during a Penalty Window (on their paired lock through their spot checks), behind their `recovery tasks`
+          switch (off at the start);
+        - lines on paper shown as a Chaster task, as the owner's (their `lines` switch applies);
+        - the weekly review (Sunday 19:00, their own `weekly review` switch), with the coach active;
+        - health uses counted (G2): from the 3rd in 7 days they are asked once a week; nothing is restricted."""
+        from datetime import time as dt_time
+        from system.composition import window_config_from
+        from system.dm_actions import RecoveryDm, discord_user_resolver
+        from system.health_pattern import HealthPattern, health_uses, week_label
+        from infrastructure.time_format import iso as iso_time
+        s, wearer, window = self._shared, runtime.wearer_user_id, window_config_from(cfg)
+        resolve = discord_user_resolver(core)
+        health = HealthPattern(core, user_id=wearer, iso_week=week_label(window.local), paused=lambda now: wiring.vacation.is_paused(wearer, now))
+        runtime.extra_ticks.append(("health pattern", health.tick))
+        recovery = None
+        checks = runtime.proof_checks
+        if checks is not None:
+            from system.recovery_wiring import build_recovery_tasks, recovery_tick
+            recovery = build_recovery_tasks(core, proof_checks=checks, window_cfg=window, notes=runtime.notes)
+            if recovery is not None:
+                enabled = (lambda: runtime.features.is_on(wearer, "recovery_tasks")) if runtime.features is not None else (lambda: False)
+                runtime.extra_ticks.append(("recovery tasks", lambda now, r=recovery, e=enabled: recovery_tick(r, now, e)))
+                runtime.dm_actions["recovery"] = RecoveryDm(recovery, resolve_user=resolve, now=s.clock.now)
+            if runtime.lines is not None:
+                from lines.service import PaperPort
+                ob = runtime.obedience
+                runtime.lines.paper = PaperPort(
+                    chaster=checks.chaster, lock_id=checks.ports.lock_id, halted=checks.ports.halted,
+                    slot_taken=lambda pc=checks, rt=recovery, ob=ob: (
+                        pc.get_open_check() is not None or (rt is not None and rt.has_open_task())
+                        or (ob is not None and (ob.has_open_task() or ob.due_now(s.clock.now())))))
+                runtime.extra_ticks.append(("lines on paper", runtime.lines.paper_tick))
+        from system.weekly_review_wiring import build_weekly_review
+        review = build_weekly_review(core, coach_dm=coach_dm, proof_checks=checks, vacation=wiring.vacation, window_cfg=window, notes=runtime.notes)
+        if review is None:
+            return
+        service.weekly_review = review
+        runtime.extra_ticks.append(("weekly review", review.run))
+        midnight = lambda d: window.to_utc(d, dt_time(0, 0))
+        review.health_between = lambda start, end: health_uses(core, wearer, midnight(start), midnight(end))
+        if recovery is not None:
+            review.recovery_between = recovery.get_tasks_between
+        if runtime.lines is not None:
+            lines = runtime.lines
+            review.lines_between = lines.get_lines_between
+            review.lines_owed = lambda: lines.open_lines(wearer)
+            review.promises_between = lambda start, end: lines.get_promises_between(iso_time(midnight(start)), iso_time(midnight(end)))
 
     # ------------------------------------------------------------------ parity 11: lines
 
@@ -700,7 +773,7 @@ class TenantFactory:
     def _exemptions(self, tenant_id: str, path: Path, core: CoreDatabase, cfg, db, wearer_id: str):
         """Same rules as the owner's, in THIS wearer's database: the judge decides requests (no keyholder button), hygiene openings follow the
         wearer's own hygiene Trust, and an opening acts only on the tenant's CONFIRMED paired lock after the owner cleared this tenant's execution
-        halt. The relock picture, lines and recovery tasks stay owner-only (owner, 2026-11-14). (None, None) when exemptions are off."""
+        halt. The relock picture, lines and recovery tasks have their own wiring (recovery tasks for other wearers since 2026-11-17). (None, None) when exemptions are off."""
         s = self._shared
         if not getattr(s.config, "enable_exemptions", False):
             return None, None

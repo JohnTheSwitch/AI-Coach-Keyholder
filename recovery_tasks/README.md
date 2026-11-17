@@ -18,3 +18,7 @@ photo of the result with Chaster's code, checked by the community. **Each passed
 
 Wiring: `system/recovery_wiring.py` (same Chaster port and lock as the spot checks), buttons through `system/dm_actions.RecoveryDm`
 (scope `recovery`). Table: `recovery_chaster_tasks`. Events: `recovery_tasks.offered`, `.assigned`, `.passed`, `.closed`.
+
+## Switches (owner, 2026-11-17)
+
+`recovery tasks` (features/): off, no new task is offered (an open one is still followed). On for the owner; off at the start for another wearer.

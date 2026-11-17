@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 __all__ = ["Exercise", "EXERCISES", "SESSIONS", "ALIASES", "WARM_UP", "Plan", "OWNER_PLAN", "SESSION_KEYS", "UNITS", "plan_from_json",
-           "plan_summary"]
+           "plan_summary", "DAY_NAMES"]
 
 
 @dataclass(frozen=True)
@@ -84,10 +84,12 @@ ALIASES: dict[str, str] = {
 
 # ---------------------------------------------------------------------------- one plan per wearer (owner, 2026-11-17)
 # Another wearer's plan is written by the owner with Claude (`python -m cli tenants training-propose`) and approved by the wearer before it
-# can be given (custom_tasks/). It fills the same six sessions, so the schedule is the owner's: Saturday legs (A and B alternating), Sunday
-# upper body, one optional short session on Monday or Thursday.
+# can be given (custom_tasks/). It fills the same six sessions. Its days are its own (owner, 2026-11-17: "There has to be option for
+# different training days"): one full leg day (A and B alternating), one full upper-body day and one or two candidate days for the optional
+# short session (with two, the wearer is asked on the first which one; no answer means the second). The owner's: Saturday, Sunday, Mon/Thu.
 
 SESSION_KEYS = ("legs_a", "legs_a_short", "legs_b", "legs_b_short", "upper", "upper_short")
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 UNITS = ("kg", "kg/hand", "plates", "bw")
 
 
@@ -100,6 +102,9 @@ class Plan:
     proof: str = "Photo of the gym only."                # the Chaster photo after a session (voters see it)
     return_squat: float | None = None                    # the owner's plan: squat 95 kg on the first leg days back
     harder_bw: str = "slower"                            # how to make body-weight work harder once every set is at the top
+    legs_day: int = 5                                    # weekday (Monday 0): the full leg day
+    upper_day: int = 6                                   # the full upper-body day
+    short_days: tuple = (0, 3)                           # the optional short session's candidate days, in week order (one or two)
 
 
 OWNER_PLAN = Plan(EXERCISES, SESSIONS, WARM_UP, ALIASES, return_squat=95.0, harder_bw="slower, or the vest")
@@ -142,7 +147,22 @@ def plan_from_json(data: dict) -> Plan:
     proof = str(data.get("proof") or "Photo of the gym only.")
     if len(proof) > 80:
         raise ValueError("proof must be short (at most 80 characters)")
-    return Plan(exercises, sessions, warm_up, aliases, proof=proof)
+    schedule = data.get("schedule") or {}
+    legs, upper = _day(schedule.get("legs", "saturday")), _day(schedule.get("upper", "sunday"))
+    short = tuple(sorted(_day(d) for d in (schedule.get("short") or ["monday", "thursday"])))
+    if not 1 <= len(short) <= 2 or len(set(short)) != len(short):
+        raise ValueError("schedule.short must name one or two different days")
+    if len({legs, upper, *short}) != 2 + len(short):
+        raise ValueError("schedule: the leg day, the upper-body day and the short-session days must all be different")
+    return Plan(exercises, sessions, warm_up, aliases, proof=proof, legs_day=legs, upper_day=upper, short_days=short)
+
+
+def _day(name) -> int:
+    word = str(name).strip().lower()
+    for i, day in enumerate(DAY_NAMES):
+        if word in (day.lower(), day.lower()[:3]):
+            return i
+    raise ValueError(f"unknown day '{name}' (use monday ... sunday)")
 
 
 def _load(ex: Exercise, load: float) -> str:
@@ -151,8 +171,11 @@ def _load(ex: Exercise, load: float) -> str:
 
 def plan_summary(plan: Plan) -> str:
     """The plan as the wearer reads it before approving."""
-    lines = ["Saturday: the full leg day (A and B alternate). Sunday: the full upper-body day. One short session on Monday or Thursday "
-             "(you choose; skipping it costs nothing). Full sessions are mandatory. Proof in Chaster after each: " + plan.proof]
+    short = (f"One short session on {DAY_NAMES[plan.short_days[0]]} or {DAY_NAMES[plan.short_days[1]]} (you choose on "
+             f"{DAY_NAMES[plan.short_days[0]]}; skipping it costs nothing)" if len(plan.short_days) == 2 else
+             f"One short session on {DAY_NAMES[plan.short_days[0]]} (skipping it costs nothing)")
+    lines = [f"{DAY_NAMES[plan.legs_day]}: the full leg day (A and B alternate). {DAY_NAMES[plan.upper_day]}: the full upper-body day. "
+             f"{short}. Full sessions are mandatory. Proof in Chaster after each: " + plan.proof]
     for key in SESSION_KEYS:
         title, keys = plan.sessions[key]
         lines.append(f"**{title}**")

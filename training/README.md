@@ -34,4 +34,4 @@ and it stays one of the week's planned sessions for the week bonus.
 
 ## Another wearer (owner, 2026-11-17)
 
-`TrainingPlan(plan=...)` takes a `training.plan.Plan` or a callable returning one. The owner's is `OWNER_PLAN`; another wearer gets only their own approved plan (`custom_tasks/`, `plan_from_json`), and with none there is no session, no `log` and no `extra training`. The schedule is the same for everyone.
+`TrainingPlan(plan=...)` takes a `training.plan.Plan` or a callable returning one. The owner's is `OWNER_PLAN`; another wearer gets only their own approved plan (`custom_tasks/`, `plan_from_json`), and with none there is no session, no `log` and no `extra training`. Its days are its own (`Plan.legs_day`, `upper_day`, `short_days`; JSON `schedule`).

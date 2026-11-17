@@ -7,6 +7,7 @@ session becomes that day's obedience task (obedience/service.py asks `day_task`)
 - Saturday: full leg day, A and B alternating (whichever he did not do last).  Sunday: full upper body.
 - One short session on Monday or Thursday: legs in an odd ISO week, upper body in an even one. On Monday morning the bot asks which day;
   no answer means Thursday. Never legs on Friday or Sunday (the schedule never puts them there).
+- Another wearer's plan has its own days (owner, 2026-11-17): `Plan.legs_day`, `upper_day`, `short_days`; the same rules on those days.
 - Full sessions are mandatory (a missed one goes the obedience way: asked to explain, unexplained = a Warning and 20 lines). The short
   session is optional ("skip it and continue at the weekend"): missing it costs nothing.
 - Weights: his current weight per exercise (`training_weights`, the plan's start weight until he logs). The first two leg days run the
@@ -34,7 +35,7 @@ from infrastructure.decision_log import decision
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
 from notifications.queue import enqueue_in_transaction
-from training.plan import OWNER_PLAN, Exercise, Plan, _load
+from training.plan import DAY_NAMES, OWNER_PLAN, Exercise, Plan, _load
 
 logger = logging.getLogger("ai_coach_keyholder.training")
 
@@ -133,14 +134,16 @@ class TrainingPlan:
         return self._session_for(day) is not None
 
     def _session_for(self, day: date) -> str | None:
-        if self.plan is None:
+        plan = self.plan
+        if plan is None:
             return None
         weekday = day.weekday()
-        if weekday == 5:
+        if weekday == plan.legs_day:
             return self._next_legs(day)
-        if weekday == 6:
+        if weekday == plan.upper_day:
             return "upper"
-        if weekday in (0, 3) and self._short_day(day) == ("mon" if weekday == 0 else "thu"):
+        if weekday in plan.short_days and (len(plan.short_days) == 1
+                                           or self._short_day(day) == ("mon" if weekday == plan.short_days[0] else "thu")):
             legs_week = day.isocalendar()[1] % 2 == 1
             return f"{self._next_legs(day)}_short" if legs_week else "upper_short"
         kind = self._moved_on(day) or self._extra_on(day)
@@ -181,7 +184,7 @@ class TrainingPlan:
                                      "AND session_key LIKE 'legs_%'", (self.user_id, day.isoformat()))["d"]
         if row is not None and row["extra_date"]:
             return OutgoingMessage(text="You've had your extra session this week already. One a week.")
-        legs_ok = day.weekday() not in (4, 6) and (last_legs is None or (day - date.fromisoformat(last_legs)).days >= 2)
+        legs_ok = day.weekday() not in ((self.plan.legs_day - 1) % 7, self.plan.upper_day) and (last_legs is None or (day - date.fromisoformat(last_legs)).days >= 2)
         kind = "upper" if day.isocalendar()[1] % 2 == 1 else "legs"        # the other kind than the week's short session
         if kind == "legs" and not legs_ok:
             kind = "upper"
@@ -266,9 +269,10 @@ class TrainingPlan:
     # ------------------------------------------------------------------ Monday: which day is the short session?
 
     def tick(self, now: datetime) -> None:
-        day = self._today(now)
-        if day.weekday() != 0 or not self._free_time(now):
+        day, plan = self._today(now), self.plan
+        if plan is None or len(plan.short_days) < 2 or day.weekday() != plan.short_days[0] or not self._free_time(now):
             return
+        later = DAY_NAMES[plan.short_days[1]]
         week = f"{day.isocalendar()[0]}-W{day.isocalendar()[1]:02d}"
         row_id = str(uuid.uuid4())
         kind = "legs" if day.isocalendar()[1] % 2 == 1 else "upper body"
@@ -278,10 +282,10 @@ class TrainingPlan:
                               (row_id, self.user_id, week, _iso(now))).rowcount:
                 return False
             enqueue_in_transaction(tx, user_id=self.user_id, kind="training", dedupe_key=f"training:week:{week}", now=now,
-                                   text=(f"This week's short session is {kind}. Today or Thursday? No answer means Thursday. "
+                                   text=(f"This week's short session is {kind}. Today or {later}? No answer means {later}. "
                                          "Time for one more this week? Write `extra training` on that day."),
                                    actions=(ActionSpec(action_id=f"training:mon:{row_id}", label="Today"),
-                                            ActionSpec(action_id=f"training:thu:{row_id}", label="Thursday")))
+                                            ActionSpec(action_id=f"training:thu:{row_id}", label=later)))
             return True
 
         if apply_transition(self._core, write=write):
@@ -306,7 +310,9 @@ class TrainingPlan:
                 self.after_today(now)
             except Exception:
                 logger.exception("Today's task could not be switched to the short session.")
-        return "Today, then: it comes in your free time." if action == "mon" else "Thursday, then."
+        plan = self.plan
+        later = DAY_NAMES[plan.short_days[-1]] if plan is not None else "Thursday"
+        return "Today, then: it comes in your free time." if action == "mon" else f"{later}, then."
 
     # ------------------------------------------------------------------ logging sets
 

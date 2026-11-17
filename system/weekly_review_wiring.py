@@ -1,8 +1,8 @@
 """
 system/weekly_review_wiring.py
 
-Wires the weekly review (roadmap slice 5) to its readers: the coach desk's commitments, the spot checks and the daily evaluations. The single
-wearer only, like the coach it reports on; tenants are not wired.
+Wires the weekly review (roadmap slice 5) to its readers: the coach desk's commitments, the spot checks and the daily evaluations. Also built for
+another wearer with the coach active (owner, 2026-11-17; `TenantFactory._recovery_paper_review`).
 """
 
 from __future__ import annotations

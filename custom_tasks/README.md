@@ -29,12 +29,13 @@ Tables `wearer_limits` and `custom_tasks` (migration 093), written only here. Ev
 
 - **Training plan:** `python -m cli tenants training-propose <tenant> --file plan.json --owner-id <you>`. The JSON fills the owner's six
   sessions (`legs_a`, `legs_a_short`, `legs_b`, `legs_b_short`, `upper`, `upper_short`) with the wearer's own exercises, start weights and
-  a proof line; `training.plan.plan_from_json` checks it. The schedule stays the owner's (Saturday legs, Sunday upper, one optional short
-  session on Monday or Thursday). The wearer reads it with `training plan` and answers `training plan approve` / `training plan reject`.
+  a proof line; `training.plan.plan_from_json` checks it. The wearer reads it with `training plan` and answers `training plan approve` / `training plan reject`.
   A newer plan replaces the approved one only once approved; rejecting the approved plan stops the sessions at once. `workouts on` waits
   for an approved plan (`plan_not_yet`). Table `wearer_training_plans` (migration 094).
 - **Temptations:** `python -m cli tenants task-propose <tenant> --temptation --text "..."`: a `custom_tasks` row with `kind = 'temptation'`,
   approved like a task, never drawn as a daily task. `temptations on` waits for one (`temptation_not_yet`); an offer uses only an approved
   one whose `needs` fit their gear, and the offered text is kept on the offer (`temptation_offers.text`).
-- Not built: a different weekly schedule per wearer.
+- **Their own days** (owner, 2026-11-17: "There has to be option for different training days"): `"schedule": {"legs": "wednesday",
+  "upper": "saturday", "short": ["tuesday", "friday"]}` (one or two short-session days; with two they are asked on the first which one,
+  no answer means the second). Left out, the owner's days apply.
 

@@ -89,6 +89,10 @@ hardening and an end-to-end isolation audit test. Operator runbook: `docs/operat
     owner's programme, so they never get it: `workouts on` waits for a plan of their own, written by the owner and approved by them, and
     `temptations on` for a temptation of their own approved the same way (2026-11-17; `custom_tasks/`, `TenantFactory._temptations`). Their erotic
     tasks are only their own, written by the owner from their limits and approved by them (2026-11-17, `custom_tasks/`).
+12b. **Everything else, if they choose (done 2026-11-17).** `TenantFactory._recovery_paper_review` and `_obedience`: recovery tasks
+    (`recovery_tasks`, seeded off), lines on paper, the weekly review (with the coach), health uses counted (G2), the task board
+    (`GENERIC_BOARD`, `task_board` seeded off) and the read-only Chaster tool over their own connection. Extra passes run from
+    `TenantRuntime.extra_ticks` in the tenant cycle.
 13. **Earning the release, the release window and the relock picture (done 2026-11-16).** `TenantFactory._release_and_relock`: a token
     waits for the day's verified training session or the release lines; with the wearer's own Chaster connection, the 2-hour release
     window (behind their `release relock` switch, ticked by the tenant cycle) and the relock picture after a planned hygiene opening
