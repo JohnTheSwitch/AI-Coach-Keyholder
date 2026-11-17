@@ -137,3 +137,9 @@ pauses it with every other check-in. Ordinary check-ins wait while it is open (o
   N minutes..." at once; before, the follow-up window was invisible.
 - **Reads for "what holds my release"** (`system/release_status.py`, Proposal A): `get_active_domains()` and `get_estimated_end()` (about
   when short-term Trust would reach 0.60 if every check-in is answered; a rough guide, never shown as a score).
+
+## The test lock does not count (owner, 2026-11-17)
+
+Check-ins missed or answered too thinly before Fri 13 Nov 00:00 Prague (`supervision.models.SERIOUS_FROM`, while the lock was still a test)
+are left out of short-term Trust (`misses_from` in `trust_manager/short_term.py`, passed by `system/composition.py`). They stay in the
+record and in long-term Trust; incidents from that time still count. Raised 2026-11-16 10:50, held 24 hours (cooling-off), confirmed.

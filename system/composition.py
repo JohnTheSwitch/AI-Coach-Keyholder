@@ -33,7 +33,7 @@ from supervision.checkin_evaluator import evaluate_check_in
 from supervision.checkins import CheckInSender, CheckInService, SendOutcome
 from supervision.escalation import RULE_GROUP_ID as ESCALATION_RULE_GROUP
 from supervision.escalation import CheckInEscalation
-from supervision.models import CHECK_IN_DOMAIN_WINDOW
+from supervision.models import CHECK_IN_DOMAIN_WINDOW, SERIOUS_FROM
 from system.owner_lock import OwnerLockResolver, is_auto
 from supervision.repository import SupervisionService
 from system.daily_evaluation import DailyEvaluationTask
@@ -338,7 +338,8 @@ def build_rules_and_execution(
         # Owner, 2026-11-13: derived from short-term Trust; the check-in domain looks back one week, any other two.
         check_in_domain = getattr(config, "check_in_trust_domain", None)
         out.supervision = SupervisionService(config.db_path, core=core,
-                                             windows={check_in_domain: CHECK_IN_DOMAIN_WINDOW} if check_in_domain else None)
+                                             windows={check_in_domain: CHECK_IN_DOMAIN_WINDOW} if check_in_domain else None,
+                                             misses_from=SERIOUS_FROM)
         out.notes.append("Proactive supervision state enabled (derived from short-term Trust).")
 
     if want_check_ins:

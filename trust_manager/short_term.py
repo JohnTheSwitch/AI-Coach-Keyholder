@@ -39,6 +39,16 @@ __all__ = ["DEFAULT_WINDOW", "EXCLUDED_TYPES", "SELF_REPORTED_TYPES", "ShortTerm
 DEFAULT_WINDOW = timedelta(days=14)
 SELF_REPORTED_TYPES = frozenset({EvidenceType.COMMITMENT_KEPT.value, EvidenceType.COMMITMENT_NOT_KEPT.value})
 EXCLUDED_TYPES = frozenset({EvidenceType.CLEAN_STREAK_BONUS.value}) | SELF_REPORTED_TYPES
+# Owner, 2026-11-17 (asked 2026-11-16 10:50, held 24 h, confirmed): check-ins missed or thin before he took the lock seriously do not count
+# here; `misses_from` (the composition passes supervision.models.SERIOUS_FROM) is the first moment they count. They stay in the record and in
+# the long-term score.
+_MISS_TYPES = (EvidenceType.CHECKIN_MISSED.value, EvidenceType.CHECKIN_INSUFFICIENT.value)
+
+
+def _misses_clause(misses_from: datetime | None) -> tuple[str, tuple]:
+    if misses_from is None:
+        return "", ()
+    return " AND NOT (evidence_type IN (?, ?) AND created_at < ?)", (*_MISS_TYPES, _iso(misses_from))
 
 
 @dataclass(frozen=True)
@@ -74,12 +84,12 @@ def short_term_from(rows: Iterable[tuple[str, float, float]], window: timedelta 
 
 
 def determine_short_term_trust_in_transaction(tx: Transaction, domain_id: str, *, now: datetime,
-                                              window: timedelta = DEFAULT_WINDOW) -> ShortTermTrust:
+                                              window: timedelta = DEFAULT_WINDOW, misses_from: datetime | None = None) -> ShortTermTrust:
     """The narrow read for other modules (Supervision reads it inside its outbox handler's transaction). Read-only."""
     rows = tx.fetch_all(
         "SELECT evidence_type, raw_weight, evidence_confidence, source_entity_type, source_entity_id FROM trust_evidence "
-        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?",
-        (domain_id, _iso(now - window), _iso(now)))
+        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?" + _misses_clause(misses_from)[0],
+        (domain_id, _iso(now - window), _iso(now), *_misses_clause(misses_from)[1]))
     return short_term_from(_net_corrections(rows), window)
 
 
@@ -106,7 +116,8 @@ def _net_corrections(rows) -> list[tuple[str, float, float]]:
 
 
 def determine_recovery_estimate_in_transaction(tx: Transaction, domain_id: str, *, now: datetime, window: timedelta, threshold: float,
-                                               future_answers: Iterable[datetime], good_weight: float) -> datetime | None:
+                                               future_answers: Iterable[datetime], good_weight: float,
+                                               misses_from: datetime | None = None) -> datetime | None:
     """Owner, 2026-11-16 (Proposal A): when would short-term Trust reach `threshold` if every check-in at `future_answers` is answered?
     The first instant (an answer, or a midnight-UTC daily evaluation, the two moments supervision is re-evaluated) at which it would.
     None when it would not within the answers given. Read-only; a rough guide for the wearer ("about"), never a promise."""
@@ -115,7 +126,8 @@ def determine_recovery_estimate_in_transaction(tx: Transaction, domain_id: str, 
         return None
     rows = tx.fetch_all(
         "SELECT evidence_type, raw_weight, evidence_confidence, source_entity_type, source_entity_id, created_at FROM trust_evidence "
-        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?", (domain_id, _iso(now - window), _iso(now)))
+        "WHERE domain_id = ? AND created_at > ? AND created_at <= ?" + _misses_clause(misses_from)[0],
+        (domain_id, _iso(now - window), _iso(now), *_misses_clause(misses_from)[1]))
     past = [(dict(r), datetime.fromisoformat(str(r["created_at"]).replace("Z", "+00:00"))) for r in rows]
     added = [({"evidence_type": EvidenceType.CHECKIN_ANSWERED.value, "raw_weight": good_weight, "evidence_confidence": 1.0,
                "source_entity_type": "projection", "source_entity_id": f"p{i}"}, t) for i, t in enumerate(future)]

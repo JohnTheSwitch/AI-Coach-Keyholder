@@ -13,11 +13,11 @@ switch them back on (a weekly swing).
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 
 __all__ = [
-    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_PIECES_TO_ENTER", "CHECK_IN_DOMAIN_WINDOW", "OTHER_DOMAIN_WINDOW", "decide",
+    "ENTER_BELOW", "EXIT_AT_OR_ABOVE", "MIN_PIECES_TO_ENTER", "CHECK_IN_DOMAIN_WINDOW", "OTHER_DOMAIN_WINDOW", "SERIOUS_FROM", "decide",
     "TrustLevel", "trust_level", "check_ins_per_day", "hygiene_interval_days",
 ]
 
@@ -28,6 +28,9 @@ EXIT_AT_OR_ABOVE = 0.60              # supervision ends when short-term Trust >=
 # pieces a week and looks back two. These keep the timings agreed before: about a week of answered check-ins, two quiet weeks for hygiene.
 CHECK_IN_DOMAIN_WINDOW = timedelta(days=7)
 OTHER_DOMAIN_WINDOW = timedelta(days=14)
+# Owner, 2026-11-17 (raised 16 Nov 10:50, held 24 h, confirmed): the check-ins missed while the lock was a test (up to Thu 12 Nov, Prague) do
+# not count toward supervision. They stay in the record and in long-term Trust. Fri 13 Nov 00:00 Prague.
+SERIOUS_FROM = datetime(2026, 11, 12, 23, 0, tzinfo=timezone.utc)
 
 
 def decide(active: bool, short_term: float | None, pieces: int) -> str | None:

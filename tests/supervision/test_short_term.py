@@ -206,6 +206,31 @@ class TestTheLiveHistory:
         assert out is not None and 4 <= out <= 7, out
 
 
+class TestTheTestLockDoesNotCount:
+    """Owner, 2026-11-17: check-ins missed before he took the lock seriously (up to Thu 12 Nov Prague) never count toward supervision."""
+
+    def test_misses_before_the_cut_off_are_left_out_and_later_ones_count(self, core) -> None:  # noqa: F811
+        from trust_manager.short_term import determine_short_term_trust_in_transaction
+        cut = datetime(2026, 11, 12, 23, 0, tzinfo=timezone.utc)
+        bad(core, cut - timedelta(hours=1))
+        put(core, -0.01, cut - timedelta(hours=2), "checkin_insufficient", "d")
+        put(core, -0.05, cut - timedelta(hours=3), "incident_impact", "d")             # an incident is not a missed check-in: it stays
+        good(core, cut + timedelta(hours=10))
+        bad(core, cut + timedelta(hours=12))
+        now = cut + timedelta(days=1)
+        with core.transaction() as tx:
+            left = determine_short_term_trust_in_transaction(tx, "d", now=now, window=CHECK_IN_DOMAIN_WINDOW, misses_from=cut)
+            all_ = determine_short_term_trust_in_transaction(tx, "d", now=now, window=CHECK_IN_DOMAIN_WINDOW)
+        assert left.pieces == 3 and all_.pieces == 5
+
+    def test_the_live_history_no_longer_starts_it(self, core) -> None:  # noqa: F811
+        svc = SupervisionService(core.db_path, core=core, windows={"d": CHECK_IN_DOMAIN_WINDOW},
+                                 misses_from=datetime(2026, 11, 12, 23, 0, tzinfo=timezone.utc))
+        for at, weight in TestTheLiveHistory.MISSES[:-1]:
+            bad(core, datetime.fromisoformat(at).replace(tzinfo=timezone.utc), weight=weight)
+        assert evaluate(core, svc, datetime(2026, 11, 13, tzinfo=timezone.utc)) is None
+
+
 class TestWiring:
     def test_the_check_in_domain_gets_the_week(self, core) -> None:  # noqa: F811
         from system.composition import build_rules_and_execution
@@ -213,6 +238,8 @@ class TestWiring:
                               check_in_trust_domain="routine")
         svc = build_rules_and_execution(cfg, core).supervision
         assert svc.window_for("routine") == CHECK_IN_DOMAIN_WINDOW and svc.window_for("hygiene") == OTHER_DOMAIN_WINDOW
+        from supervision.models import SERIOUS_FROM
+        assert svc._misses_from == SERIOUS_FROM == datetime(2026, 11, 12, 23, 0, tzinfo=timezone.utc)
 
     def test_the_daily_evaluation_is_the_clock(self) -> None:
         text = (ROOT / "system" / "startup.py").read_text(encoding="utf-8")

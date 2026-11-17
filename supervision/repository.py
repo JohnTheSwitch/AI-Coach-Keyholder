@@ -42,12 +42,14 @@ DAILY_EVENT_TYPE = "daily_evaluation.completed"
 
 
 class SupervisionService:
-    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, windows: Mapping[str, timedelta] | None = None) -> None:
+    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None, windows: Mapping[str, timedelta] | None = None,
+                 misses_from: datetime | None = None) -> None:
         """`windows`: the short-term window per domain (the composition gives the check-in domain CHECK_IN_DOMAIN_WINDOW); any other domain
         uses OTHER_DOMAIN_WINDOW."""
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
         self._windows = dict(windows or {})
+        self._misses_from = misses_from          # owner, 2026-11-17: check-in misses before this never count toward supervision
 
     def window_for(self, domain_id: str) -> timedelta:
         return self._windows.get(domain_id, OTHER_DOMAIN_WINDOW)
@@ -80,7 +82,7 @@ class SupervisionService:
 
     def evaluate_in_transaction(self, tx: Transaction, *, domain_id: str, now: datetime) -> str | None:
         """Returns 'entered', 'exited' or None."""
-        short = determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id))
+        short = determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id), misses_from=self._misses_from)
         row = tx.fetch_one("SELECT * FROM supervision_states WHERE domain_id = ?", (domain_id,))
         active = bool(row["active"]) if row is not None else False
         change = decide(active, short.score, short.pieces)
@@ -118,13 +120,13 @@ class SupervisionService:
         from trust_manager.checkin_scoring import CHECKIN_ANSWERED_WEIGHT
         from trust_manager.short_term import determine_recovery_estimate_in_transaction
         with self._core.transaction() as tx:
-            return determine_recovery_estimate_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id), threshold=EXIT_AT_OR_ABOVE,
+            return determine_recovery_estimate_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id), misses_from=self._misses_from, threshold=EXIT_AT_OR_ABOVE,
                                                               future_answers=future_answers, good_weight=CHECKIN_ANSWERED_WEIGHT)
 
     def get_short_term(self, domain_id: str, now: datetime) -> ShortTermTrust:
         """Owner and CLI read (never shown to the wearer)."""
         with self._core.transaction() as tx:
-            return determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id))
+            return determine_short_term_trust_in_transaction(tx, domain_id, now=now, window=self.window_for(domain_id), misses_from=self._misses_from)
 
     # Internals -----------------------------------------------------------
 
