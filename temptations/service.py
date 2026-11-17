@@ -69,6 +69,9 @@ class Ports:
     blocked: Callable[[datetime], bool]                     # a wear exemption, a vacation, the halt or a Penalty Window
     avg_daily: Callable[[], Decimal | None]                 # average daily pool progress over the last 14 days
     local_clock: Callable[[datetime], str]
+    # Owner, 2026-11-17: another wearer's temptation is one the owner wrote for them and they approved (custom_tasks/), fitting their gear;
+    # None here means the owner's own fixed offer. The callable returning None means nothing fits: no offer that day.
+    offer_text: Callable[[], str | None] | None = None
 
 
 class Temptations:
@@ -121,11 +124,22 @@ class Temptations:
             except Exception:
                 logger.exception("The average progress could not be read; the offer says 'a little'.")
                 avg = None
-            text = OFFER.format(price=delay_words(Decimal(row["cost"]), avg), until=self._ports.local_clock(until))
+            own = None
+            if self._ports.offer_text is not None:
+                try:
+                    own = self._ports.offer_text()
+                except Exception:
+                    logger.exception("The wearer's temptations could not be read; no offer.")
+                if not own:
+                    self._set(row["id"], "skipped", now)
+                    continue
+            price = delay_words(Decimal(row["cost"]), avg)
+            text = (f"Temptation: {own} {price} Offer ends at {self._ports.local_clock(until)}." if own
+                    else OFFER.format(price=price, until=self._ports.local_clock(until)))
 
-            def write(tx: Transaction, _s: object, r=row) -> None:
-                if tx.execute("UPDATE temptation_offers SET status = 'offered', expires_at = ? WHERE id = ? AND status = 'planned'",
-                              (_iso(until), r["id"])).rowcount:
+            def write(tx: Transaction, _s: object, r=row, own=own) -> None:
+                if tx.execute("UPDATE temptation_offers SET status = 'offered', expires_at = ?, text = ? WHERE id = ? AND status = 'planned'",
+                              (_iso(until), own, r["id"])).rowcount:
                     write_event(tx, DomainEvent(event_type="temptations.offered", source_module="temptations", occurred_at=now,
                                                 payload={"offer_id": r["id"], "free": Decimal(r["cost"]) == 0}))
                     enqueue_in_transaction(tx, user_id=self.user_id, kind="temptation", dedupe_key=f"temptation:{r['id']}", now=now, immediate=True,
@@ -159,6 +173,8 @@ class Temptations:
             return "That offer is gone."
         if not self._set(row_id, "accepted", now):
             return "That offer is gone."
+        if "text" in row.keys() and row["text"]:
+            return f"Accepted: {row['text']} If you slip, you tell me."
         return ("Accepted. 15 minutes, the Deep Diver in, right to the edge as often as you like, and you do not cum. If you slip, you tell me.")
 
     async def loop(self, clock, *, interval_seconds: float = 120.0) -> None:

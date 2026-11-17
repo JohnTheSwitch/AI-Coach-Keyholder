@@ -12,3 +12,7 @@ version waits for the Deep Diver control (P6).
 
 - **Owns:** `temptation_offers` (migration 084).
 - **API:** `get_temptation_costs(core, user_id, lo, hi)` (read, a Decimal), `Temptations.tick(now)`, `Temptations.press(...)`.
+
+## Another wearer (owner, 2026-11-17)
+
+`Ports.offer_text`: for another wearer the offer is one of their own approved temptations that fits their gear (`custom_tasks/`, kind `temptation`), stored on the offer (`temptation_offers.text`, migration 094); none fitting means no offer. The owner's fixed offer is unchanged.

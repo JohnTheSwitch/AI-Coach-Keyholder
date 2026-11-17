@@ -112,6 +112,7 @@ class TenantRuntime:
     extra_consumers: dict | None = None               # further outbox consumers of THIS tenant (lines)
     obedience: object | None = None                   # obedience.service.ObedienceTasks for THIS wearer (parity 12)
     custom_tasks: object | None = None                # custom_tasks.service.CustomTasks: their limits and their own approved tasks (2026-11-17)
+    temptations: object | None = None                 # temptations.service.Temptations with their own approved texts (2026-11-17)
     release_window: object | None = None              # release_earning.window.ReleaseWindow for THIS wearer (parity 13)
     protocol: object | None = None                    # protocol.service.ProtocolLadder for THIS wearer (parity 14)
     dm_actions: dict = field(default_factory=dict)    # scope -> facade for THIS wearer's DM buttons (system/tenant_dm_actions.py)
@@ -139,6 +140,8 @@ class TenantRuntime:
                 self.obedience.tick(self.clock.now())      # parity 12: the daily task, on this wearer's paired lock only
             except Exception:
                 logger.exception("An obedience pass of tenant %s failed; will retry next cycle.", self.tenant_id)
+        if self.temptations is not None:
+            self.temptations.tick(self.clock.now())         # owner, 2026-11-17: never raises (it logs and carries on)
         if self.detectors is not None:
             try:
                 self.detectors.run(self.clock.now())        # parity 6: the wearer's own detectors and questions, in this tenant only
@@ -356,6 +359,7 @@ class TenantFactory:
             runtime.dm_actions["exemption"] = ExemptionDm(exemptions, resolve_user=resolve, now=s.clock.now)
         self._lines(runtime, service, core, wiring, wearer.id)        # after the exemptions: owed lines hold an opening
         self._obedience(runtime, service, cfg, core)                  # after the spot checks and the detectors it needs
+        self._temptations(runtime, cfg, core, wiring)                 # after obedience (their gear) and the switches
         self._release_and_relock(runtime, cfg, core, wiring, tokens, connections)   # after the lines and the obedience it reads
         self._morning_and_protocol(runtime, service, cfg, core, wiring)           # after the exemptions, switches and obedience
         if dispatcher is not None:
@@ -369,9 +373,10 @@ class TenantFactory:
 
     # ------------------------------------------------------------------ parity 10: feature switches and the 24-hour switch-off wait
 
-    # Leak audit (2026-11-17): the training plan and the workout tasks are the owner's own programme (his rack, weights, schedule and
-    # gear), so another wearer cannot switch them on until a plan of their own exists (roadmap D8).
-    # Temptations are not built for another wearer (their text names the owner's Deep Diver), so the switch must not pretend they are.
+    # Leak audit (2026-11-17): the owner's training plan and temptation text are his own (his rack, weights, schedule, his Deep Diver), so
+    # another wearer never gets them. Owner, 2026-11-17 ("make everything including workouts and temptations available - of course after
+    # setting up"): `workouts on` waits for their own approved plan and `temptations on` for their own approved temptation
+    # (custom_tasks/, wired in `_obedience`); these texts stand only until then.
     UNAVAILABLE = {"workouts": "Workouts aren't available for you yet: the training plan is set up per wearer and yours doesn't exist yet.",
                    "temptations": "Temptations aren't available for you yet."}
 
@@ -509,7 +514,7 @@ class TenantFactory:
         """Owner, 2026-11-16 (multi-wearer first): the daily obedience task for an additional wearer, on THEIR confirmed paired lock through
         their spot checks' Chaster setup, missed ones through their own detector questions. Erotic tasks and workouts start OFF (their
         limits and gear are not known yet; `erotic tasks on` / `workouts on` start them) and the gear list starts empty (`gear add`).
-        The training plan is the owner's own programme, so `workouts` cannot be switched on for another wearer (UNAVAILABLE)."""
+        Their training plan is their own (owner, 2026-11-17): `workouts` waits until they approve the plan the owner wrote for them."""
         if runtime.features is None:
             return
         runtime.features.seed_off(runtime.wearer_user_id, self.SEEDED_OFF, self._shared.clock.now())
@@ -519,6 +524,8 @@ class TenantFactory:
         runtime.custom_tasks = custom
         service.custom_tasks_command = custom.command
         runtime.features.unavailable["erotic_tasks"] = custom.not_yet
+        runtime.features.unavailable["workouts"] = custom.plan_not_yet
+        runtime.features.unavailable["temptations"] = custom.temptation_not_yet
         from advanced_mode.repository import AdvancedModeAdministration       # owner, 2026-11-16: a new wearer starts at Beginner
         AdvancedModeAdministration(core.db_path, core=core).start_new_wearer_at_beginner(now=self._shared.clock.now())
         if runtime.proof_checks is None or runtime.detectors is None or runtime.detectors.signals is None:
@@ -529,7 +536,7 @@ class TenantFactory:
         from system.obedience_wiring import build_obedience
         obedience = build_obedience(cfg, core, proof_checks=runtime.proof_checks, signals=runtime.detectors.signals,
                                     window_cfg=window_config_from(cfg), notes=runtime.notes, exemptions=runtime.exemptions,
-                                    features=runtime.features)
+                                    features=runtime.features, training_plan=custom.training_plan)
         if obedience is None:
             return
         obedience.default_owned = frozenset()
@@ -539,6 +546,10 @@ class TenantFactory:
         service.gear_command = obedience.gear_command
         service.extra_task_command = obedience.extra_task_command
         runtime.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
+        # Owner, 2026-11-17: their own training plan once they approve it: `log`, `extra training` and the Monday buttons, as the owner's.
+        from system.dm_actions import TrainingDm
+        service.training_log, service.training_extra = obedience.training.log, obedience.training.extra
+        runtime.dm_actions["training"] = TrainingDm(obedience.training, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
         if runtime.opt_outs is not None:
             from obedience.service import GEAR
             opt_outs = runtime.opt_outs
@@ -546,6 +557,35 @@ class TenantFactory:
                                    label=lambda piece: GEAR.get(piece, piece))
             obedience.remove_wait = lambda user, piece, now, o=opt_outs: o.request_off(user, f"gear:{piece}", now)
             obedience.add_hook = lambda user, piece, now, o=opt_outs: o.withdraw(user, f"gear:{piece}", now)
+
+    # ------------------------------------------------------------------ temptations (owner, 2026-11-17)
+
+    def _temptations(self, runtime, cfg, core: CoreDatabase, wiring) -> None:
+        """Their own temptations: only ones the owner wrote for them and they approved, fitting their gear; `temptations on` (off at the
+        start) waits for the first approved one. Blocked like the owner's: a wear exemption, their vacation, a Penalty Window."""
+        custom, features, obedience = runtime.custom_tasks, runtime.features, runtime.obedience
+        if custom is None or features is None or obedience is None:
+            return
+        import random
+        from obedience.service import effective
+        from system.composition import window_config_from
+        from system.dm_actions import ObedienceDm, discord_user_resolver
+        from system.protocol_wiring import window_left_hours_for
+        from system.temptation_wiring import build_temptations
+        wearer, rng, window_left = runtime.wearer_user_id, random.SystemRandom(), window_left_hours_for(core)
+
+        def offer_text() -> str | None:
+            owned = effective(obedience.owned_gear())
+            fits = [t for t in custom.temptations() if t.needs <= owned]
+            return rng.choice(fits).text if fits else None
+
+        def blocked(now) -> bool:
+            return (not features.is_on(wearer, "temptations")
+                    or (runtime.exemptions is not None and runtime.exemptions.wear_exemption_in_force(wearer))
+                    or wiring.vacation.is_paused(wearer, now) or window_left(now) is not None)
+
+        runtime.temptations = build_temptations(core, user_id=wearer, window_cfg=window_config_from(cfg), blocked=blocked, offer_text=offer_text)
+        runtime.dm_actions["temptation"] = ObedienceDm(runtime.temptations, resolve_user=discord_user_resolver(core), now=self._shared.clock.now)
 
     # ------------------------------------------------------------------ parity 11: lines
 

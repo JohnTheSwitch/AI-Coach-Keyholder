@@ -802,7 +802,8 @@ def _slave_training(args, services, out, now) -> int:
 
 
 def _tenant_custom_tasks(args, services, out, now) -> int:
-    """Owner, 2026-11-17: read another wearer's limits and tasks (`limits`) or send them a task to approve (`task-propose`)."""
+    """Owner, 2026-11-17: read another wearer's limits, tasks and plan (`limits`), or send them a task or temptation (`task-propose`) or a
+    training plan (`training-propose`) to approve."""
     from custom_tasks.service import CustomTasks
     from infrastructure.database import Database as CoreDatabase
     from obedience.service import GEAR_ALIASES, ROLE
@@ -830,7 +831,21 @@ def _tenant_custom_tasks(args, services, out, now) -> int:
             gear = [r["gear"] for r in tx.fetch_all("SELECT gear FROM obedience_gear WHERE user_id = ? AND owned = 1", (custom.user_id,))]
         print("gear: " + (", ".join(f"{g} ({ROLE.get(g, g)})" for g in sorted(gear)) or "(none)"), file=out)
         for t in custom.tasks():
-            print(f"  {t.number}. [{t.status}] {t.text}", file=out)
+            print(f"  {t.number}. [{t.status}]{' temptation:' if t.kind == 'temptation' else ''} {t.text}", file=out)
+        with core.transaction() as tx:
+            plans = tx.fetch_all("SELECT number, status FROM wearer_training_plans WHERE user_id = ? ORDER BY number", (custom.user_id,))
+        print("training plans: " + (", ".join(f"{r['number']} [{r['status']}]" for r in plans) or "(none)"), file=out)
+        return 0
+    if args.tenant_command == "training-propose":
+        import json
+        try:
+            with open(args.file, encoding="utf-8") as fh:
+                data = json.load(fh)
+            number = custom.propose_plan(data, now())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Not sent: {exc}.", file=out)
+            return 3
+        print(f"Training plan {number} sent to {tenant.display_name} for approval (the running bot delivers the DM).", file=out)
         return 0
     needs = set()
     for word in filter(None, (args.needs or "").replace(" ", "").split(",")):
@@ -840,11 +855,12 @@ def _tenant_custom_tasks(args, services, out, now) -> int:
             return 3
         needs.add(piece)
     try:
-        number = custom.propose(text=args.text, needs=frozenset(needs), modes=args.modes, now=now())
+        number = custom.propose(text=args.text, needs=frozenset(needs), modes=args.modes, now=now(),
+                                kind="temptation" if args.temptation else "task")
     except ValueError as exc:
         print(f"Not sent: {exc}.", file=out)
         return 3
-    print(f"Task {number} sent to {tenant.display_name} for approval (the running bot delivers the DM).", file=out)
+    print(f"{'Temptation' if args.temptation else 'Task'} {number} sent to {tenant.display_name} for approval (the running bot delivers the DM).", file=out)
     return 0
 
 
@@ -1241,6 +1257,11 @@ def main(argv: list[str], *, out: TextIO | None = None,
     tp.add_argument("--text", required=True, help="the Chaster task: what to do and exactly what the photo shows")
     tp.add_argument("--needs", default="", help="gear the task needs, comma-separated (e.g. collar,blindfold)")
     tp.add_argument("--modes", choices=("alone", "discreet", "both"), default="alone", help="when it may be given (default: only alone)")
+    tp.add_argument("--temptation", action="store_true", help="owner, 2026-11-17: a temptation (offered now and then at a cost), not a daily task")
+    trp = tsub.add_parser("training-propose", help="Owner, 2026-11-17: send a wearer a training plan (a JSON file, format in training/plan.py); "
+                                                   "workouts only after they approve it.")
+    trp.add_argument("tenant_id")
+    trp.add_argument("--file", required=True, help="the plan as JSON")
     ex = tsub.add_parser("execution", help="Halt or clear ONE tenant's execution runtime (a new tenant starts halted).")
     ex.add_argument("tenant_id")
     ex.add_argument("action", choices=("halt", "clear"))
@@ -1315,7 +1336,7 @@ def main(argv: list[str], *, out: TextIO | None = None,
                 print(_PAIR_TEXT[paired.outcome.value] + (f" Lock: '{paired.title}' of Chaster user {paired.wearer_username}."
                                                           if paired.title or paired.wearer_username else ""), file=out)
                 return 0 if paired.outcome.value.startswith("paired") else 3
-        elif cmd in ("limits", "task-propose"):
+        elif cmd in ("limits", "task-propose", "training-propose"):
             refusal = admin.authorize(args.owner_id, cmd.replace("-", "_"))
             if refusal is not None:
                 result = refusal

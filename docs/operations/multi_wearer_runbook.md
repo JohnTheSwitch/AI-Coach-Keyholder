@@ -56,8 +56,13 @@ locked with the bot as keyholder, and neither the tenant halt nor the platform h
   <tenant> --text "..." [--needs a,b] [--modes alone|discreet|both] --owner-id <you>`; they approve each one (`tasks`, `task approve <n>`).
   `erotic tasks on` waits for the first approved task. See `custom_tasks/README.md`.
 - **Gear list empty**: `gear add <piece>` or `gear add <piece> as <their name>`; pieces are listed by role (`gear`).
-- **Workouts:** the training plan in `training/plan.py` is the owner's programme, so `workouts on` is refused for another wearer (and the
-  switch counts as off) until a plan of their own exists (see `docs/operations/multi_wearer_leak_audit.md`).
+- **Workouts are their own** (owner, 2026-11-17): write their plan with Claude as JSON (format: `plan_from_json` in `training/plan.py`; the
+  schedule is the owner's: Saturday legs A/B, Sunday upper, one optional short session) and send it with `python -m cli tenants
+  training-propose <tenant> --file plan.json --owner-id <you>`. They read it with `training plan` and answer `training plan approve|reject`;
+  `workouts on` waits for an approved plan, and rejecting it later stops the sessions at once. `log`, `extra training` and the Monday
+  buttons work for them as for you.
+- **Temptations are their own** (owner, 2026-11-17): `python -m cli tenants task-propose <tenant> --temptation --text "..." [--needs a,b]
+  --owner-id <you>`; approved like a task (`tasks`). `temptations on` waits for one; only approved ones fitting their gear are offered.
 - Before inviting anyone, set up a small private Discord server with the bot and invite the wearer there: Discord lets a person DM a bot
   only when they share a server.
 

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["Exercise", "EXERCISES", "SESSIONS", "ALIASES", "WARM_UP"]
+__all__ = ["Exercise", "EXERCISES", "SESSIONS", "ALIASES", "WARM_UP", "Plan", "OWNER_PLAN", "SESSION_KEYS", "UNITS", "plan_from_json",
+           "plan_summary"]
 
 
 @dataclass(frozen=True)
@@ -79,3 +80,85 @@ ALIASES: dict[str, str] = {
     "lateral": "lateral", "lateral raise": "lateral", "upažování": "lateral",
     "crunch": "crunch", "decline crunch": "crunch",
 }
+
+
+# ---------------------------------------------------------------------------- one plan per wearer (owner, 2026-11-17)
+# Another wearer's plan is written by the owner with Claude (`python -m cli tenants training-propose`) and approved by the wearer before it
+# can be given (custom_tasks/). It fills the same six sessions, so the schedule is the owner's: Saturday legs (A and B alternating), Sunday
+# upper body, one optional short session on Monday or Thursday.
+
+SESSION_KEYS = ("legs_a", "legs_a_short", "legs_b", "legs_b_short", "upper", "upper_short")
+UNITS = ("kg", "kg/hand", "plates", "bw")
+
+
+@dataclass(frozen=True)
+class Plan:
+    exercises: dict
+    sessions: dict
+    warm_up: dict
+    aliases: dict
+    proof: str = "Photo of the gym only."                # the Chaster photo after a session (voters see it)
+    return_squat: float | None = None                    # the owner's plan: squat 95 kg on the first leg days back
+    harder_bw: str = "slower"                            # how to make body-weight work harder once every set is at the top
+
+
+OWNER_PLAN = Plan(EXERCISES, SESSIONS, WARM_UP, ALIASES, return_squat=95.0, harder_bw="slower, or the vest")
+
+
+def plan_from_json(data: dict) -> Plan:
+    """A wearer's plan from the JSON the owner writes. Raises ValueError with the reason when it is not usable.
+
+    {"exercises": [{"key", "name", "sets", "low", "high", "start", "step", "unit", "rest", "note"?, "aliases"?: [...]}, ...],
+     "sessions": {"legs_a": {"title", "exercises": [keys]}, ... all six},
+     "warm_up": {"upper": "..."}?, "proof": "Photo of ... only."?}"""
+    if not isinstance(data, dict):
+        raise ValueError("the plan must be a JSON object")
+    exercises, aliases = {}, {}
+    for e in data.get("exercises") or []:
+        try:
+            ex = Exercise(str(e["key"]), str(e["name"]), int(e["sets"]), int(e["low"]), int(e["high"]), float(e["start"]),
+                          float(e["step"]), str(e["unit"]), str(e["rest"]), str(e.get("note") or ""))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"an exercise is incomplete: {e!r}") from exc
+        if ex.unit not in UNITS:
+            raise ValueError(f"{ex.key}: unit must be one of {', '.join(UNITS)}")
+        if not (1 <= ex.sets <= 10 and 1 <= ex.low <= ex.high <= 100 and ex.start >= 0 and ex.step >= 0):
+            raise ValueError(f"{ex.key}: sets, reps, start or step out of range")
+        exercises[ex.key] = ex
+        for word in (ex.key, ex.key.replace("_", " "), ex.name.lower(), *(e.get("aliases") or [])):
+            aliases[str(word).lower()] = ex.key
+    if not exercises:
+        raise ValueError("the plan has no exercises")
+    sessions = {}
+    for key in SESSION_KEYS:
+        s = (data.get("sessions") or {}).get(key)
+        if not isinstance(s, dict) or not s.get("title") or not s.get("exercises"):
+            raise ValueError(f"session {key} is missing (all six are needed: {', '.join(SESSION_KEYS)})")
+        unknown = [k for k in s["exercises"] if k not in exercises]
+        if unknown:
+            raise ValueError(f"session {key} names unknown exercises: {', '.join(map(str, unknown))}")
+        sessions[key] = (str(s["title"]), tuple(s["exercises"]))
+    warm_up = {k: str(v) for k, v in (data.get("warm_up") or {}).items() if k in SESSION_KEYS}
+    proof = str(data.get("proof") or "Photo of the gym only.")
+    if len(proof) > 80:
+        raise ValueError("proof must be short (at most 80 characters)")
+    return Plan(exercises, sessions, warm_up, aliases, proof=proof)
+
+
+def _load(ex: Exercise, load: float) -> str:
+    return {"kg": f"{load:g} kg", "kg/hand": f"{load:g} kg per hand", "plates": f"{load:g} large plates", "bw": "body weight"}[ex.unit]
+
+
+def plan_summary(plan: Plan) -> str:
+    """The plan as the wearer reads it before approving."""
+    lines = ["Saturday: the full leg day (A and B alternate). Sunday: the full upper-body day. One short session on Monday or Thursday "
+             "(you choose; skipping it costs nothing). Full sessions are mandatory. Proof in Chaster after each: " + plan.proof]
+    for key in SESSION_KEYS:
+        title, keys = plan.sessions[key]
+        lines.append(f"**{title}**")
+        if key in plan.warm_up:
+            lines.append(plan.warm_up[key])
+        for k in keys:
+            ex = plan.exercises[k]
+            lines.append(f"- {ex.name}: {ex.sets} x {ex.low}-{ex.high}, start {_load(ex, ex.start)}, rest {ex.rest}" + (f" ({ex.note})" if ex.note else ""))
+    return "\n".join(lines)

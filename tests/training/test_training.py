@@ -108,7 +108,8 @@ def test_the_exercise_key_with_an_underscore_and_the_cable_steps(tmp_path) -> No
     """Bug fixes 2026-11-16: `log cable_row` was not understood; the triceps cable stack moves in 4 kg steps."""
     from training.plan import EXERCISES
     assert EXERCISES["triceps"].step == 4 and EXERCISES["cable_row"].step == 4
-    from training.service import _LOG, ALIASES
+    from training.plan import ALIASES
+    from training.service import _LOG
     name = _LOG.match("log cable_row 34 12,12").group("name").strip().lower()
     assert (ALIASES.get(name) or ALIASES.get(name.replace("_", " ")) or (name if name in EXERCISES else None)) == "cable_row"
 

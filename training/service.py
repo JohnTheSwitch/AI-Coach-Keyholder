@@ -34,7 +34,7 @@ from infrastructure.decision_log import decision
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
 from notifications.queue import enqueue_in_transaction
-from training.plan import ALIASES, EXERCISES, SESSIONS, WARM_UP, Exercise
+from training.plan import OWNER_PLAN, Exercise, Plan, _load
 
 logger = logging.getLogger("ai_coach_keyholder.training")
 
@@ -77,37 +77,51 @@ def get_raises(core, user_id: str, lo: str, hi: str) -> int:
 
 
 class TrainingPlan:
-    def __init__(self, core: CoreDatabase, *, user_id: str, free_time: Callable[[datetime], bool], today: Callable[[datetime], date]) -> None:
+    def __init__(self, core: CoreDatabase, *, user_id: str, free_time: Callable[[datetime], bool], today: Callable[[datetime], date],
+                 plan: Plan | Callable[[], Plan | None] = OWNER_PLAN) -> None:
         self._core = core
+        # Owner, 2026-11-17: another wearer's own plan (approved by them, custom_tasks/); None while they have none (no sessions at all).
+        self._plan = plan
         self.user_id = user_id
         self._free_time = free_time
         self.after_today: Callable[[datetime], object] | None = None   # obedience: switch today's planned task to the short session
         self.today_open: Callable[[datetime], bool] | None = None      # obedience: today's task is not out yet (none, or only planned)
         self._today = today
 
+    @property
+    def plan(self) -> Plan | None:
+        return self._plan() if callable(self._plan) else self._plan
+
     # ------------------------------------------------------------------ the day's session (asked by the obedience planner)
 
     def day_task(self, day: date) -> TrainingDay | None:
+        plan = self.plan
         session = self._session_for(day)
-        if session is None:
+        if session is None or plan is None:
             return None
         optional = session.endswith("_short")
         self._record(day, session)
-        title, keys = SESSIONS[session]
+        title, keys = plan.sessions[session]
         deload = self._deload_week(day)
         returning = session.startswith("legs") and self._leg_days_before(day) < RETURN_LEG_DAYS
         lines = [f"**{title}**" + (" (deload week: half the sets)" if deload else "") + (" (back after a break: lighter)" if returning else "")]
-        if session in WARM_UP:
-            lines.append(WARM_UP[session])
+        if session in plan.warm_up:
+            lines.append(plan.warm_up[session])
         for key in keys:
-            lines.append("- " + self._line(EXERCISES[key], deload=deload, returning=returning))
-        lines.append("Keep 1-2 reps in reserve on squats, deadlifts and bench; isolation work close to failure. "
-                     "Log your sets here: `log squat 105 4x9`.")
+            lines.append("- " + self._line(plan.exercises[key], deload=deload, returning=returning, plan=plan))
+        if plan is OWNER_PLAN:
+            lines.append("Keep 1-2 reps in reserve on squats, deadlifts and bench; isolation work close to failure. "
+                         "Log your sets here: `log squat 105 4x9`.")
+        else:
+            first = plan.exercises[keys[0]]
+            name_ = first.key.replace("_", " ")
+            example = f"`log {name_} {self.weight(first.key):g} {first.sets}x{first.low}`" if first.unit != "bw" else f"`log {name_} {first.low},{first.low}`"
+            lines.append(f"Keep 1-2 reps in reserve on the big lifts; isolation work close to failure. Log your sets here: {example}.")
         if optional:
             lines.append("This short session is optional: if it doesn't fit today, skip it and go again at the weekend.")
         name = title.split(":")[0]
         return TrainingDay(key=f"training:{'short:' if optional else ''}{session}",
-                           text=f"Workout done: {name}. Photo of the gym only.",           # owner, 2026-11-15: voters see this; brief, no code mention
+                           text=f"Workout done: {name}. {plan.proof}",           # owner, 2026-11-15: voters see this; brief, no code mention
                            details="\n".join(lines), optional=optional)
 
     def is_training_day_now(self, now: datetime) -> bool:
@@ -119,6 +133,8 @@ class TrainingPlan:
         return self._session_for(day) is not None
 
     def _session_for(self, day: date) -> str | None:
+        if self.plan is None:
+            return None
         weekday = day.weekday()
         if weekday == 5:
             return self._next_legs(day)
@@ -151,7 +167,7 @@ class TrainingPlan:
         short session is upper body, and the other way round), but never legs within 2 days of another leg day, on a Friday (Saturday is
         the full leg day) or on a Sunday. Optional like every short session: it earns the short-session bonus when verified, skipping it
         costs nothing, and it is never part of the week bonus. None when the message is not this request."""
-        if user_id != self.user_id or " ".join((text or "").lower().split()).strip(" .!?") not in EXTRA_WORDS:
+        if user_id != self.user_id or " ".join((text or "").lower().split()).strip(" .!?") not in EXTRA_WORDS or self.plan is None:
             return None
         day = self._today(now)
         if self._session_for(day) is not None:
@@ -230,17 +246,20 @@ class TrainingPlan:
     def weight(self, key: str) -> float:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT weight FROM training_weights WHERE user_id = ? AND exercise = ?", (self.user_id, key))
-        return float(row["weight"]) if row is not None else float(EXERCISES[key].start)
+        if row is not None:
+            return float(row["weight"])
+        plan = self.plan
+        return float(plan.exercises[key].start) if plan is not None and key in plan.exercises else 0.0
 
-    def _line(self, ex: Exercise, *, deload: bool, returning: bool) -> str:
+    def _line(self, ex: Exercise, *, deload: bool, returning: bool, plan: Plan = OWNER_PLAN) -> str:
         sets = ex.sets
         load = self.weight(ex.key)
         if returning:
-            sets -= 1
-            load = 95.0 if ex.key == "squat" else (math.floor(load * 0.9 / ex.step) * ex.step if ex.step and ex.unit in ("kg", "kg/hand") else load)
+            sets = max(1, sets - 1)
+            load = plan.return_squat if ex.key == "squat" and plan.return_squat is not None else (math.floor(load * 0.9 / ex.step) * ex.step if ex.step and ex.unit in ("kg", "kg/hand") else load)
         if deload:
             sets = max(1, math.ceil(sets / 2))
-        what = {"kg": f"{load:g} kg", "kg/hand": f"{load:g} kg per hand", "plates": f"{load:g} large plates", "bw": "body weight"}[ex.unit]
+        what = _load(ex, load)
         note = f" ({ex.note})" if ex.note else ""
         return f"{ex.name}: {sets} x {ex.low}-{ex.high}, {what}, rest {ex.rest}{note}"
 
@@ -295,13 +314,19 @@ class TrainingPlan:
         """`log <exercise> [<kg>] <sets>x<reps> | <r1>,<r2>,...`. None when the message is not a log line."""
         if user_id != self.user_id or not text or not text.strip().lower().startswith("log "):
             return None
+        plan = self.plan
+        if plan is None:
+            return None
         match = _LOG.match(text.strip())
         name = match.group("name").strip().lower() if match else ""
         # Bug fix 2026-11-16: `log cable_row` (the key itself, with an underscore) was not understood.
-        key = ALIASES.get(name) or ALIASES.get(name.replace("_", " ")) or (name if name in EXERCISES else None)
+        key = plan.aliases.get(name) or plan.aliases.get(name.replace("_", " ")) or (name if name in plan.exercises else None)
         if match is None or key is None:
-            return OutgoingMessage(text="I couldn't read that. Write it like `log squat 105 4x9` or `log pullups 8,8,7`.")
-        ex = EXERCISES[key]
+            if plan is OWNER_PLAN:
+                return OutgoingMessage(text="I couldn't read that. Write it like `log squat 105 4x9` or `log pullups 8,8,7`.")
+            return OutgoingMessage(text="I couldn't read that. Write it like `log <exercise> <kg> 4x9` or `log <exercise> 8,8,7`. Exercises: "
+                                        + ", ".join(k.replace("_", " ") for k in plan.exercises) + ".")
+        ex = plan.exercises[key]
         raw = match.group("reps").lower().replace("×", "x")
         if "x" in raw:
             sets, reps = (int(p) for p in raw.split("x"))
@@ -329,5 +354,5 @@ class TrainingPlan:
         if raised is not None:
             return OutgoingMessage(text=f"Logged: {ex.name}. Every set at the top of the range: next time {raised:g}{unit}.")
         if all_top and ex.unit == "bw":
-            return OutgoingMessage(text=f"Logged: {ex.name}. Every set at the top of the range: make it harder next time (slower, or the vest).")
+            return OutgoingMessage(text=f"Logged: {ex.name}. Every set at the top of the range: make it harder next time ({plan.harder_bw}).")
         return OutgoingMessage(text=f"Logged: {ex.name}. Stay at this weight until every set reaches {ex.high}.")

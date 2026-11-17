@@ -31,3 +31,7 @@ buttons through `system/dm_actions.TrainingDm` (scope `training`); `log ...` is 
 **A moved short session (owner, 2026-11-16; migration 090):** `training_weeks.moved_date/moved_kind` hold a short session moved to another
 day (filed by Claude on his request; Monday 16 Nov's leg day to Tuesday). It has its own slot, so the week's `extra training` stays free,
 and it stays one of the week's planned sessions for the week bonus.
+
+## Another wearer (owner, 2026-11-17)
+
+`TrainingPlan(plan=...)` takes a `training.plan.Plan` or a callable returning one. The owner's is `OWNER_PLAN`; another wearer gets only their own approved plan (`custom_tasks/`, `plan_from_json`), and with none there is no session, no `log` and no `extra training`. The schedule is the same for everyone.

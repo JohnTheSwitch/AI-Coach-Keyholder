@@ -51,7 +51,9 @@ def build_task_board(core, obedience: ObedienceTasks, window_cfg):
                      raise_missed=lambda row, now: p.raise_failure(row, "missed", now))
 
 
-def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: list, exemptions=None, features=None) -> ObedienceTasks | None:
+def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: list, exemptions=None, features=None,
+                    training_plan=None) -> ObedienceTasks | None:
+    """`training_plan`: another wearer's approved plan (a callable, owner 2026-11-17); None means the owner's own plan."""
     if proof_checks is None or signals is None:
         notes.append("Daily obedience tasks are NOT active: they need the spot checks' Chaster task setup and the detector questions.")
         return None
@@ -71,7 +73,8 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                              window=(datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")), now))
 
     from training.service import TrainingPlan
-    plan = TrainingPlan(core, user_id=user_id, free_time=free_time, today=p.today)
+    plan = (TrainingPlan(core, user_id=user_id, free_time=free_time, today=p.today) if training_plan is None else
+            TrainingPlan(core, user_id=user_id, free_time=free_time, today=p.today, plan=training_plan))
     tasks = ObedienceTasks(core, user_id=user_id, chaster=proof_checks.chaster,
                            ports=Ports(lock_id=p.lock_id, halted=p.halted, paused=p.paused, free_time=free_time, today=p.today,
                                        local_clock=p.local_clock, slot_taken=lambda: proof_checks.get_open_check() is not None,
