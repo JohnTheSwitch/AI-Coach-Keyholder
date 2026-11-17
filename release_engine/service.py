@@ -178,6 +178,31 @@ class ReleaseEngine:
                              balance=self.get_balance(user_id))
         return made
 
+    def same_day(self, *, user_id: str, now: datetime) -> bool:
+        """Owner, 2026-11-17 (applies the rule above to a plan made before it): a planned release earned TODAY whose target lies on a later
+        day gets the new same-day target when free time is left today. True when it moved. Reveals nothing."""
+        def write(tx: Transaction, _s: object) -> bool:
+            plan = tx.fetch_one("SELECT * FROM release_plans WHERE user_id = ? AND status = 'planned'", (user_id,))
+            if plan is None:
+                return False
+            today = self._cfg.local(now).date()
+            if (self._cfg.local(_parse_iso(plan["requirement_met_at"])).date() != today
+                    or self._cfg.local(_parse_iso(plan["target_at"])).date() <= today):
+                return False
+            target = plan_target(now, bytes(plan["seed"]), self._cfg, self._lo, self._hi)
+            if target is None or self._cfg.local(target).date() != today:
+                return False
+            tx.execute("UPDATE release_plans SET target_at = ?, updated_at = ? WHERE id = ?", (_iso(target), _iso(now), plan["id"]))
+            moved.append(target)
+            self._emit(tx, "release_plan.retargeted", {"plan_id": plan["id"]}, now)
+            return True
+
+        moved: list[datetime] = []
+        done = apply_transition(self._core, write=write)
+        if done:
+            release_decision("Release moved to later today (owner, 2026-11-17: same-day rule).", new_planned_unfreeze_at=_iso(moved[-1]))
+        return done
+
     def cancel_plan(self, *, user_id: str, reason: str, now: datetime) -> bool:
         def write(tx: Transaction, _s: object) -> bool:
             return self._cancel_in_tx(tx, user_id, reason, now)

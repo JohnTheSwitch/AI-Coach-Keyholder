@@ -20,6 +20,10 @@ the periodic cycle behind `ENABLE_RELEASE_ENGINE`; the barrier is lowered throug
   (used for re-targeting). The result is always checked against the window
   classifier; configuration is rejected if `WORKDAY_END + max offset` would reach quiet
   hours. Weekends and holidays use the same base time (see the proposal, section 11).
+  **Same day (owner, 2026-11-17):** when today's moment has already passed or is not free time, a new secret moment is drawn from the
+  free time left today (5-minute steps, HMAC of the seed and the date); only with no free time left does the release move to a later
+  day. `ReleaseEngine.same_day()` (called by the tick) applies this to a plan made before the rule: earned today, targeted for a later
+  day, and free time left today -> retargeted to later today.
 - **`ReleaseEngine`** (`service.py`):
   - `ensure_plan()` — requirement met (balance ≥ 1) never unlocks immediately; it
     stores one `planned` plan (secret `target_at` + `seed`) per user.

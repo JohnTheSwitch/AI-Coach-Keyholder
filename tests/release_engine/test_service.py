@@ -420,3 +420,28 @@ class TestReleaseSession:
         with pytest.raises(ValueError):
             with core.transaction() as tx:
                 eng._earn_in_transaction(tx, user_id=U, amount=0, reason_code="x", source_event_id="e2", now=local(MON, 9))
+
+
+class TestSameDay:
+    """Owner, 2026-11-17: a release earned today stays today while free time is left, also for a plan made before the rule."""
+
+    def _old_plan(self, core, earned: datetime, target: datetime) -> None:
+        with core.transaction() as tx:
+            tx.execute("INSERT INTO release_plans (id, user_id, status, requirement_met_at, target_at, seed, created_at, updated_at) "
+                       "VALUES ('p', ?, 'planned', ?, ?, ?, ?, ?)", (U, earned.isoformat(), target.isoformat(), SEED, earned.isoformat(), earned.isoformat()))
+
+    def test_a_plan_earned_today_for_tomorrow_moves_to_later_today(self, core) -> None:
+        eng = make(core)
+        self._old_plan(core, local(MON, 18, 0), local(MON + timedelta(days=1), 19, 0))
+        now = local(MON, 20, 30)
+        assert eng.same_day(user_id=U, now=now) is True
+        t = target_of(core)
+        assert t.astimezone(PRAGUE).date() == MON and t > now and classify(CFG, t) is WindowKind.DISCRETIONARY
+        assert eng.same_day(user_id=U, now=now) is False                                  # once
+
+    def test_not_when_no_free_time_is_left_or_it_was_earned_another_day(self, core) -> None:
+        eng = make(core)
+        self._old_plan(core, local(MON, 18, 0), local(MON + timedelta(days=1), 19, 0))
+        assert eng.same_day(user_id=U, now=local(MON, 21, 58)) is False
+        assert eng.same_day(user_id=U, now=local(MON + timedelta(days=1), 9, 0)) is False  # earned yesterday: the plan stands
+        assert target_of(core) == local(MON + timedelta(days=1), 19, 0)

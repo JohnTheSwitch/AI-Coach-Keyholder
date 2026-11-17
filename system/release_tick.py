@@ -207,6 +207,8 @@ class ReleaseEnginePeriodicTask:
                 report.add("plan_created")
                 planned = True
 
+        if planned and hasattr(self._engine, "same_day"):
+            self._engine.same_day(user_id=self._user, now=now)   # owner, 2026-11-17: a release earned today stays today when it can
         if planned and (not self._can_execute or self._halted()) and self._engine.plan_is_due(self._user, now):
             report.add("plan_due_but_execution_off" if not self._can_execute else "plan_due_but_halted")
         if planned and self._can_execute and not self._halted() and self._engine.plan_is_due(self._user, now):

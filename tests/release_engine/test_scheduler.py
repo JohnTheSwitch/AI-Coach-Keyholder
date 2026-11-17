@@ -56,10 +56,16 @@ class TestPlanTarget:
         lt = t.astimezone(PRAGUE)
         assert lt.date() == date(2026, 10, 12) and 17 <= lt.hour < 20 or (lt.hour == 20 and lt.minute == 0)
 
-    def test_met_after_todays_window_targets_a_later_day(self) -> None:
+    def test_met_after_todays_window_stays_today_while_free_time_is_left(self) -> None:
+        """Owner, 2026-11-17: a release earned after today's moment is drawn again from the free time left today."""
         now = local(date(2026, 10, 12), 21, 0)
         t = plan_target(now, SEED, CFG, 30, 210)
-        assert t.astimezone(PRAGUE).date() > date(2026, 10, 12)
+        assert t.astimezone(PRAGUE).date() == date(2026, 10, 12) and t > now and classify(CFG, t) is WindowKind.DISCRETIONARY
+        assert t.astimezone(PRAGUE).hour < 22
+
+    def test_no_free_time_left_today_targets_a_later_day(self) -> None:
+        now = local(date(2026, 10, 12), 21, 58)
+        assert plan_target(now, SEED, CFG, 30, 210).astimezone(PRAGUE).date() > date(2026, 10, 12)
 
     def test_met_during_quiet_hours(self) -> None:
         now = local(date(2026, 10, 13), 3, 0)
@@ -72,13 +78,13 @@ class TestPlanTarget:
             lt = t.astimezone(PRAGUE)
             assert lt.date() == d and (10, 30) <= (lt.hour, lt.minute) <= (13, 30)
 
-    def test_weekend_morning_after_the_window_moves_to_the_next_day(self) -> None:
-        d = date(2026, 10, 17)                      # Saturday, 14:00 is past every possible 10:30-13:30 target
+    def test_weekend_afternoon_after_the_window_stays_that_day(self) -> None:
+        d = date(2026, 10, 17)                      # Saturday, 14:00 is past every possible 10:30-13:30 target: later the same day
         t = plan_target(local(d, 14, 0), SEED, CFG, 30, 210)
-        assert t.astimezone(PRAGUE).date() == date(2026, 10, 18)
+        assert t.astimezone(PRAGUE).date() == d and t > local(d, 14, 0)
 
     def test_friday_evening_rolls_into_the_weekend_base(self) -> None:
-        t = plan_target(local(date(2026, 10, 16), 21, 0), SEED, CFG, 30, 210)        # Friday night
+        t = plan_target(local(date(2026, 10, 16), 21, 58), SEED, CFG, 30, 210)       # Friday, no free time left
         lt = t.astimezone(PRAGUE)
         assert lt.date() == date(2026, 10, 17) and (10, 30) <= (lt.hour, lt.minute) <= (13, 30)
 
@@ -101,7 +107,8 @@ class TestPlanTarget:
                 assert classify(CFG, t) is WindowKind.DISCRETIONARY
                 lt = t.astimezone(PRAGUE)
                 lo, hi = ((10, 30), (13, 30)) if is_non_working_day(CFG, lt.date()) else ((17, 0), (20, 0))
-                assert lo <= (lt.hour, lt.minute) <= hi
+                same_day = lt.date() == now.astimezone(PRAGUE).date()
+                assert lo <= (lt.hour, lt.minute) <= hi or (same_day and (lt.hour, lt.minute) > hi)   # owner, 2026-11-17: later today
 
     def test_same_seed_same_day_is_reproducible_and_different_seed_differs(self) -> None:
         now = local(date(2026, 10, 12), 9, 0)
