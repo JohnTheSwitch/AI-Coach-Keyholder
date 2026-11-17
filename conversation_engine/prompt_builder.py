@@ -252,6 +252,9 @@ def _render_todays_tasks(data: object) -> str:
     lines = ["Today's tasks the system gave the user, and where each stands (authoritative; the system decides them, never you):"]
     for t in data["tasks"]:
         lines.append(f"- {t['kind']}: {_quoted(t['task'])}: {t['state']}.")
+    # Bug fix 2026-11-17: "I wanna do a leg day today" got "you're not getting out of tomorrow's leg day": yesterday's turns carry no date.
+    lines.append("These are all for TODAY, the user's current day. Earlier messages in this conversation can be from previous days: a workout or "
+                 "task scheduled there was for that day. Never call a session listed here tomorrow's, and never invent a session for tomorrow.")
     return "\n".join(lines)
 
 

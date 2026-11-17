@@ -103,3 +103,10 @@ after it happened (an old lock on the first run) is never reviewed. Needs the `h
 
 **Bug fixed with it:** `proof_failed`, `contradiction`, `relock_picture_missing` and `obedience_missed` were never in the table's kind CHECK, and
 `INSERT OR IGNORE` dropped them silently. Migration 076 widens it; `tests/infractions/test_health_claims.py` stores every `SignalKind`.
+
+## A release he never opened (bug fix 2026-11-17)
+
+A release-window overrun asks for the relock picture. When he answered "I was never unlocked", the model read it against "release confirmed"
+and said not explained. Now code decides it first: `stayed_locked(window_start, window_end)` (`system/keyholder_lock_source.get_lock_stayed_locked`,
+from the lock observations) returning True clears the finding as `never_opened`, both before the judge and again before it counts. False, unknown
+or an unreadable observation changes nothing.

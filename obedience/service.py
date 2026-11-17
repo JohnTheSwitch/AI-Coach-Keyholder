@@ -4,8 +4,8 @@ obedience/service.py
 Daily obedience tasks (owner, 2026-11-14; work queue Q4b; migration 069): "a strict keyholder that would make me an obedient slave".
 
 One task a day at a random moment in free time (never quiet hours or work hours), from a closed catalogue (`CATALOG`) that uses only the gear
-the owner listed: metal plugs, the vibrating plug, two suction-cup dildos, two ropes, cuffs; about one in four days a workout task from his home
-gym. It is shown as a Chaster task: a photo with Chaster's code, judged by the community. The photo shows what the text names and only that:
+the owner listed: metal plugs, the vibrating plug, two suction-cup dildos, two ropes, cuffs. No workout tasks (owner, 2026-11-17: erotic only;
+the gym training plan is separate). It is shown as a Chaster task: a photo with Chaster's code, judged by the community. The photo shows what the text names and only that:
 never his face or anything he could be recognised by.
 
   plan     on the day's first pass in free time, a random moment later that day is chosen (none left: no task that day)
@@ -53,7 +53,9 @@ PHOTO_DEADLINE = timedelta(minutes=60)
 _EXTRA_TASK = re.compile(r"(extra (erotic )?task|ukol navic|úkol navíc)( (at|v) (?P<at>\d{1,2}:\d{2}))?")
 VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
-WORKOUT_SHARE = 0.25                     # about one day in four is a workout task (owner, 2026-11-14)
+# Owner, 2026-11-17: "I don't remember approving that. I just wanted erotic tasks." The 1-in-4 workout task was Claude's own proposal (14 Nov),
+# built without an answer. Obedience tasks are erotic only; his gym training plan (training:*) is separate and unchanged.
+WORKOUT_SHARE = 0.0
 PLAN_STEP = timedelta(minutes=15)
 POSTPONE = timedelta(hours=2)            # "Someone's around": once per task (owner, 2026-11-14: he does not live alone)
 # Owner, 2026-11-16 23:00: "Are you alone right now?" has no timer any more (it was 15 minutes, then the discreet version); it waits for his
@@ -286,7 +288,8 @@ EXTRAS: tuple[Task, ...] = (
 WORKOUTS: tuple[Task, ...] = (
     Task("workout_squats", "The bar in your rack after 5 sets of squats. Photo of the bar and your legs only.", "workout"),
     Task("workout_pullups", "5 sets of pull-ups done, the last one with your vest. Photo of the bar and your hands only.", "workout"),
-    Task("workout_pushups", "50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only.", "workout", _DD),
+    Task("workout_pushups", "50 push-ups on your handles with the gray Deep Diver in. Photo from the side, neck down only.", "workout", _DD,
+         uses=frozenset({"workout", "vibe"})),
     Task("workout_plank", "A 3-minute plank, cage visible. Photo from the side, neck down only.", "workout"),
     Task("workout_bike", "10 rounds of 20 s hard / 40 s easy on the air bike. Photo of the bike's display only.", "workout"),
     Task("workout_incline", "20 minutes of incline walking on the treadmill. Photo of the treadmill display only.", "workout"),
@@ -361,16 +364,22 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
                 dm_note=GAG_NOTE if "gag" in addons else "")
 
 
+# Bug fix 2026-11-17 (owner: "never two anal sessions in two days ... yesterday and the day before?"): the plug ladder was remembered as "plug"
+# and the Deep Diver add-on as "vibe", so a ladder day was followed by a vibe day. Anything in him is one gear for the two-day rule.
+ANAL = frozenset({"plug", "vibe"})
+
+
 def gear_of(key: str) -> set[str]:
-    """The main gear a task used (for "never two days in a row")."""
+    """The main gear a task used (for "never two days in a row"); a plug of any kind counts as all of ANAL."""
     if key.startswith("pose:"):
-        return set(key.split("+")[1:])
-    if key.startswith("plug:"):
-        return {"plug"}
-    task = _BY_KEY.get(key)
-    if task is not None and task.uses:
-        return set(task.uses)
-    return {key.split("_")[0]}
+        gear = set(key.split("+")[1:])
+    elif key.startswith("plug:"):
+        gear = {"plug"}
+    elif (task := _BY_KEY.get(key)) is not None and task.uses:
+        gear = set(task.uses)
+    else:
+        gear = {key.split("_")[0]}
+    return gear | ANAL if gear & ANAL else gear
 
 
 # Owner, 2026-11-16 23:35: the voters in Chaster don't know his toys by name, so they see what each one is; whether it vibrates is not shown
@@ -776,6 +785,7 @@ class ObedienceTasks:
         workout_share = min(1.0, WORKOUT_SHARE * (AVOID_WEIGHT if "workout" in avoided else 1.0))
         # Owner, 2026-11-16 22:40: the extra erotic task (slot 1) drew "calf raises with the bar"; an extra task is erotic only.
         if not erotic_only and self._rng.random() < workout_share and "workout" not in yesterday_gear and self._ports.feature_on("workouts"):
+            workouts = [t for t in workouts if not (gear_of(t.key) - {"workout"}) & yesterday_gear] or workouts
             return self._rng.choice([t for t in workouts if t.key not in banned] or workouts)
         roll = self._rng.random()
         if roll < min(0.5, LADDER_SHARE * (AVOID_WEIGHT if "plug" in avoided else 1.0)) and "plug" not in yesterday_gear:

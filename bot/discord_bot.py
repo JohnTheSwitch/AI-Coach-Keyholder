@@ -983,8 +983,10 @@ def main() -> None:
             max_output_characters=600, deterministic=True,
         ))
 
+    from system.keyholder_lock_source import get_lock_stayed_locked
     detectors = build_detectors(config, core, token_manager=background_tokens or chaster_token_manager, lock_client=chaster_lock_client,
-                                connections=chaster_connections, vacation=wiring.vacation, complete=judge_complete)
+                                connections=chaster_connections, vacation=wiring.vacation, complete=judge_complete,
+                                stayed_locked=lambda a, b, c=core: get_lock_stayed_locked(c, a, b))
     if exemption_dm is not None:
         # Owner, 2026-11-13: the wearer got the keyholder's button and approved their own exemption. The system decides now, on their reason.
         from exemptions.judge import ExemptionJudge

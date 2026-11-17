@@ -4,7 +4,7 @@ Daily obedience tasks (owner, 2026-11-14; work queue Q4b; migration 069): "a str
 
 - **One task a day** at a random moment in free time (never quiet hours or work hours), chosen on the day's first pass in free time.
 - **Closed catalogue** (`CATALOG`) using only the owner's own gear: metal plugs, the vibrating plug, two suction-cup dildos, the cotton and
-  hemp ropes, the cuffs; about one day in four a workout task from his home gym (rack, pull-ups, push-ups, plank, training log).
+  hemp ropes, the cuffs; no workout tasks: owner, 2026-11-17, "I just wanted erotic tasks" (the 1-in-4 workout task from 14 Nov was never approved; `WORKOUT_SHARE` is 0, the catalogue stays for later; the gym training plan is separate and unchanged).
 - **Shown as a Chaster task:** a photo with Chaster's code, judged by the community, within 60 minutes. Every text says what the photo
   shows and only that: never his face or anything he could be recognised by.
 - **Mandatory:** not done in time, late, or the photo rejected -> asked to explain (infractions path, the same judge); unexplained =
@@ -32,7 +32,7 @@ exemption: asking for one never cancels a task.
 **Variety (owner, 2026-11-14: "make the tasks so that it's not repetitive").** Most erotic days are composed from a pose (kneeling,
 all fours, forehead to the floor, facing a wall, corner, face down) and one or two add-ons (the vibrating Deep Diver, blindfold, cuffs,
 thighs tied, 'locked' on the thigh): about 60 combinations, never blindfolded in restraints, one restraint at a time. Nothing is repeated
-within 14 days and the main gear never repeats two days running (plug sessions get a rest day between them). Workouts rotate through nine
+within 14 days and the main gear never repeats two days running (plug sessions get a rest day between them; since 2026-11-17 anything in him counts as one gear: the ladder, the Deep Diver add-on, the plug extras and the push-ups with the Deep Diver). Workouts rotate through nine
 from his home gym; heavy lifts never with a plug.
 
 **Plug-training rules from research (2026-11-14):** warm up on the size below; short sessions that grow slowly (20 -> 60 minutes);

@@ -143,18 +143,6 @@ def test_nothing_on_vacation_or_outside_free_time(tmp_path) -> None:
         assert tx.fetch_one("SELECT COUNT(*) AS n FROM obedience_tasks")["n"] == 0
 
 
-def test_about_one_day_in_four_is_a_workout() -> None:
-    import tempfile
-    from pathlib import Path
-    kinds = []
-    with tempfile.TemporaryDirectory() as d:
-        w = World(Path(d))
-        for _ in range(200):
-            kinds.append(w.tasks._pick(MORNING.date()).kind)
-    share = kinds.count("workout") / len(kinds)
-    assert 0.15 < share < 0.35
-
-
 class TestPlugLadder:
     """Owner, 2026-11-14: training up to the Wolf Rimfire S, one rung after 3 verified wears, only plugs he owns."""
 
@@ -246,6 +234,15 @@ class TestVariety:
         assert len(keys) == REPEAT_DAYS and len(set(k for k in keys if not k.startswith("plug:"))) == len([k for k in keys if not k.startswith("plug:")])
         for a, b in zip(keys, keys[1:]):
             assert not (gear_of(a) & gear_of(b)), (a, b)
+
+    def test_never_anything_in_him_two_days_running(self) -> None:
+        # Bug fix 2026-11-17: the ladder (15 Nov) was "plug" and the wall pose with the Deep Diver (16 Nov) was "vibe", so both were given.
+        from obedience.service import gear_of
+        anal = ("plug:deep_diver", "pose:wall+vibe", "prostate_training", "wear_diver_long", "plug_quiet", "hd_back_vibe", "workout_pushups")
+        for a in anal:
+            for b in anal:
+                assert gear_of(a) & gear_of(b), (a, b)
+        assert not gear_of("pose:wall+blind") & gear_of("plug:deep_diver") and "workout" in gear_of("workout_pushups")
 
     def test_it_hurt_last_time_so_one_rung_back(self, tmp_path) -> None:
         w = World(tmp_path)
@@ -696,6 +693,7 @@ def test_the_conversation_sees_todays_tasks_and_where_they_stand(tmp_path) -> No
     assert task["state"] == "photo sent, the community vote is running" and "lube" not in task["task"]
     fragment = ObedienceTodayContextProvider(read=lambda u, now: get_obedience_today(w.core, u, "2026-11-15")).provide_context(subject_key=U, now=due)
     assert "the community vote is running" in _render_todays_tasks(fragment.data)
+    assert "all for TODAY" in _render_todays_tasks(fragment.data) and "Never call a session listed here tomorrow's" in _render_todays_tasks(fragment.data)
     assert ObedienceTodayContextProvider(read=lambda u, now: []).provide_context(subject_key=U, now=due) is None
 
 
@@ -858,3 +856,11 @@ def test_an_extra_erotic_task_is_never_a_workout(tmp_path) -> None:
     for mode in ("alone", "discreet"):
         for _ in range(200):
             assert not w.tasks._pick(MORNING.date(), mode, erotic_only=True).key.startswith("workout_")
+
+
+def test_the_daily_task_is_never_a_workout_either(tmp_path) -> None:
+    """Owner, 2026-11-17: "I just wanted erotic tasks." The 1-in-4 workout task was never approved."""
+    w = World(tmp_path)
+    for mode in ("alone", "discreet"):
+        for _ in range(300):
+            assert not w.tasks._pick(MORNING.date(), mode).key.startswith("workout_")

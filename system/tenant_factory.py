@@ -628,6 +628,7 @@ class TenantFactory:
             return None
         from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
         from infractions.wiring import build_detectors
+        from system.keyholder_lock_source import get_lock_stayed_locked
         complete = None
         if s.model is not None:
             def complete(system_prompt: str, user_message: str, model=s.model) -> str:
@@ -637,7 +638,7 @@ class TenantFactory:
         # The watches list the locks THIS wearer wears, through their own connection; the "owner" of a tenant's questions is the wearer.
         own = dataclasses.replace(cfg, chaster_execution_keyholder_user_id=wearer_id, owner_user_id=wearer_id)
         return build_detectors(own, core, token_manager=tokens, lock_client=s.lock_client, connections=connections,
-                               vacation=wiring.vacation, complete=complete)
+                               vacation=wiring.vacation, complete=complete, stayed_locked=lambda a, b, c=core: get_lock_stayed_locked(c, a, b))
 
     # ------------------------------------------------------------------ parity 5: exemptions and hygiene openings (work queue Q5)
 

@@ -50,6 +50,7 @@ logger = logging.getLogger("ai_coach_keyholder.infractions")
 __all__ = ["SignalKind", "InfractionSignals", "GRACE", "APPEAL_WINDOW", "CAPTURE_WINDOW", "JUDGE_GIVE_UP", "RULE_GROUPS", "EVIDENCE", "Signal",
            "UNANSWERED_RULE_GROUP", "ADOPTED_RULE_GROUPS", "ASK_TEXT"]
 
+_NEVER_OPENED = "You're right: the lock readings show it stayed locked the whole time. Nothing counts."
 GRACE = timedelta(hours=12)                 # how long the wearer has to answer before silence counts
 APPEAL_WINDOW = timedelta(hours=2)          # between "unexplained" and the Incident counting
 MAX_APPEALS = 1                              # owner, 2026-11-13: one appeal for any judge, and it must bring something new
@@ -202,7 +203,8 @@ def _appeal_buttons(signal_id: str) -> tuple[ActionSpec, ...]:
 
 class InfractionSignals:
     def __init__(self, db_path: str | Path | None = None, *, core: CoreDatabase | None = None, excuses: Excuses, judge: ExplanationJudge,
-                 register_incident: Callable[[Signal, datetime], None], confirm_incident: Callable[[str, str, datetime], None], owner_user_id: str | None = None) -> None:
+                 register_incident: Callable[[Signal, datetime], None], confirm_incident: Callable[[str, str, datetime], None], owner_user_id: str | None = None,
+                 stayed_locked: Callable[[datetime, datetime], bool | None] | None = None) -> None:
         """`register_incident(signal, now)` files the Incident under `signal.incident_id` and `signal.rule_group`, chosen in advance so a retry cannot duplicate it.
         `confirm_incident(incident_id, evidence, now, admitted)` confirms it as the system's own decision; `admitted` = the wearer owned up. `owner_user_id` is no longer used: nobody else decides."""
         self._core = core if core is not None else CoreDatabase(Path(db_path))
@@ -211,6 +213,8 @@ class InfractionSignals:
         self._register = register_incident
         self._confirm = confirm_incident
         self._wearer: str | None = None
+        # Owner, 2026-11-17: a release he never opened is no overrun. `stayed_locked(start, end)` reads the lock observations; only True clears.
+        self._stayed_locked = stayed_locked
 
     # ------------------------------------------------------------------ raising
 
@@ -436,6 +440,9 @@ class InfractionSignals:
             stage, text, earlier = "follow_up", row["follow_up"], row["explanation"]
         else:
             stage, text, earlier = "explanation", row["explanation"], None
+        if self._never_opened(row):
+            self._clear(signal_id, "never_opened", now, note="The lock was seen only as locked through the whole window: it was never opened.")
+            return OutgoingMessage(text=_NEVER_OPENED)
         with self._core.transaction() as tx:
             related = tuple(r["explanation"] for r in tx.fetch_all(
                 "SELECT explanation FROM infraction_signals WHERE user_id = ? AND kind = ? AND id != ? AND explanation IS NOT NULL AND explanation_at >= ? "
@@ -546,9 +553,21 @@ class InfractionSignals:
             self._tell(signal.id, "counted", OutgoingMessage(text=_COUNTED), now)
         return 1 if counted else 0
 
+    def _never_opened(self, row) -> bool:
+        """Owner, 2026-11-17: a release window he never used is no overrun. Code reads the lock observations, so no model can misjudge it."""
+        if row["kind"] != SignalKind.RELEASE_WINDOW_OVERRUN.value or self._stayed_locked is None or not row["window_start"] or not row["window_end"]:
+            return False
+        try:
+            return self._stayed_locked(parse_iso(row["window_start"]), parse_iso(row["window_end"])) is True
+        except Exception:                                        # an unreadable observation is no excuse; the finding goes on as usual
+            logger.exception("Could not read whether the released lock stayed locked.")
+            return False
+
     def _excused(self, row, signal: Signal, window_of) -> str | None:
         if signal.kind in (SignalKind.SELF_REPORT_HYGIENE, SignalKind.EXEMPTION_OVERRIDE, SignalKind.HEALTH_CLAIM):
             return None                              # it happened during an approved opening (or is the claim itself) by definition: that cannot excuse it
+        if self._never_opened(row):
+            return "never_opened"
         if row["window_start"] and row["window_end"]:
             start, end = parse_iso(row["window_start"]), parse_iso(row["window_end"])
         elif window_of is not None:

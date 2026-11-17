@@ -95,7 +95,7 @@ def overrun_signal(signals: InfractionSignals, *, trust_domain: str):
     return raise_overrun
 
 
-def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, connections, vacation=None, complete=None) -> DetectorWiring:
+def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, connections, vacation=None, complete=None, stayed_locked=None) -> DetectorWiring:
     """`complete(system_prompt, user_message) -> raw model text` judges the wearer's explanations; None: only health and safety answers are judged (by code)."""
     out = DetectorWiring(interval_seconds=max(60, int(getattr(config, "detector_poll_seconds", 120) or 120)), core=core)
     want_hygiene = bool(getattr(config, "enable_hygiene_watch", False))
@@ -124,7 +124,8 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
                                evidence_description=evidence[:1000], now=now,
                                cooperation=CooperationAssessment(self_disclosed=True, notes="Owned up when asked.") if admitted else None)
 
-    out.signals = InfractionSignals(config.db_path, core=core, excuses=excuses, judge=ExplanationJudge(complete), register_incident=register, confirm_incident=confirm)
+    out.signals = InfractionSignals(config.db_path, core=core, excuses=excuses, judge=ExplanationJudge(complete), register_incident=register, confirm_incident=confirm,
+                                   stayed_locked=stayed_locked)
     out.signals.set_wearer(getattr(config, "check_in_user_id", None) or getattr(config, "chaster_execution_wearer_user_id", None) or owner)
     if complete is None:
         out.notes.append("Detector questions: no language model, so only health and safety answers can be judged; other answers wait and are then dropped.")

@@ -809,3 +809,58 @@ def test_the_excuse_covers_a_freeze_that_already_ended(tmp_path) -> None:
     engine.resume("p", FreezeReason.EMERGENCY_OVERRIDE, now=NOW + timedelta(minutes=30))
     assert w.excuses.reason(USER, NOW, NOW + timedelta(minutes=10)) == "emergency_override"
     assert w.excuses.reason(USER, NOW + timedelta(hours=2), NOW + timedelta(hours=3)) is None
+
+
+class TestAReleaseNeverOpened:
+    """Owner, 2026-11-17: the judge read "I was never unlocked" against "release confirmed" and said not explained. The lock readings decide it, in code."""
+
+    def _overrun(self, w, stayed):
+        w.signals._stayed_locked = stayed
+        start, end = NOW - timedelta(hours=3), NOW - timedelta(minutes=50)
+        with w.core.transaction() as tx:
+            w.signals.raise_in_transaction(tx, user_id=USER, kind=SignalKind.RELEASE_WINDOW_OVERRUN, subject_id="auth-1", trust_domain=DOMAIN,
+                                           detail="No verification picture within the 2-hour window after a release.", wearer_text="Why?", now=NOW,
+                                           facts="Release confirmed.", window=(start, end))
+        return w.q("SELECT id, incident_id FROM infraction_signals")[0]
+
+    def _explain(self, w, signal, text, at):
+        w.at = at
+        w.dm.press(discord_user_id="42", action="explain", ident=signal["id"])
+        return w.signals.capture(USER, text, at)
+
+    def test_a_lock_that_stayed_locked_clears_it_without_the_model(self, tmp_path) -> None:
+        w = World(tmp_path)
+        seen = []
+        signal = self._overrun(w, lambda a, b: seen.append((a, b)) or True)
+        reply = self._explain(w, signal, "I was never unlocked in the first place", NOW + timedelta(hours=1))
+        assert w.model.prompts == [] and "stayed locked" in reply.text and w.status() == [("release_window_overrun", "cleared")]
+        assert w.q("SELECT cleared_reason FROM infraction_signals")[0]["cleared_reason"] == "never_opened"
+        assert seen[0] == (NOW - timedelta(hours=3), NOW - timedelta(minutes=50))
+        w.advance(NOW + GRACE * 3)
+        assert w.incidents() == []
+
+    def test_an_already_judged_finding_is_cleared_before_it_counts(self, tmp_path) -> None:
+        w = World(tmp_path)
+        answer = [None]
+        signal = self._overrun(w, lambda a, b: answer[0])
+        w.model.replies = [verdict("not_explained")]
+        self._explain(w, signal, "I was never unlocked", NOW + timedelta(hours=1))
+        assert w.status() == [("release_window_overrun", "decided")]
+        answer[0] = True
+        w.advance(NOW + timedelta(hours=1) + APPEAL_WINDOW + timedelta(minutes=1))
+        assert w.incidents() == [] and w.status() == [("release_window_overrun", "cleared")]
+
+    @pytest.mark.parametrize("reading", [False, None, RuntimeError("db")])
+    def test_an_opened_or_unknown_lock_still_counts(self, tmp_path, reading) -> None:
+        w = World(tmp_path)
+
+        def stayed(a, b):
+            if isinstance(reading, Exception):
+                raise reading
+            return reading
+
+        signal = self._overrun(w, stayed)
+        w.model.replies = [verdict("not_explained")]
+        self._explain(w, signal, "I was never unlocked", NOW + timedelta(hours=1))
+        w.advance(NOW + timedelta(hours=1) + APPEAL_WINDOW + timedelta(minutes=1))
+        assert w.status() == [("release_window_overrun", "confirmed")]
