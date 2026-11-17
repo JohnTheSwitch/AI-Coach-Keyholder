@@ -42,6 +42,10 @@ vetoes (penalty window, supervision) cancel any plan -> requirement met (balance
 barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorization()` (spends the token) and record an
 `UNFREEZE` decision under rule `barrier.release` -> backstop when the barrier has been up `MAX_BARRIER_HOLD_HOURS`
 (72, placeholder; ignores vetoes, spends nothing, still needs a valid window and a confirmed barrier).
+  **Only for a broken release check** (owner, 2026-11-17, option A: "it just seems like a gap"): it fires only after every tick has failed
+  for `MAX_BARRIER_HOLD_HOURS` in a row (`ReleaseEnginePeriodicTask.release_check_broken`). Not earning a release, supervision, a penalty
+  window or debt never reach it, and a gap with no ticks (the bot off, the PC asleep) is not a failure. The emergency unlock, `halt` /
+  `leave` and Chaster's own limits stay the safety outside this software.
   Live, 2026-11-13: the stored lock reading predated the system's own refreeze ("not frozen"), nothing refreshed it while supervision held
   releases, and the backstop pre-checked that reading, so it could never fire. The backstop now refreshes the reading itself whenever it is
   older than 6 hours (`_BACKSTOP_RECHECK`), retrying a failed refresh at most hourly.

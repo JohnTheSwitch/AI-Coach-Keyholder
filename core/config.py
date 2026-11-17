@@ -155,8 +155,9 @@ class Config:
     # Adaptive release: target = WORKDAY_END + a pseudorandom offset in this range (minutes).
     unlock_window_min_offset_minutes: int = 30
     unlock_window_max_offset_minutes: int = 210
-    # Safety backstop: a barrier held longer than this is released at the next valid
-    # window regardless of tokens (placeholder value pending owner tuning).
+    # Safety backstop: when the release check has failed on every tick for this long, a barrier held
+    # this long is released at the next valid window regardless of tokens (owner, 2026-11-17: option A,
+    # only a broken check; never for not earning a release).
     max_barrier_hold_hours: int = 72
     # Proactive supervision (trust-driven state; consumes trust_domain.recalculated). OFF by default.
     enable_supervision: bool = True

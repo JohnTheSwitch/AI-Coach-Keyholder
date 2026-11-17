@@ -317,6 +317,7 @@ class TestProviderOutcomes:
 class TestBackstop:
     def test_releases_after_the_maximum_hold_without_a_token(self, tmp_path) -> None:
         world = World(tmp_path, frozen_since=timedelta(hours=73))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world.at(local(MON, 18, 0))
         report = world.cycle()
         assert "backstop:authorized" in report.notes and world.transport.calls == [("unfreeze", "lock-1")]
@@ -327,22 +328,26 @@ class TestBackstop:
 
     def test_not_before_the_maximum_hold(self, tmp_path) -> None:
         world = World(tmp_path, frozen_since=timedelta(hours=71))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world.at(local(MON, 18, 0))
         world.cycle()
         assert world.transport.calls == [] and world.auth_states() == []
 
     def test_still_respects_the_window(self, tmp_path) -> None:
         world = World(tmp_path, frozen_since=timedelta(days=5))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         report = world.cycle(local(MON, 10, 0))               # work hours
         assert "backstop:window_closed" in report.notes and world.transport.calls == []
 
     def test_ignores_vetoes(self, tmp_path) -> None:
         world = World(tmp_path, frozen_since=timedelta(days=5), penalty=True, supervised=True)
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world.cycle(local(MON, 18, 0))
         assert world.transport.calls == [("unfreeze", "lock-1")]
 
     def test_unknown_frozen_since_never_fires(self, tmp_path) -> None:
         world = World(tmp_path, frozen_since=timedelta(days=5))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world._obs = lambda: ChasterProviderObservation(
             id="o", connection_id=U, provider="chaster", chaster_lock_id="lock-1", status=ChasterProviderStatus.LOCKED,
             fetched_at=world.now - timedelta(minutes=1), created_at=world.now, is_frozen=True, has_keyholder=True)
@@ -353,6 +358,7 @@ class TestBackstop:
     def test_a_reading_from_before_the_release_does_not_fire_it_again(self, tmp_path) -> None:
         """Live 2026-11-10: the old reading still said frozen, and the backstop was recorded again every minute until the cooldown stopped it."""
         world = World(tmp_path, frozen_since=timedelta(days=6))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world.cycle(local(MON, 18, 0))
         assert world.auth_states() == ["provider_confirmed"]
         world.refresh_effective = False                     # Chaster gives no newer reading yet
@@ -366,8 +372,45 @@ class TestBackstop:
 
     def test_planning_only_mode_never_runs_the_backstop(self, tmp_path) -> None:
         world = World(tmp_path, can_execute=False, frozen_since=timedelta(days=5))
+        world.task.release_check_broken = lambda now: True       # option A (2026-11-17): the backstop's own mechanics, the check taken as broken
         world.cycle(local(MON, 18, 0))
         assert world.auth_states() == []
+
+
+class TestTheBackstopIsOnlyForABrokenCheck:
+    """Owner, 2026-11-17 (option A): "it just seems like a gap". The backstop is a safety net against a broken release check, never a free
+    release for not earning one."""
+
+    def test_a_working_check_never_releases_however_long_he_is_held(self, tmp_path) -> None:
+        world = World(tmp_path, frozen_since=timedelta(days=10), penalty=True, supervised=True)
+        for hours in (0, 1, 80, 200):
+            report = world.cycle(local(MON, 18, 0) + timedelta(hours=hours))
+            assert not any(n.startswith("backstop") for n in report.notes)
+        assert world.transport.calls == []
+
+    def test_after_the_maximum_hold_of_failing_ticks_it_still_releases(self, tmp_path) -> None:
+        world = World(tmp_path, frozen_since=timedelta(days=10))
+        world.task._penalty_active = lambda: 1 / 0                    # the check breaks and stays broken
+        for at in (local(MON, 18, 0) - timedelta(hours=73), local(MON, 18, 0)):
+            world.at(at)
+            try:
+                world.task.run(world.now)
+            except ZeroDivisionError:
+                pass
+        world.executor.run_once(now=world.now)
+        assert world.transport.calls == [("unfreeze", "lock-1")]
+
+    def test_a_few_failing_ticks_release_nothing(self, tmp_path) -> None:
+        world = World(tmp_path, frozen_since=timedelta(days=10))
+        world.task.run(local(MON, 17, 0))
+        world.task._penalty_active = lambda: 1 / 0
+        world.at(local(MON, 18, 0))
+        try:
+            world.task.run(world.now)
+        except ZeroDivisionError:
+            pass
+        world.executor.run_once(now=world.now)
+        assert world.transport.calls == []
 
 
 class TestTheBackstopLooksAtTheLock:
@@ -385,6 +428,7 @@ class TestTheBackstopLooksAtTheLock:
             if world.refresh_effective:
                 world.frozen, world.fetched_at = True, None
         world.task._refresh = refresh
+        world.task.release_check_broken = lambda now: True
         return world
 
     def test_an_old_reading_is_refreshed_and_the_backstop_fires(self, tmp_path) -> None:

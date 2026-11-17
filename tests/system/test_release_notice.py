@@ -230,6 +230,7 @@ class TestNeverATrap:
 
     def test_the_backstop_is_never_held_up_by_a_pending_check_in(self, tmp_path) -> None:
         w = Harness(tmp_path, frozen_since=timedelta(days=4))
+        w.task.release_check_broken = lambda now: True              # option A (2026-11-17): only a broken check reaches the backstop
         report = w.go_to_due()[1]
         assert "release_waiting_for_check_in" in report.notes and "backstop:authorized" in report.notes
 

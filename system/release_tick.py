@@ -94,6 +94,10 @@ class ReleaseEnginePeriodicTask:
         self.release_earned: Callable[[datetime], str | None] | None = None   # earn the release (owner, 2026-11-15): a reason it waits, or None
         self.release_debt: Callable[[], object] | None = None    # roadmap B4 (owner, 2026-11-14): () -> what is still owed (lines); truthy holds a release
         self._backstop_refreshed_at: datetime | None = None
+        # Owner, 2026-11-17 (option A): the maximum-hold backstop is a safety net against a BROKEN release check, never a free release for
+        # not earning one. It fires only after every tick has failed for MAX_BARRIER_HOLD_HOURS in a row. A gap with no ticks (the bot off,
+        # the PC asleep) is not a failure.
+        self._failing_since: datetime | None = None
         self._first_sight_at: datetime | None = None
         self.first_sight_every: timedelta | None = _FIRST_SIGHT_EVERY        # None: no first-sighting freeze (tests of other rules)
         # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
@@ -114,7 +118,22 @@ class ReleaseEnginePeriodicTask:
     # ------------------------------------------------------------------ public
 
     def run(self, now: datetime) -> TickReport:
-        report = self._run(now)
+        try:
+            report = self._run(now)
+        except Exception:
+            if self._failing_since is None:
+                self._failing_since = now
+            report = TickReport()
+            report.add("tick_failed")
+            try:
+                self._maybe_backstop(now, report)           # the only path that can still release when the check itself is broken
+            except Exception:
+                logger.exception("The maximum-hold backstop failed too.")
+            if tuple(report.notes) != self._last_logged:
+                release_decision("Release tick: " + ", ".join(report.notes) + ".")
+            self._last_logged = tuple(report.notes)
+            raise
+        self._failing_since = None
         notes = tuple(report.notes)
         if notes and notes != self._last_logged:          # the decision log (owner, 2026-11-10): each change of outcome once, not every minute
             release_decision("Release tick: " + ", ".join(notes) + ".", **self._facts(now))
@@ -331,7 +350,13 @@ class ReleaseEnginePeriodicTask:
             return True
         return False
 
+    def release_check_broken(self, now: datetime) -> bool:
+        """True when every tick has failed for the maximum hold in a row (owner, 2026-11-17, option A)."""
+        return self._failing_since is not None and now - self._failing_since >= self._max_hold
+
     def _maybe_backstop(self, now: datetime, report: TickReport) -> None:
+        if not self.release_check_broken(now):
+            return
         if not self._can_execute or self._halted() or self._engine.open_authorizations(self._user):
             return
         latest = self._get_obs()
