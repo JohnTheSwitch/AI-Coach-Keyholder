@@ -101,6 +101,11 @@ evaluation adds it to the day's bonus. Training and board tasks never draw one: 
 `chaster_brief(text)` is what Chaster shows the voters: only what he does and what the photo shows, with short plug names. Lube, warm-up
 and wearing-time sentences stay in the DM only. Training texts are brief already and go as they are.
 
+## No heads-up without a lock (bug fix 2026-11-18, live)
+
+The day after a release a clean-up heads-up came for a task that could never be put in Chaster (no lock). `_prep_notice` now waits while
+there is no lock or the runtime halt holds, like the task itself; a task still waiting when free time ends is skipped without consequence.
+
 ## Heads-up only before anal tasks; deadline = task time + 1 hour (owner, 2026-11-16; queue A0, A0b; migration 081)
 
 At the clean-up heads-up (PREP_AHEAD before the task) both versions are chosen and kept in `obedience_tasks.prepared`; the answer to "Are you

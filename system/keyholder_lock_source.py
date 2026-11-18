@@ -32,7 +32,7 @@ from system.managed_lock_source import PROVIDER, LockCheck, _time, _user_id
 
 logger = logging.getLogger("ai_coach_keyholder.system.keyholder_lock_source")
 
-__all__ = ["KeyholderLockObservationSource", "check_keyholder_lock", "get_lock_stayed_locked"]
+__all__ = ["KeyholderLockObservationSource", "check_keyholder_lock", "get_lock_stayed_locked", "get_unlocked_throughout"]
 
 SOURCE = "keyholder_search"
 
@@ -63,6 +63,20 @@ def get_lock_stayed_locked(core: CoreDatabase, since: datetime, until: datetime)
     if any(r["lock_id"] == before["lock_id"] and r["status"] != "locked" for r in rows) or later[-1]["lock_id"] != before["lock_id"]:
         return False
     return True
+
+
+def get_unlocked_throughout(core: CoreDatabase, start: datetime, end: datetime) -> bool:
+    """Owner, 2026-11-18: a day without a lock counts like a vacation day. True only when the last reading at or before `start` said the lock
+    was no longer locked (the lock had ended) and no reading in (start, end] saw a lock locked. No reading before `start` (nothing known),
+    or the bot off while still locked (its last reading said locked), is never "unlocked". Read-only."""
+    with core.transaction() as tx:
+        before = tx.fetch_one("SELECT outcome, status FROM managed_lock_observations WHERE fetched_at <= ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1",
+                              (_iso(start),))
+        if before is None or (before["outcome"] == "observed" and before["status"] == "locked"):
+            return False
+        seen = tx.fetch_one("SELECT 1 FROM managed_lock_observations WHERE outcome = 'observed' AND status = 'locked' AND fetched_at > ? "
+                            "AND fetched_at <= ? LIMIT 1", (_iso(start), _iso(end)))
+    return seen is None
 
 
 class KeyholderLockObservationSource:

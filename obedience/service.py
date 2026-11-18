@@ -941,6 +941,10 @@ class ObedienceTasks:
             rows = [dict(r) for r in tx.fetch_all("SELECT id, local_date, slot FROM obedience_tasks WHERE user_id = ? AND status = 'planned' AND catalog_key = ? "
                                                   "AND prepared IS NULL AND planned_at <= ? AND planned_at > ?",
                                                   (self.user_id, ASK_KEY, _iso(now + PREP_AHEAD), _iso(now)))]
+        # Bug fix 2026-11-18 (live): the heads-up went out with no lock (the day after a release), for a task that could never be put in Chaster.
+        # Without a lock, or while halted, it waits; the task itself waits the same way and is skipped without consequence when free time ends.
+        if rows and (self._ports.halted() or self._ports.lock_id(now) is None):
+            return
         for row in rows:
             day = date.fromisoformat(row["local_date"])
             picks = {m: (self._pick(day, m, erotic_only=True) if row.get("slot") == 1 else self._pick(day, m)) for m in (ALONE, DISCREET)}

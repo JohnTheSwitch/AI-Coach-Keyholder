@@ -572,6 +572,19 @@ class TestCleanUpHeadsUp:
         w.tasks.tick(due - timedelta(minutes=5))
         assert self._notes(w) == [PREP_TEXT.format(certainty="uses")] and "clean up" in PREP_TEXT
 
+    def test_none_without_a_lock(self, tmp_path) -> None:
+        """Bug fix 2026-11-18 (live): the day after a release a heads-up came for a task that could never be put in Chaster."""
+        from obedience.service import PREP_AHEAD, Task
+        w = World(tmp_path)
+        w.tasks.tick(MORNING)
+        due = w.due()
+        w.tasks._pick = lambda day, mode="alone", owned=None: Task("plug:deep_diver", "The Deep Diver in. Photo of the plug base only. "
+                                                                   "Keep it in 20 minutes.", "erotic")
+        import dataclasses
+        w.tasks._ports = dataclasses.replace(w.tasks._ports, lock_id=lambda now: None)
+        w.tasks.tick(due - PREP_AHEAD + timedelta(minutes=1))
+        assert self._notes(w) == []
+
     def test_none_when_the_task_does_not_go_in_and_the_chosen_version_is_given(self, tmp_path) -> None:
         """Owner, 2026-11-16 (A0): the versions are chosen at the heads-up; no clean-up message for a task without a plug."""
         from obedience.service import PREP_AHEAD, Task

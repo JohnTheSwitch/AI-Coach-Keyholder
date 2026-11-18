@@ -123,6 +123,13 @@ one number, a bad week took weeks to climb out of. Now:
 - What supervision does is unchanged: it holds releases and shortens the follow-up window after an insufficient check-in answer.
 - Owner reads: `TrustManager.get_short_term_trust()`, `SupervisionService.get_short_term()`. The wearer never sees either score.
 
+## No check-ins while unlocked (owner, 2026-11-18)
+
+The composition passes `paused(now)` = a vacation OR `OwnerLockResolver.known_unlocked(now)` (a lock search succeeded and found no lock of
+his). Then, as in a vacation, nothing is scheduled or sent and open check-ins are `skipped`, never missed. A failed search or a fresh start is
+never "unlocked". The daily evaluation records a day as paused when the lock had ended before it and nothing locked was read during it
+(`system.keyholder_lock_source.get_unlocked_throughout`). Tenants are unchanged.
+
 ## The morning report (owner, 2026-11-15; roadmap "Approved, not built yet" item 5, protocol rung 1)
 
 A check-in row in slot `MORNING_SLOT` (90), switched on by the bot (`morning_on`). Planned once quiet hours are over; due by 12:00 on a workday

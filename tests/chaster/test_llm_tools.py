@@ -484,3 +484,12 @@ class TestMentionsLockTopic:
     def test_other_messages_are_not(self, message) -> None:
         from chaster.llm_tools import mentions_lock_topic
         assert mentions_lock_topic(message) is False
+
+
+def test_a_request_mentioning_a_lock_is_not_a_status_question() -> None:
+    """Bug fix 2026-11-18 (live): an exemption request with "lock" and "full time" in it got "You currently have no active locks."."""
+    from chaster.llm_tools import is_chaster_status_query
+    assert not is_chaster_status_query("I'd like to extend the wear exemption to friday afternoon to really recover. I'm eager to start a new "
+                                       "lock and lock up for the obedience tasks, just can't have a cage on now full time.")
+    assert not is_chaster_status_query("Can I have a hygiene opening? My lock time is fine.")
+    assert is_chaster_status_query("check my lock") and is_chaster_status_query("how much time is left on my lock?")

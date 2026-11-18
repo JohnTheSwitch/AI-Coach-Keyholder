@@ -151,6 +151,8 @@ _OTHER_SUBJECT_PREFIXES = (
     "class", "lesson", "lekc", "vacation", "dovolen", "battery", "baterk", "download", "stahov", "trip", "vylet", "school", "skol",
 )
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+_REQUEST_PREFIXES = ("exempt", "vyjimk", "extend", "extension", "prodlouz", "hygien", "releas", "propust")
+MAX_PLAIN_STATUS_CHARACTERS = 80
 
 
 def _normalize_tokens(text: str) -> list[str]:
@@ -186,6 +188,10 @@ def is_chaster_status_query(message: str) -> bool:
     ):
         return True
     has_lock_noun = any(t.startswith(_LOCK_NOUN_PREFIXES) for t in tokens)
+    # Bug fix 2026-11-18 (live): "I'd like to extend the wear exemption to Friday ... start a new lock ... a cage on now full time" got the
+    # lock status. A request (an exemption, an extension, an opening, a release) is never a status question, and a longer message needs a "?".
+    if any(t.startswith(_REQUEST_PREFIXES) for t in tokens) or (len(message) > MAX_PLAIN_STATUS_CHARACTERS and "?" not in message):
+        return False
     if has_lock_noun and bool(token_set & _STATUS_CUES):
         return True
     return _is_time_left_question(message, tokens, token_set)

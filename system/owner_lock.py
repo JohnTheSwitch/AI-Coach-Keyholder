@@ -85,6 +85,11 @@ class OwnerLockResolver:
                 logger.warning("Finding the owner's lock failed; keeping the last one.", exc_info=True)
         return self.cached()
 
+    def known_unlocked(self, now: datetime | None = None) -> bool:
+        """Owner, 2026-11-18 ("no check-ins while not locked"): True only when a search succeeded and found no lock of the owner's. A fresh
+        start before the first search, or a failed first search, is never "unlocked" (check-ins go on), so an outage is never a free pass."""
+        return self.current(now) is None and self._searched
+
     # ------------------------------------------------------------------ internals
 
     def _resolve(self, now: datetime) -> None:

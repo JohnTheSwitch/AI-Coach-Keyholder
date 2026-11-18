@@ -37,6 +37,7 @@ from supervision.models import CHECK_IN_DOMAIN_WINDOW, SERIOUS_FROM
 from system.owner_lock import OwnerLockResolver, is_auto
 from supervision.repository import SupervisionService
 from system.daily_evaluation import DailyEvaluationTask
+from system.keyholder_lock_source import get_unlocked_throughout
 from system.release_notice import ReleaseNotifier
 from system.release_tick import ReleaseEnginePeriodicTask
 from trust_manager.models import (
@@ -365,7 +366,8 @@ def build_rules_and_execution(
                 follow_up_window=minutes("checkin_follow_up_minutes", 30),
                 strict_response_timeout=minutes("checkin_strict_response_timeout_minutes", 30),
                 strict_follow_up_window=minutes("checkin_strict_follow_up_minutes", 15),
-                paused=lambda now, u=user: vacation.is_paused(u, now),
+                # Owner, 2026-11-18: no check-ins while he wears no lock (like a vacation); only a lock search that found none counts.
+                paused=lambda now, u=user: vacation.is_paused(u, now) or (out.owner_lock is not None and out.owner_lock.known_unlocked(now)),
                 escalation=CheckInEscalation(
                     config.db_path, core=core, user_id=user,
                     register_incident=lambda description, now: trust.register_incident_report(
@@ -528,7 +530,8 @@ def build_rules_and_execution(
                 out.daily = DailyEvaluationTask(
                     config.db_path, core=core, window_config=window_cfg, user_id=wearer_id, trust_domain=daily_domain,
                     engine=engine, trust=trust, conditioning=conditioning,
-                    paused_between=lambda start, end, u=wearer_id: vacation.covers(u, start, end),
+                    # Owner, 2026-11-18: a day without a lock is recorded as paused, like a vacation day.
+                    paused_between=lambda start, end, u=wearer_id: vacation.covers(u, start, end) or get_unlocked_throughout(core, start, end),
                 )
                 out.notes.append(f"Daily evaluation enabled at local midnight (token pool and clean-day streak; Trust domain {daily_domain!r}).")
                 out.notes.append("Release engine enabled ("

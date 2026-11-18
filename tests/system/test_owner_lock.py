@@ -165,3 +165,36 @@ class TestWiring:
     def test_the_config_reads_the_account(self, monkeypatch) -> None:
         text = (ROOT / "core" / "config.py").read_text(encoding="utf-8")
         assert 'get("OWNER_CHASTER_ACCOUNT_ID")' in text
+
+
+class TestNoCheckInsWhileUnlocked:
+    """Owner, 2026-11-18: "I think there should be no check-ins while not locked" (like a vacation, also for the day's evaluation)."""
+
+    def test_unlocked_only_after_a_search_found_none(self, core) -> None:
+        client = Client([])
+        client.fail = True
+        r = resolver(core, client)
+        assert r.known_unlocked(NOW) is False                       # a failed first search is never a free pass
+        client.fail = False
+        assert r.known_unlocked(NOW + RESOLVE_EVERY) is True
+        client.locks = [lock("L1")]
+        assert r.known_unlocked(NOW + 2 * RESOLVE_EVERY) is False
+
+    def test_a_day_without_a_lock(self, core) -> None:
+        import uuid
+        from infrastructure.time_format import iso
+        from system.keyholder_lock_source import get_unlocked_throughout
+
+        def seen(at, outcome="observed", status="locked"):
+            with core.transaction() as tx:
+                tx.execute("INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, fetched_at, created_at) "
+                           "VALUES (?, 'L1', ?, 'keyholder_search', ?, 0, ?, ?)", (str(uuid.uuid4()), outcome, status, iso(at), iso(at)))
+
+        day = (NOW + timedelta(days=1), NOW + timedelta(days=2))
+        assert get_unlocked_throughout(core, *day) is False         # nothing known
+        seen(NOW)
+        assert get_unlocked_throughout(core, *day) is False         # last seen locked: the bot may just have been off
+        seen(NOW + timedelta(hours=1), outcome="not_found", status=None)
+        assert get_unlocked_throughout(core, *day) is True          # the lock had ended and nothing locked was seen that day
+        seen(day[0] + timedelta(hours=15))
+        assert get_unlocked_throughout(core, *day) is False         # a new lock that afternoon: the day counts
