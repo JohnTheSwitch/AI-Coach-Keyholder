@@ -141,6 +141,11 @@ def build_consumer_registry(
         )
 
     registry.register("check_in.missed", "trust_manager", on_check_in_missed)
+
+    def on_check_in_voided(tx, event) -> None:          # owner, 2026-11-18: a check-in that should never have counted
+        trust_manager._void_check_in_evidence_in_transaction(tx, check_in_id=event.payload["check_in_id"], now=event.occurred_at)
+
+    registry.register("check_in.voided", "trust_manager", on_check_in_voided)
     registry.register("check_in.answered", "trust_manager", on_check_in_answered)
 
     def on_hygiene_on_time(tx, event) -> None:

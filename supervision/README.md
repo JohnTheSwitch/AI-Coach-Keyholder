@@ -126,10 +126,13 @@ one number, a bad week took weeks to climb out of. Now:
 ## The morning report (owner, 2026-11-15; roadmap "Approved, not built yet" item 5, protocol rung 1)
 
 A check-in row in slot `MORNING_SLOT` (90), switched on by the bot (`morning_on`). Planned once quiet hours are over; due by 12:00 on a workday
-and 13:00 on a weekend or public holiday, or 2 hours after the bot came back that morning (`online_since`), whichever is later. The question goes
-out on his **first message of the day** (that message is not the report); what he sends after it is the report: any content, no model
-(`answered`, which earns Trust like any answered check-in). None by its time, asked or not, is a **missed check-in** (`check_in.missed`, with the
-usual streak and escalation). Suspended during a wear exemption or the runtime halt (`morning_suspended`: then `skipped`, never a miss); a vacation
+and 13:00 on a weekend or public holiday, or 2 hours after the bot came back that morning (`online_since`), whichever is later. The bot **asks
+by itself** at a random moment between 08:00 and 10:00 local (`MORNING_ASK_FROM`, fixed per report from its id; a bot that was off then asks
+when it comes back), or earlier on his first message of the day (that message is not the report). Owner, 2026-11-18: until then it was asked
+only on his first message, which he never asked for. What he sends after the question is the report: any content, no model (`answered`,
+which earns Trust like any answered check-in). An asked report with nothing by its time is a **missed check-in** (`check_in.missed`, with the
+usual streak and escalation); one never asked is `skipped`, never a miss. An older miss whose question was never sent is voided at the next
+pass (`skipped` + `check_in.voided`; the Trust module adds a correction with the opposite weight, `_void_check_in_evidence_in_transaction`). Suspended during a wear exemption or the runtime halt (`morning_suspended`: then `skipped`, never a miss); a vacation
 pauses it with every other check-in. Ordinary check-ins wait while it is open (one open text check-in at a time).
 
 ## Fixes and reads of 2026-11-16 (owner)

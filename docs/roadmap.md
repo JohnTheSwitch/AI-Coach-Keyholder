@@ -80,8 +80,9 @@ limits (a `critical_change`), and any live Chaster experiment (e.g. Typing Lines
    Chaster (20 lines "I earn my release", a short obedience task, or on a training day the session itself). Rejected or missed: the token
    is kept and the task comes again the next day. Health and emergencies bypass it.
 5. **Morning report** (done 2026-11-15; `supervision/checkins.py`, slot 90) (owner, 2026-11-15): one DM with today's plan, any content, due by 12:00 on workdays / 13:00 at weekends, or 2 hours
-   after the bot comes back if it was offline that morning (whichever is later); the bot asks for it on his first message of the day; none
-   by the deadline = a missed check-in. Suspended during a wear exemption, a vacation or a halt. Code checks only that it arrived.
+   after the bot comes back if it was offline that morning (whichever is later); the bot asks for it itself at a random moment 08:00-10:00 (owner,
+   2026-11-18; before, only on his first message of the day, which he never asked for); none by the deadline after the question = a missed
+   check-in, a report never asked is never a miss (the 2026-11-18 one was voided). Suspended during a wear exemption, a vacation or a halt. Code checks only that it arrived.
 6. **From the keyholding research** (owner, 2026-11-15, all approved; docs/research/keyholding_and_training.md):
    a. **Surprise rewards:** about 1 in 5 verified obedience tasks adds +0.05 to the pool, unannounced until it happens. **Done 2026-11-15** (migration 080; never on training or board tasks, which pay their own).
    b. **No debate with brat lines:** pushback on a rule gets one short reply restating the rule and the consequence, nothing more that turn.
@@ -166,7 +167,8 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D29 | **The release day on request (Claude only)** | Claude may confirm whether the release is planned for a given day, never the time; the bot itself still says nothing (owner, 2026-11-17: "Claude may confirm if the release is planned for that day or not") |
 | D30 | **A release earned today stays today** | When today's secret moment has passed, a new one is drawn from the free time left today instead of moving to another day; applied to the plan already waiting too (owner, 2026-11-17, option 2 "which also means including number 3", against Claude's recommendation to change nothing) |
 | D31 | **Two fixes from the logs** | A health renewal "declined" with a request for more information now asks that once as the follow-up question; an update notice is no longer sent when the running commit is simply not pushed yet (live, 2026-11-17) |
-| D32 | **Graphics** | Coloured cards with an icon heading for known notice kinds on Discord, task cards for offers, a weekly card (days and tiles), a Penalty Window bar, the bot's avatar and banner; never the Trust score, the token pool or anything about the release (owner, 2026-11-17: "I want all of these"; visuals/README.md) |
+| D32 | **Graphics** | Coloured cards with an icon heading for known notice kinds on Discord, task cards for offers, a weekly card (days and tiles), a Penalty Window bar; never the Trust score, the token pool or anything about the release (owner, 2026-11-17: "I want all of these"; visuals/README.md) |
+| D33 | **The bot's profile is the owner's** | The avatar and banner drawn in D32 were taken out; code never sets the bot's Discord profile (owner, 2026-11-18: "I personally designed the old ones") |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)

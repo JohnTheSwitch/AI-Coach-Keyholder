@@ -365,29 +365,6 @@ class CoachKeyholderBot(discord.Client):
         # Every (re)connection catches up, not only the first: after the PC slept, the process lived on but its session was gone.
         self._replay_started = True
         asyncio.create_task(self._replay_missed_dms(), name="replay-missed-dms")
-        if not getattr(self, "_profile_checked", False):
-            self._profile_checked = True
-            asyncio.create_task(self._apply_profile_images(), name="profile-images")
-
-    async def _apply_profile_images(self) -> None:
-        """Owner, 2026-11-17: the bot's own avatar and banner (visuals/cards.py). Sent to Discord only when the drawing changed, so a restart
-        costs nothing; a failure is logged and never stops the bot."""
-        import hashlib
-        from visuals.cards import avatar, banner
-        marker = Path(__file__).resolve().parent.parent / "data" / "profile_images.sha256"
-        try:
-            pictures = await asyncio.to_thread(lambda: (avatar(), banner()))
-            digest = hashlib.sha256(pictures[0] + pictures[1]).hexdigest()
-            if marker.exists() and marker.read_text(encoding="utf-8").strip() == digest:
-                return
-            try:
-                await self.user.edit(avatar=pictures[0], banner=pictures[1])
-            except TypeError:                                        # a discord.py without banners: the avatar alone
-                await self.user.edit(avatar=pictures[0])
-            marker.write_text(digest, encoding="utf-8")
-            logger.info("The bot's avatar and banner were updated.")
-        except Exception as exc:
-            logger.warning("The bot's avatar and banner could not be updated (%s); tried again on the next start.", type(exc).__name__)
 
     async def _after_catch_up(self, coroutine) -> None:
         """Deadlines are judged only after the messages sent meanwhile were read: a reply sent while the bot was off still counts."""

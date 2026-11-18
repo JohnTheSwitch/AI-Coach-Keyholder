@@ -11,7 +11,7 @@ from messaging.discord_adapter import RichCard, send_dm
 from messaging.models import ChannelType
 from notifications.delivery import NotificationDelivery
 from notifications.queue import DeliveryResult, Notification
-from visuals.cards import avatar, banner, render
+from visuals.cards import render
 from visuals.style import KIND_STYLE, TASK_KINDS, bar, heading_for, style_for
 from weekly_review.service import WeekFacts, week_card
 
@@ -60,8 +60,10 @@ class TestPictures:
     def test_a_bad_spec_costs_the_picture_never_the_message(self) -> None:
         assert render(None) is None and render({"type": "nope"}) is None and render({"type": "week", "days": "bad"}) is None
 
-    def test_the_profile_pictures(self) -> None:
-        assert avatar().startswith(PNG) and banner().startswith(PNG)
+    def test_the_bot_never_sets_its_own_profile(self) -> None:
+        import pathlib
+        source = pathlib.Path("bot/discord_bot.py").read_text(encoding="utf-8")
+        assert "avatar=" not in source and "banner=" not in source   # owner, 2026-11-18: the profile is his own design
 
 
 class TestTheWeekCard:

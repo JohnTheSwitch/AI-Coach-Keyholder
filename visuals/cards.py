@@ -5,7 +5,7 @@ Owner, 2026-11-17 ("I want all of these"): the pictures, drawn locally with Pill
 
 - `render(card)`: PNG bytes for a card spec from an EmbedSpec (`{"type": "task", ...}` or `{"type": "week", ...}`); None for anything
   it cannot draw, so a bad spec costs the picture, never the message.
-- `avatar()` and `banner()`: the bot's own profile pictures (scripts/make_profile_images.py writes them to assets/).
+- The bot's Discord avatar and banner are the owner's own design and are never set by code (owner, 2026-11-18).
 
 Never drawn, by design: the Trust score or level, or anything about when the release comes.
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from visuals.style import COLORS
 
-__all__ = ["render", "avatar", "banner", "STATE_COLORS"]
+__all__ = ["render", "STATE_COLORS"]
 
 logger = logging.getLogger("ai_coach_keyholder.visuals")
 
@@ -181,30 +181,3 @@ def render(card: dict | None) -> bytes | None:
         return None
 
 
-# ---------------------------------------------------------------------------------------------------------------------- profile
-
-def avatar(size: int = 512) -> bytes:
-    from PIL import Image, ImageDraw
-    image, draw = _canvas(size, size, top=(88, 40, 120), bottom=(20, 14, 32))
-    mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).ellipse([0, 0, size, size], fill=255)
-    ring = size * 0.04
-    draw.ellipse([ring, ring, size - ring, size - ring], outline=GOLD, width=round(size * 0.02))
-    _padlock(draw, size / 2, size / 2 + size * 0.02, size * 0.56, GOLD, keyhole=(40, 22, 60))
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    out.paste(image, (0, 0), mask)
-    return _png(out)
-
-
-def banner(width: int = 1360, height: int = 480) -> bytes:
-    image, draw = _canvas(width, height, top=(70, 30, 100), bottom=(18, 14, 28))
-    faint = (95, 60, 125)
-    for row in range(4):
-        for col in range(11):
-            x = col * 140 + (70 if row % 2 else 0) + 30
-            _padlock(draw, x, row * 140 + 40, 54, faint, keyhole=(18, 14, 28) if row > 1 else (70, 30, 100))
-    draw.rectangle([0, height * 0.58, width, height], fill=(18, 14, 28))
-    _padlock(draw, 150, height * 0.78, 120, GOLD, keyhole=(18, 14, 28))
-    draw.text((250, height * 0.66), "AI Coach & Keyholder", font=_font(64, bold=True), fill=TEXT)
-    draw.text((254, height * 0.66 + 78), "Obedience, earned every day.", font=_font(30), fill=GOLD)
-    return _png(image)

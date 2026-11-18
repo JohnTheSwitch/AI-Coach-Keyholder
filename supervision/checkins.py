@@ -29,6 +29,7 @@ a filtered, dated copy of it also goes to Coaching Memory (system/coach_dm.py).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import random
 import uuid
@@ -83,6 +84,10 @@ _STALE_SENDING = timedelta(minutes=5)
 MORNING_SLOT = 90                            # owner, 2026-11-15: the morning report (one a local day; below the release slot)
 MORNING_DUE = (time(12, 0), time(13, 0))     # due by 12:00 on a workday, 13:00 on a weekend or public holiday
 MORNING_AFTER_START = timedelta(hours=2)     # ...or 2 hours after the bot came back that morning, whichever is later
+# Owner, 2026-11-18: the bot asks for the report itself, at a random moment between 08:00 and 10:00 local (a bot that was off then asks
+# when it comes back). He never has to start the conversation; his own first message before then still brings the question earlier.
+MORNING_ASK_FROM = time(8, 0)
+MORNING_ASK_SPAN_MINUTES = 120
 MORNING_ASK = ("Good morning. Your morning report: tell me your plan for today, in your own words. Any answer counts. "
                "Due by {due}; none by then counts as a missed check-in.")
 DUTY_SLOTS = (91, 92, 93, 94, 95)                # protocol duties (owner, 2026-11-16; protocol/): thank-yous and the weekly reflection
@@ -519,8 +524,25 @@ class CheckInService:
             base = max(base, self.online_since + MORNING_AFTER_START)
         return base
 
+    def _morning_ask_at(self, check_in_id: str, day) -> datetime:
+        """When the bot asks for this report: a random moment in 08:00-10:00 local, fixed per report (drawn from its id, so a restart keeps it)."""
+        offset = int(hashlib.sha256(check_in_id.encode("utf-8")).hexdigest()[:8], 16) % (MORNING_ASK_SPAN_MINUTES + 1)
+        return self._cfg.to_utc(day, MORNING_ASK_FROM) + timedelta(minutes=offset)
+
+    def _void_unasked_misses(self, now: datetime) -> None:
+        """Owner, 2026-11-18 ("Void it"): a morning report counted missed although its question was never sent is not a miss. It becomes
+        `skipped`, and `check_in.voided` lets the Trust module take back the miss's evidence."""
+        with self._core.transaction() as tx:
+            ids = [r["id"] for r in tx.fetch_all("SELECT id FROM check_ins WHERE user_id = ? AND slot_index = ? AND status = 'missed' AND sent_at IS NULL",
+                                                 (self._user, MORNING_SLOT))]
+        for check_in_id in ids:
+            if self._cas(check_in_id, ("missed",), "skipped", now, event="check_in.voided", payload={"reason": "never_asked"}):
+                decision("check_ins", "A morning report that was never asked is not a miss: voided.", check_in_id=check_in_id)
+
     def _morning(self, now: datetime) -> None:
-        """Plans today's report once quiet hours are over, moves its time when the bot came back late, and decides an unasked one at its time."""
+        """Plans today's report once quiet hours are over, asks for it at its random time, moves its time when the bot came back late, and
+        skips one that was never asked."""
+        self._void_unasked_misses(now)
         local = self._cfg.local(now)
         day = local.date()
         with self._core.transaction() as tx:
@@ -539,12 +561,10 @@ class CheckInService:
                                "updated_at = ? WHERE id = ?", (_iso(at), _iso(at), text, _iso(now), r["id"]))
                 apply_transition(self._core, write=move)
             elif row["status"] == "scheduled" and now >= due:
-                if self._morning_held(now):
-                    self._cas(row["id"], ("scheduled",), "skipped", now)
-                else:
-                    streak = self._miss_streak(row["id"], row["due_at"])
-                    if self._cas(row["id"], ("scheduled",), "missed", now, event="check_in.missed", payload={"streak": streak}):
-                        decision("check_ins", "Morning report missed: none by its time.", check_in_id=row["id"], streak=streak)
+                # Owner, 2026-11-18: a report the bot never asked for is never a miss (an asked one, 'sent', is decided by the deadlines).
+                self._cas(row["id"], ("scheduled",), "skipped", now)
+            elif row["status"] == "scheduled" and row["local_date"] == day.isoformat() and now >= self._morning_ask_at(row["id"], day):
+                self._ask_morning(now, why="at its random time")
         if exists or classify(self._cfg, now) is WindowKind.QUIET or local.time() < self._cfg.quiet_end:
             return
         due = self._morning_due(day)
@@ -560,8 +580,9 @@ class CheckInService:
 
         apply_transition(self._core, write=write)
 
-    def _ask_morning(self, now: datetime) -> bool:
-        """His first message of the day: the question goes out, due at the report's time. True when it was asked now."""
+    def _ask_morning(self, now: datetime, why: str = "on his first message of the day") -> bool:
+        """The question goes out (at its random time, or earlier on his first message of the day), due at the report's time. True when it
+        was asked now."""
         day = self._cfg.local(now).date().isoformat()
         if self._morning_held(now):
             return False
@@ -581,7 +602,7 @@ class CheckInService:
 
         asked = apply_transition(self._core, write=write)
         if asked:
-            decision("check_ins", "Morning report asked on his first message of the day.")
+            decision("check_ins", f"Morning report asked {why}.")
         return bool(asked)
 
     # ------------------------------------------------------------------ photo check-ins (supervision/photo_check_ins.py)

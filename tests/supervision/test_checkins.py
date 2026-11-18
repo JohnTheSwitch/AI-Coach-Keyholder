@@ -488,8 +488,50 @@ class TestMorningReport:
     def test_none_by_the_deadline_is_a_missed_check_in(self, tmp_path) -> None:
         e = self._env(tmp_path)
         e.svc.tick(local(MON, 7, 5))
+        e.svc.tick(local(MON, 10, 1))                                   # asked at its random time
         e.svc.tick(local(MON, 12, 1))
         assert self._morning(e)[0]["status"] == "missed" and e.events("check_in.missed")
+
+    def test_the_bot_asks_by_itself_between_8_and_10(self, tmp_path) -> None:
+        """Owner, 2026-11-18: "I don't remember wanting to be forced to be the one starting a conversation in the morning"."""
+        from infrastructure.time_format import parse_iso
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 7, 5))
+        e.svc.tick(local(MON, 7, 59))
+        assert self._morning(e)[0]["status"] == "scheduled"
+        minute = local(MON, 8)
+        while self._morning(e)[0]["status"] == "scheduled" and minute <= local(MON, 10, 1):
+            e.svc.tick(minute)
+            minute += timedelta(minutes=1)
+        row = self._morning(e)[0]
+        assert row["status"] == "sent" and local(MON, 8) <= parse_iso(row["sent_at"]) <= local(MON, 10)
+        with e.core.transaction() as tx:
+            assert tx.fetch_one("SELECT 1 FROM notifications WHERE dedupe_key LIKE 'check_in:morning:%'") is not None
+
+    def test_a_report_never_asked_is_never_a_miss(self, tmp_path) -> None:
+        e = self._env(tmp_path)
+        e.svc.tick(local(MON, 7, 5))
+        e.svc.tick(local(MON, 12, 1))                                   # the bot never ran while it was to be asked
+        assert self._morning(e)[0]["status"] == "skipped" and not e.events("check_in.missed")
+
+    def test_an_old_miss_that_was_never_asked_is_voided_and_trust_gets_it_back(self, tmp_path) -> None:
+        """Owner, 2026-11-18 ("Void it"): the 18 Nov report was counted missed although its question was never sent."""
+        from supervision.checkins import MORNING_SLOT
+        e = self._env(tmp_path)
+        before = e.tm.get_domain_state("d").score
+        with e.core.transaction() as tx:
+            tx.execute("INSERT INTO check_ins (id, user_id, local_date, slot_index, level, due_at, status, created_at, updated_at) "
+                       "VALUES ('m-1', ?, '2026-10-11', ?, 4, ?, 'missed', ?, ?)", (U, MORNING_SLOT, _iso_(local(MON, 12)), _iso_(local(MON, 7)), _iso_(local(MON, 12))))
+        e.tm.record_check_in_evidence(check_in_id="m-1", trust_domain="d", kind="missed", now=local(MON, 12))
+        assert e.tm.get_domain_state("d").score < before
+        e.svc.tick(local(MON, 13))
+        assert [r["status"] for r in e.rows() if r["id"] == "m-1"] == ["skipped"] and len(e.events("check_in.voided")) == 1
+        with e.core.transaction() as tx:
+            e.tm._void_check_in_evidence_in_transaction(tx, check_in_id="m-1", now=local(MON, 13, 1))
+            e.tm._void_check_in_evidence_in_transaction(tx, check_in_id="m-1", now=local(MON, 13, 2))     # once only
+        assert abs(e.tm.get_domain_state("d").score - before) < 1e-9
+        e.svc.tick(local(MON, 13, 5))
+        assert len(e.events("check_in.voided")) == 1                    # voided once
 
     def test_asked_but_unanswered_is_missed_too(self, tmp_path) -> None:
         e = self._env(tmp_path)

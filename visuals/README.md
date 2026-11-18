@@ -14,8 +14,8 @@ Owner, 2026-11-17 ("I want all of these"): how the bot looks on Discord. Pure: n
 - **The weekly card** (type `week`, built by `weekly_review.service.week_card`): the seven days (clean, missed, vacation, not counted yet)
   and tiles for check-ins, commitments, spot checks, lines and tokens. Only what the text of the review says too.
 - **Progress bars** (`bar`): the Penalty Window status (`status`) shows the time served as a bar, from the same numbers it already gave.
-- **Avatar and banner** (`avatar()`, `banner()`): set by the bot at start when the drawing changed (`data/profile_images.sha256` remembers
-  the last one sent), so a restart costs nothing.
+- **Not the bot's profile.** Its Discord avatar and banner are the owner's own design; code never sets them (owner, 2026-11-18: an avatar
+  and banner drawn here replaced his once and were taken out).
 
 Pictures are drawn with Pillow at delivery, on this PC. A picture that cannot be drawn is left out; the message still goes.
 

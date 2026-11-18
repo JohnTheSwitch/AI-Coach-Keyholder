@@ -775,6 +775,21 @@ class TrustManager:
             else "A check-in answer stayed insufficient after the follow-up window.",
         )
 
+    def _void_check_in_evidence_in_transaction(self, tx: Transaction, *, check_in_id: str, now: datetime) -> TrustEvidence | None:
+        """Owner, 2026-11-18: a check-in that should never have counted (`check_in.voided`, e.g. a morning report never asked) has its miss
+        taken back by a correction: the same type and the opposite weight, source 'manual_review' with the check-in's id, so the long-term
+        score gets the weight back and short-term Trust nets the two to nothing (short_term._net_corrections). Once per check-in."""
+        row = tx.fetch_one("SELECT domain_id, evidence_type, raw_weight, evidence_confidence FROM trust_evidence WHERE source_entity_type = 'check_in' "
+                           "AND source_entity_id = ? AND evidence_type IN (?, ?)",
+                           (check_in_id, EvidenceType.CHECKIN_MISSED.value, EvidenceType.CHECKIN_INSUFFICIENT.value))
+        if row is None or float(row["raw_weight"]) >= 0:
+            return None
+        return self._record_minor_evidence_in_transaction(
+            tx, trust_domain=row["domain_id"], evidence_type=EvidenceType(row["evidence_type"]), source_entity_type="manual_review",
+            source_entity_id=check_in_id, weight=-float(row["raw_weight"]), confidence=float(row["evidence_confidence"]),
+            triggered_by="check_in_voided", now=now, explanation="Correction: a check-in that was never asked is not a miss.",
+        )
+
     def _record_hygiene_on_time_in_transaction(self, tx: Transaction, *, exemption_id: str, trust_domain: str, now: datetime) -> TrustEvidence | None:
         """Owner, 2026-11-13: one positive piece of evidence per planned hygiene opening relocked on time (`hygiene_opening.relocked_on_time`)."""
         return self._record_minor_evidence_in_transaction(
