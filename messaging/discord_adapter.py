@@ -16,6 +16,7 @@ DiscordMessagingAdapter (Phase B): the Discord side of the messaging layer. It w
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Awaitable, Callable
 
@@ -24,7 +25,17 @@ from messaging.models import ChannelType, UnifiedMessage
 
 logger = logging.getLogger("ai_coach_keyholder.messaging.discord")
 
-__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY", "DmOutcome", "send_dm", "dm_history_channel"]
+__all__ = ["DiscordMessagingAdapter", "DISCORD_MAX_MESSAGE_CHARS", "split_message", "FAILURE_REPLY", "DmOutcome", "send_dm", "dm_history_channel",
+           "RichCard"]
+
+
+@dataclass(frozen=True)
+class RichCard:
+    """Owner, 2026-11-17: a card as the bot layer built it: the channel's own embed, its files (a drawn picture), and a short heading sent
+    as the message text so a phone notification still says what it is. Built in bot/, so this package stays free of `discord` imports."""
+    embed: object
+    files: tuple = field(default_factory=tuple)
+    content: str | None = None
 
 DISCORD_MAX_MESSAGE_CHARS = 2000
 FAILURE_REPLY = "Something went wrong handling that. It's been logged."
@@ -66,7 +77,14 @@ async def send_dm(client, discord_id: int, content: str, *, view=None, embed=Non
     try:
         user = await _user(client, discord_id)
         if embed is not None:                      # Phase J1: the embed carries the whole message; `content` is the fallback text
-            await user.send(embed=embed, **({"view": view} if view is not None else {}))
+            extra = {"view": view} if view is not None else {}
+            if isinstance(embed, RichCard):          # owner, 2026-11-17: a heading and a drawn picture with it
+                if embed.content:
+                    extra["content"] = embed.content
+                if embed.files:
+                    extra["files"] = list(embed.files)
+                embed = embed.embed
+            await user.send(embed=embed, **extra)
             return DmOutcome.DELIVERED
         chunks = split_message(content)
         for i, chunk in enumerate(chunks):

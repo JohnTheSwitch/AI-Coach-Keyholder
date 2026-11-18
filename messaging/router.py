@@ -32,6 +32,10 @@ class MessageRouter:
     def adapter_for(self, channel: ChannelType) -> BaseMessagingAdapter | None:
         return self._adapters.get(channel)
 
+    def channel_for(self, user_id: str) -> ChannelType:
+        """The channel this user's plain notices go to (owner, 2026-11-17: only a Discord one is drawn as a card)."""
+        return self._routes.get_route(user_id, None).channel
+
     async def send_to_user(self, user_id: str, content: str, *, chaster_lock_id: str | None = None) -> bool:
         route = self._routes.get_route(user_id, chaster_lock_id)
         if await self._deliver(route.channel, user_id, content, route.chaster_conversation_id):

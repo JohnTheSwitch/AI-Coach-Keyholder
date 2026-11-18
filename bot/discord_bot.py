@@ -111,7 +111,11 @@ from system.startup import StartupLeaseNotAcquired, on_system_startup
 
 logger = logging.getLogger("ai_coach_keyholder.bot")
 
-_EMBED_COLOR_BY_NAME = {"red": discord.Color.red(), "blue": discord.Color.blue(), "green": discord.Color.green()}
+from visuals.style import COLORS as _VISUAL_COLORS
+
+# Owner, 2026-11-17: the colour names of visuals/style.py (red, green and blue keep Discord's own shades).
+_EMBED_COLOR_BY_NAME = {**{name: discord.Color(value) for name, value in _VISUAL_COLORS.items()},
+                        "red": discord.Color.red(), "blue": discord.Color.blue(), "green": discord.Color.green()}
 
 
 def _build_discord_embed(spec: EmbedSpec) -> discord.Embed:
@@ -125,6 +129,28 @@ def _build_discord_embed(spec: EmbedSpec) -> discord.Embed:
     for f in spec.fields:
         embed.add_field(name=f.name, value=f.value, inline=False)
     return embed
+
+
+def _build_discord_card(spec: EmbedSpec, heading: str | None = None):
+    """Owner, 2026-11-17: the embed plus its drawn picture (visuals/cards.py) and a heading. A picture that cannot be drawn is left out;
+    the card itself still goes."""
+    import io
+    from messaging.discord_adapter import RichCard
+    from visuals.cards import render
+    embed = _build_discord_embed(spec)
+    files = ()
+    png = render(spec.card) if spec.card else None
+    if png:
+        files = (discord.File(io.BytesIO(png), filename="card.png"),)
+        embed.set_image(url="attachment://card.png")
+    return RichCard(embed=embed, files=files, content=heading)
+
+
+def _styled_delivery(**kwargs):
+    """The notification delivery with the cards of visuals/style.py (owner, 2026-11-17)."""
+    from visuals.style import heading_for, style_for
+    return NotificationDelivery(embed_for=_build_discord_embed, rich_for=_build_discord_card, style_for=style_for, heading_for=heading_for,
+                                view_for=actions_view, **kwargs)
 
 
 class CoachKeyholderBot(discord.Client):
@@ -339,6 +365,29 @@ class CoachKeyholderBot(discord.Client):
         # Every (re)connection catches up, not only the first: after the PC slept, the process lived on but its session was gone.
         self._replay_started = True
         asyncio.create_task(self._replay_missed_dms(), name="replay-missed-dms")
+        if not getattr(self, "_profile_checked", False):
+            self._profile_checked = True
+            asyncio.create_task(self._apply_profile_images(), name="profile-images")
+
+    async def _apply_profile_images(self) -> None:
+        """Owner, 2026-11-17: the bot's own avatar and banner (visuals/cards.py). Sent to Discord only when the drawing changed, so a restart
+        costs nothing; a failure is logged and never stops the bot."""
+        import hashlib
+        from visuals.cards import avatar, banner
+        marker = Path(__file__).resolve().parent.parent / "data" / "profile_images.sha256"
+        try:
+            pictures = await asyncio.to_thread(lambda: (avatar(), banner()))
+            digest = hashlib.sha256(pictures[0] + pictures[1]).hexdigest()
+            if marker.exists() and marker.read_text(encoding="utf-8").strip() == digest:
+                return
+            try:
+                await self.user.edit(avatar=pictures[0], banner=pictures[1])
+            except TypeError:                                        # a discord.py without banners: the avatar alone
+                await self.user.edit(avatar=pictures[0])
+            marker.write_text(digest, encoding="utf-8")
+            logger.info("The bot's avatar and banner were updated.")
+        except Exception as exc:
+            logger.warning("The bot's avatar and banner could not be updated (%s); tried again on the next start.", type(exc).__name__)
 
     async def _after_catch_up(self, coroutine) -> None:
         """Deadlines are judged only after the messages sent meanwhile were read: a reply sent while the bot was off still counts."""
@@ -922,9 +971,8 @@ def main() -> None:
             platform_halt=platform.halt, keyholder_background_tokens=background_tokens,
             chat_enabled=config.enable_chaster_messaging, conversation_client=chat_client,
             check_in_sender_factory=tenant_check_in_sender, check_in_complete=check_in_complete,
-            notification_delivery_factory=lambda wearer_id, discord_id: NotificationDelivery(
-                discord=discord_adapter, discord_id_for=lambda user_id, w=wearer_id, d=discord_id: d if user_id == w else None,
-                embed_for=_build_discord_embed, view_for=actions_view))
+            notification_delivery_factory=lambda wearer_id, discord_id: _styled_delivery(
+                discord=discord_adapter, discord_id_for=lambda user_id, w=wearer_id, d=discord_id: d if user_id == w else None))
         bot.tenant_supervisor = TenantLoopSupervisor(
             registry=platform.registry, factory=TenantFactory(registry=platform.registry, shared=shared, tenant_dir=platform.tenant_dir),
             interval_seconds=config.chaster_execution_interval_seconds,
@@ -1387,8 +1435,8 @@ def main() -> None:
         return quiet_windows is not None and classify(quiet_windows, now) is WindowKind.QUIET
 
     bot.notifications = notification_loop(
-        NotificationDispatcher(notification_queue, is_quiet=is_quiet, deliver=NotificationDelivery(
-            discord=discord_adapter, discord_id_for=message_routes.discord_id_for, router=bot.messaging_router, embed_for=_build_discord_embed, view_for=actions_view)),
+        NotificationDispatcher(notification_queue, is_quiet=is_quiet, deliver=_styled_delivery(
+            discord=discord_adapter, discord_id_for=message_routes.discord_id_for, router=bot.messaging_router)),
         clock)
     # Phase J2: the watch can produce confirmed Incidents, so the outbox must be drained continuously, not only at start.
     bot.penalty_barrier = wiring.penalty_barrier

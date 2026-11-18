@@ -25,6 +25,7 @@ from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.outbox import DomainEvent, write_event
 from infrastructure.time_format import iso as _iso
+from application.models import EmbedSpec
 from notifications.queue import enqueue_in_transaction
 
 logger = logging.getLogger("ai_coach_keyholder.weekly_review")
@@ -78,6 +79,7 @@ class WeekFacts:
     month: dict | None = None                             # B8 (owner, 2026-11-16): the first Sunday of a month, last month's numbers
     promises: tuple = ()                                  # B2 (owner, 2026-11-16): what he wrote he'd do better, the week before
     settings_changed: tuple = ()                          # G4 (owner, 2026-11-15): "quiet hours 22:00-07:00 -> 23:00-08:00", ...
+    days: tuple = ()                                      # owner, 2026-11-17: (date, "clean" | "missed" | "vacation" | "none") per day, for the card
 
     @property
     def commitments(self) -> int:
@@ -95,6 +97,22 @@ def _it(n: int) -> str:
 MONTHLY_ASK = ("Once a month we look at the arrangement: keep everything as it is, make something stricter, or ask to loosen something? "
                "Tell me which and what.")   # B8 (owner, 2026-11-16): the answer is read by Claude; nothing changes by itself
 WELLBEING_ASK = "And honestly: how are you, body and mind? Any answer is fine; it never counts against you."   # owner, 2026-11-16 (6d)
+
+
+def week_card(f: WeekFacts) -> dict:
+    """Owner, 2026-11-17: the week as a picture (visuals/cards.py). Only what the text says too; never the Trust score or the token pool."""
+    tiles = []
+    if f.check_ins_due:
+        tiles.append({"label": "Check-ins", "done": f.check_ins_ok, "total": f.check_ins_due})
+    if f.commitments:
+        tiles.append({"label": "Commitments", "done": f.kept, "total": f.commitments})
+    if f.checks:
+        tiles.append({"label": "Spot checks", "done": f.checks_passed, "total": f.checks})
+    if f.lines_assigned:
+        tiles.append({"label": "Lines", "done": f.lines_done, "total": f.lines_assigned})
+    tiles.append({"label": "Tokens", "value": str(f.tokens)})
+    return {"type": "week", "title": f"Your week, {_day(f.start)} to {_day(f.end)}",
+            "days": [{"label": d.strftime("%a"), "state": s} for d, s in f.days], "tiles": tiles[:5]}
 
 
 def render_week(f: WeekFacts) -> str:
@@ -223,6 +241,15 @@ class WeeklyReview:
         counts["check_ins_ok"] = sum(int(r.get("check_ins_ok") or 0) for r in active)
         counts["check_ins_due"] = sum(int(r.get("check_ins_due") or 0) for r in active)
         counts["tokens"] = sum(int(r.get("tokens_earned") or 0) for r in evaluations)
+        by_day = {str(r.get("local_date")): r for r in evaluations}
+
+        def state(d: date) -> str:
+            row = by_day.get(d.isoformat())
+            if row is None:
+                return "none"
+            return "vacation" if row.get("paused") else ("clean" if row.get("clean") else "missed")
+
+        counts["days"] = tuple((week_start + timedelta(days=i), state(week_start + timedelta(days=i))) for i in range(7))
         if self.lines_between is not None:
             rows = self.lines_between(week_start, end)
             counts["lines_assigned"] = sum(int(r.get("required") or 0) for r in rows)
@@ -268,7 +295,10 @@ class WeeklyReview:
             if tx.fetch_one("SELECT 1 FROM weekly_reviews WHERE user_id = ? AND week_start = ?", (self.user_id, week_start.isoformat())):
                 return None
         outcome = "vacation" if self._ports.paused(now) else "sent"
-        text = render_week(self.facts(week_start)) if outcome == "sent" else None
+        facts = self.facts(week_start) if outcome == "sent" else None
+        text = render_week(facts) if facts is not None else None
+        # Owner, 2026-11-17: the week as a picture too; the text stays the whole message.
+        embed = EmbedSpec(title="\U0001F4C5 Your week", description=text, color="blue", card=week_card(facts)) if text and len(text) <= 4000 else None
 
         def write(tx: Transaction, _s: object) -> bool:
             done = tx.execute("INSERT OR IGNORE INTO weekly_reviews (user_id, week_start, decided_at, outcome) VALUES (?, ?, ?, ?)",
@@ -277,7 +307,7 @@ class WeeklyReview:
                 return False
             if text is not None:
                 enqueue_in_transaction(tx, user_id=self.user_id, kind="weekly_review", dedupe_key=f"weekly_review:{week_start.isoformat()}",
-                                       text=text, now=now)
+                                       text=text, now=now, embed=embed)
             write_event(tx, DomainEvent(event_type="weekly_review.week_decided", source_module="weekly_review", occurred_at=now,
                                         payload={"user_id": self.user_id, "week_start": week_start.isoformat(), "outcome": outcome}))
             return True

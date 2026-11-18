@@ -60,7 +60,7 @@ def _decode_embed(raw: str | None) -> EmbedSpec | None:
         return None
     data = json.loads(raw)
     return EmbedSpec(title=data["title"], description=data.get("description"), color=data.get("color", "blue"),
-                     fields=tuple(EmbedField(**f) for f in data.get("fields") or ()))
+                     fields=tuple(EmbedField(**f) for f in data.get("fields") or ()), card=data.get("card"))
 
 
 def _decode_actions(raw: str | None) -> tuple[ActionSpec, ...]:

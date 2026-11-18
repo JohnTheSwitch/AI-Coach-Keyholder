@@ -21,3 +21,5 @@ Tables (migration 065, written only by `service.py`): `weekly_review_settings`, 
 Events: `weekly_review.turned_on`, `weekly_review.turned_off`, `weekly_review.week_decided`.
 Reads only through the owners' readers: `CoachDesk.get_commitments_between`, `ProofChecks.get_checks_between`,
 `system.daily_evaluation.get_daily_evaluations`.
+
+Owner, 2026-11-17: the review also goes as a card with a picture of the week (`week_card`: the days and tiles for check-ins, commitments, spot checks, lines and tokens; only what the text says). With its picture it always goes to Discord, as every card does (notifications/delivery.py). See visuals/README.md.

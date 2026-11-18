@@ -723,10 +723,12 @@ class ApplicationService:
             return OutgoingMessage(text="No active penalty window right now.")
         remaining = remaining_active_hours(window, ctx.now)
         target = target_active_hours(window)
+        from visuals.style import bar
         return OutgoingMessage(
             text=(
                 f"Penalty window: {window.status.value}\n"
-                f"~{remaining:.1f}h remaining of {target:.1f}h target."
+                f"~{remaining:.1f}h remaining of {target:.1f}h target.\n"
+                f"{bar(max(0.0, target - remaining), target)} served"          # owner, 2026-11-17: the same numbers as a bar
             ),
         )
 

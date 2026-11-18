@@ -72,8 +72,9 @@ class EmbedSpec:
     ignore this and fall back to `OutgoingMessage.text`."""
     title: str
     description: str | None = None
-    color: str = "blue"
+    color: str = "blue"                 # owner, 2026-11-17: also "purple", "grey", "gold", "orange" (visuals/style.py COLORS)
     fields: tuple[EmbedField, ...] = ()
+    card: dict | None = None            # owner, 2026-11-17: a picture drawn by visuals/cards.py at delivery ({"type": "task" | "week", ...})
 
 
 @dataclass(frozen=True, kw_only=True)
