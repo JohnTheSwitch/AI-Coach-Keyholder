@@ -57,6 +57,10 @@ class IronContract:
         self._consent_target = consent_target
         self._wearer = wearer_user_id
         self.get_observation = get_observation
+        # Bug fix 2026-11-21 (live): after the lock ended nothing said "unlocked" (no observation of a lock that is gone, no own report), so
+        # every gate kept treating him as locked ("release relock off" waited 24 hours). `known_unlocked()` (system/owner_lock.py) is True
+        # only when a Chaster search succeeded and found no lock of his; a lock seen as locked still wins.
+        self.known_unlocked: Callable[[], bool] | None = None
 
     def applies(self) -> bool:
         """Whether the difficulty gate and the locked-state stance are in force in this database."""
@@ -76,6 +80,11 @@ class IronContract:
             return LockStatus.LOCKED
         if LockStatus.UNLOCKED in seen:
             return LockStatus.UNLOCKED
+        try:
+            if user_id == self._wearer and self.known_unlocked is not None and self.known_unlocked():
+                return LockStatus.UNLOCKED
+        except Exception:
+            logger.exception("Could not read whether the wearer has a lock; treating it as unknown.")
         return LockStatus.UNKNOWN
 
     def refusal(self, user_id: str, *, always: bool = False) -> str | None:

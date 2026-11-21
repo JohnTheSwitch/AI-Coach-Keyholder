@@ -443,6 +443,8 @@ def build_rules_and_execution(
         refresh_obs = lambda now: obs_service.fetch_and_record(connection_id=wearer_id, now=now)  # noqa: E731
 
     out.iron_contract.get_observation = get_obs
+    if out.owner_lock is not None:                      # bug fix 2026-11-21: a search that found no lock of his means unlocked
+        out.iron_contract.known_unlocked = lambda: out.owner_lock.known_unlocked()
     snapshot_provider = None
     if get_obs is not None:
         snapshot_provider = make_snapshot_provider(get_obs)

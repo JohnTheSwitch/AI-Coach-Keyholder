@@ -91,3 +91,14 @@ def test_an_unavailable_feature_stays_off_and_says_why(tmp_path) -> None:
     assert features.command(U, "workouts on", NOW) == "Not for you yet."
     assert not features.is_on(U, "workouts") and features.is_on(U, "lines")
     assert "- workouts: not available yet" in features.command(U, "features", NOW)
+
+
+def test_a_request_left_waiting_is_done_once_he_is_known_unlocked(tmp_path) -> None:
+    """Bug fix 2026-11-21 (live): "release relock off" waited 24 hours while he had no lock; sent again once unlocked, it applies and the old
+    request is withdrawn (no stale question a day later)."""
+    db, features, opt = wired(tmp_path, locked=True)
+    assert "isn't done at once" in features.command(U, "release relock off", NOW)
+    opt._locked = lambda u: False
+    assert features.command(U, "release relock off", NOW).startswith("Release relock is off.")
+    with db.transaction() as tx:
+        assert tx.fetch_one("SELECT status FROM opt_out_requests")["status"] == "withdrawn"

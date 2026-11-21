@@ -146,6 +146,16 @@ class TestLockStatusAndGuard:
         c.get_observation = lambda: (_ for _ in ()).throw(RuntimeError("down"))
         assert c.lock_status("u") is LockStatus.UNKNOWN                        # unreadable: unknown (a guard then refuses)
 
+    def test_a_search_that_found_no_lock_means_unlocked(self, core) -> None:
+        """Bug fix 2026-11-21 (live): after the lock ended he stayed "locked" for every gate ("release relock off" waited 24 hours)."""
+        c = IronContract(core.db_path, core=core, wearer_user_id="u")
+        c.known_unlocked = lambda: True
+        assert c.lock_status("u") is LockStatus.UNLOCKED and c.lock_status("someone-else") is LockStatus.UNKNOWN
+        c.get_observation = lambda: SimpleNamespace(status=SimpleNamespace(value="locked"))
+        assert c.lock_status("u") is LockStatus.LOCKED                         # a lock seen as locked still wins
+        c.get_observation, c.known_unlocked = None, lambda: 1 / 0
+        assert c.lock_status("u") is LockStatus.UNKNOWN                        # unreadable: unknown
+
     def test_refusals_and_consent(self, core) -> None:
         c = IronContract(core.db_path, core=core)
         assert c.refusal("u") == UNKNOWN_REFUSAL

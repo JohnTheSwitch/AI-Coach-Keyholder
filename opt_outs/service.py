@@ -107,6 +107,8 @@ class OptOuts:
     def request_off(self, user_id: str, key: str, now: datetime) -> str | None:
         """None when it applies at once (unlocked or not covered); otherwise the reply saying it waits."""
         if not self._covered(key) or not self._locked(user_id):
+            if self._covered(key):
+                self.withdraw(user_id, key, now)          # bug fix 2026-11-21: a request left waiting while he was unlocked is done now
             return None
         verb, still = ("remove", "removed") if _gear(key) else ("switch off", "off")
         pending = self._pending(user_id, key)

@@ -29,3 +29,9 @@ at that moment, never at the past midnight. While it is in force:
 - a confirmed release cannot raise the Progressive Conditioning factor; it is audited once in `conditioning_paused_releases`.
 
 Penalty windows, incidents, the token ledger, the rules, the release engine and every safety path are untouched.
+
+## Known unlocked after a lock ends (bug fix 2026-11-21, live)
+
+Nothing said "unlocked" once a lock had ended (no observation of a lock that is gone, no own report), so every gate kept treating him as
+locked. `known_unlocked()` (set by the composition from `system/owner_lock.OwnerLockResolver.known_unlocked`) makes the status UNLOCKED when a
+Chaster search succeeded and found no lock of his. A source saying locked still wins; an error stays unknown.
