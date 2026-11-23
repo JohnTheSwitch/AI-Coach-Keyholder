@@ -48,6 +48,21 @@ class TestTheFirstSighting:
         world.cycle(target + timedelta(minutes=20))
         assert [c for c in world.transport.calls if c[0] == "freeze"] == []
 
+    def test_a_new_lock_after_a_release_is_frozen_once(self, tmp_path) -> None:
+        """Live, 2026-11-23: the first freeze of a new lock, then a second one a minute later for the previous lock's release, decided
+        from the reading taken before the first freeze."""
+        from tests.system.test_release_tick import released_world
+        world = released_world(tmp_path)
+        world.lock_id, world.frozen = "lock-2", False                # the old lock ended; a new one, not frozen yet
+        world.task.first_sight_every = timedelta(minutes=10)
+        world.cycle(local(MON, 22, 5))                                # the old release's session is over too
+        world.refresh_effective = False                               # the stored reading stays the one from before the freeze
+        world.fetched_at = world.now - timedelta(minutes=1)
+        world.now += timedelta(minutes=1)
+        world.task.run(world.now)
+        world.executor.run_once(now=world.now)
+        assert [c for c in world.transport.calls if c[0] == "freeze"] == [("freeze", "lock-2")]
+
     def test_waits_while_halted(self, tmp_path) -> None:
         world = new_lock_world(tmp_path, frozen=False)
         world.control.set_halted(True, reason="test", now=world.now)

@@ -290,6 +290,12 @@ class ReleaseEnginePeriodicTask:
             obs = self._fresh_observation(now)
         if obs is None or not self._barrier_down(obs, now):
             return False
+        # Bug fix 2026-11-23 (live): a new lock was first-frozen at 16:48, and a minute later this rule froze it again for the release of
+        # the PREVIOUS lock, from the reading taken before the first freeze. A lock first seen after that release is not the lock it
+        # lowered: the first-sighting rule owns it.
+        first_seen = self._engine.get_first_seen_at(obs.chaster_lock_id) if obs.chaster_lock_id else None
+        if first_seen is not None and first_seen > confirmed_at:
+            return False
         no_token = self._engine.get_balance(self._user) < 1
         reason = "No token available for an open barrier" if no_token else "Release window ended"
         self._rules.record_barrier_decision(

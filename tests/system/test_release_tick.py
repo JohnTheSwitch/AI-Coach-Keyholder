@@ -64,6 +64,7 @@ class World:
                 conn.executescript(path.read_text(encoding="utf-8"))
         self.now = local(MON, 10, 0)
         self.frozen, self.frozen_since, self.status = frozen, frozen_since, status
+        self.lock_id = "lock-1"
         self.penalty, self.supervised = penalty, supervised
         self.refreshes = 0
         self.refresh_effective = True
@@ -91,7 +92,7 @@ class World:
     def _obs(self):
         fetched = self.fetched_at or (self.now - timedelta(minutes=1))
         return ChasterProviderObservation(
-            id="o", connection_id=U, provider="chaster", chaster_lock_id="lock-1", status=self.status,
+            id="o", connection_id=U, provider="chaster", chaster_lock_id=self.lock_id, status=self.status,
             fetched_at=fetched, created_at=fetched, is_frozen=self.frozen, has_keyholder=True,
             frozen_at=(self.now - self.frozen_since) if self.frozen else None,
         )

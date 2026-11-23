@@ -446,6 +446,12 @@ class ReleaseEngine:
         with self._core.transaction() as tx:
             return tx.fetch_one("SELECT 1 FROM release_lock_first_seen WHERE lock_id = ?", (lock_id,)) is not None
 
+    def get_first_seen_at(self, lock_id: str) -> datetime | None:
+        """When this lock was first seen (migration 060), or None when it never was."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT first_seen_at FROM release_lock_first_seen WHERE lock_id = ?", (lock_id,))
+        return _parse_iso(row["first_seen_at"]) if row is not None else None
+
     # ------------------------------------------------------------------ provider progress
 
     def mark_provider_requested(self, *, authorization_id: str, now: datetime) -> bool:

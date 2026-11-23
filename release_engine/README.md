@@ -61,6 +61,8 @@ barrier confirmed up -> ensure the secret plan -> plan due -> `commit_authorizat
   recognised lock; the first time a locked keyholder lock is seen and it is not frozen, a FREEZE decision is recorded (`barrier.freeze`,
   trigger `barrier-first:<lock id>`). Once per lock: a lock seen frozen is only recorded, and a lock a release unfroze is never frozen by this
   rule (the release session's refreeze handles that). It waits while execution is off or halted, so the first freeze is not lost.
+  The other way round, the refreeze never acts on a lock first seen after the release it belongs to: that lock is not the one the release
+  lowered (live, 2026-11-23: a new lock was frozen twice, a minute apart, from the reading taken before the first freeze).
 - **The owner's test release** (owner, 2026-11-13; migration 057 `release_owner_requests`): `python -m cli release-test-override --owner-id <id>
   --yes` files ONE request; the running bot's tick carries it out with `commit_owner_test()`: spends exactly one token (`owner_test_release`)
   and releases despite supervision or a penalty window, but only with a confirmed barrier, in the free-time window, with execution on and the
