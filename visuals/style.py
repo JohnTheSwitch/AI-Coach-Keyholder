@@ -24,6 +24,8 @@ __all__ = ["COLORS", "KIND_STYLE", "Style", "style_for", "bar", "heading_for", "
 # Colour names an EmbedSpec may carry; the Discord adapter maps them (unknown names fall back to Discord's default).
 COLORS: dict[str, int] = {
     "green": 0x2ECC71, "red": 0xE74C3C, "blue": 0x3498DB, "purple": 0x9B59B6, "grey": 0x95A5A6, "gold": 0xF1C40F, "orange": 0xE67E22,
+    # Owner, 2026-11-23 (a more feminine keyholder): her own colours.
+    "rose": 0xE84393, "lilac": 0xB39DDB, "blush": 0xF8A5C2,
 }
 
 
@@ -36,9 +38,9 @@ class Style:
 
 KIND_STYLE: dict[str, Style] = {
     # erotic and obedience
-    "obedience_task": Style("purple", "\U0001F5DD️", "Obedience task"),
-    "temptation": Style("purple", "\U0001F608", "Temptation"),
-    "protocol": Style("purple", "\U0001F4DC", "Protocol"),
+    "obedience_task": Style("rose", "\U0001F5DD️", "Obedience task"),          # owner, 2026-11-23: her colours (rose, lilac, blush)
+    "temptation": Style("rose", "\U0001F48B", "Temptation"),
+    "protocol": Style("rose", "\U0001F4DC", "Protocol"),
     # tasks and training
     "task_board": Style("gold", "\U0001F4CB", "Task board"),
     "training": Style("orange", "\U0001F3CB️", "Training"),
@@ -46,9 +48,9 @@ KIND_STYLE: dict[str, Style] = {
     "lines": Style("gold", "✍️", "Lines"),
     "custom_tasks": Style("gold", "\U0001F4DD", "Your tasks"),
     # check-ins and routine
-    "check_in": Style("blue", "\U0001F514", "Check-in"),
-    "commitment_ask": Style("blue", "\U0001F91D", "Commitment"),
-    "weekly_review": Style("blue", "\U0001F4C5", "Your week"),
+    "check_in": Style("lilac", "\U0001F514", "Check-in"),
+    "commitment_ask": Style("lilac", "\U0001F91D", "Commitment"),
+    "weekly_review": Style("lilac", "\U0001F4C5", "Your week"),
     "health_pattern": Style("blue", "\U0001FA7A", "Health"),
     "settings_change": Style("grey", "⚙️", "Settings"),
     # problems
@@ -72,8 +74,8 @@ KIND_STYLE: dict[str, Style] = {
     "release": Style("green", "\U0001F511", "Release"),
     "release_window": Style("green", "\U0001F511", "Release window"),
     "graduation": Style("green", "\U0001F393", "Supervision"),
-    "proof_check": Style("blue", "\U0001F4F7", "Spot check"),
-    "peer_review": Style("blue", "\U0001F465", "Photo review"),
+    "proof_check": Style("lilac", "\U0001F4F7", "Spot check"),
+    "peer_review": Style("lilac", "\U0001F465", "Photo review"),
 }
 
 # An offer of these (a notice with buttons) also gets a task card image.

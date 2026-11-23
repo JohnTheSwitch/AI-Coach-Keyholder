@@ -24,6 +24,9 @@ def test_the_shared_core_no_longer_fixes_one_flavour() -> None:
     assert "Confident and a little possessive" not in VOICE_GUIDE and "Your persona below decides how you sound" in VOICE_GUIDE
     assert "drop the teasing" in VOICE_GUIDE and "never dodge or refuse the topic" in VOICE_GUIDE and "explicit is not" in VOICE_GUIDE
     assert "possessive" in PERSONA_VOICES["scarlett"].style            # the owner's pick keeps today's flavour
+    # Owner, 2026-11-23: a more feminine keyholder (a woman, sensual, his Mistress), and still nothing that feminizes him.
+    scarlett = PERSONA_VOICES["scarlett"].style
+    assert "Mistress" in scarlett and "woman" in scarlett and "never humiliating, degrading or feminizing" in scarlett
 
 
 def test_the_persona_reaches_the_prompt(core) -> None:  # noqa: F811

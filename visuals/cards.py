@@ -22,7 +22,7 @@ __all__ = ["render", "STATE_COLORS"]
 
 logger = logging.getLogger("ai_coach_keyholder.visuals")
 
-BG_TOP, BG_BOTTOM = (34, 35, 48), (22, 22, 31)
+BG_TOP, BG_BOTTOM = (48, 28, 46), (26, 16, 26)          # owner, 2026-11-23: a dark plum, her look (was a dark navy)
 TEXT, MUTED, TRACK = (240, 240, 245), (160, 162, 180), (60, 62, 80)
 GOLD = (241, 196, 15)
 STATE_COLORS = {"clean": (46, 204, 113), "missed": (231, 76, 60), "vacation": (149, 165, 166), "none": None}
