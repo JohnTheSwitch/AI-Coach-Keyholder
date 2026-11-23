@@ -29,6 +29,7 @@ consequence). Never anything public or outdoors, never strong pain; restraints o
 from __future__ import annotations
 
 import logging
+import math
 import random
 import re
 import uuid
@@ -1381,6 +1382,11 @@ class ObedienceTasks:
             return OutgoingMessage(text="Running again." + moved, actions=self._toy_buttons(row["id"]))
         if action in ("toyweak", "toyright", "toymuch"):
             return self._toy_feedback(row, action, now)
+        again = re.fullmatch(r"toy(\d{1,3})", action)
+        if again is not None:                                    # "Try again (N min)": what was left of a session that broke off
+            if row["status"] != "assigned":
+                return "That task is already decided."
+            return self._run_toy(row, now, minutes=max(1, int(again.group(1))))
         if action not in ("cannot", "later", "alone", "discreet", "toy"):
             return "That isn't one of the options."
         if row["status"] not in ("planned", "asking", "assigned", "submitted"):
@@ -1426,7 +1432,13 @@ class ObedienceTasks:
             if levels is not None:
                 tell("toy_done", TOY_ASK, tuple(ActionSpec(action_id=f"obedience:{a}:{row_id}", label=label) for a, label in TOY_ANSWERS))
 
-        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM, (ActionSpec(action_id=f"obedience:toy:{row_id}", label="Try again"),)),
+        def problem(_text: str) -> None:
+            # Live, 2026-11-23: "Try again" restarted the whole 90 minutes. It now goes on with what was left of this session.
+            played = getattr(self.toy, "played_seconds", lambda: 0.0)()
+            left = max(1, math.ceil(minutes - float(played or 0.0) / 60))
+            tell("toy_problem", TOY_PROBLEM, (ActionSpec(action_id=f"obedience:toy{left}:{row_id}", label=f"Try again ({left} min)"),))
+
+        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=problem,
                               on_done=done, on_started=lambda: tell("toy_started", TOY_STARTED, self._toy_buttons(row_id))):
             return OutgoingMessage(text="It's already running.", actions=self._toy_buttons(row_id, paused=bool(getattr(self.toy, "paused", lambda: False)())))
         if levels is not None:

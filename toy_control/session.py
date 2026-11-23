@@ -86,6 +86,39 @@ def _steps(out: _Steps, rng: random.Random, top: float, *, sets: int | None = No
             out.add(0.0, STEP_OFF)
 
 
+def _burst(out: _Steps, rng: random.Random, base: float, seconds: float) -> None:
+    """Owner, 2026-11-23: "the bursts would be more unpredictable if they weren't the same intensity the whole time". Each burst takes a
+    shape he can't guess (a climb, a drop, his steps, pulses, a wave or random jumps) and changes level every 1-4 s, around his own level."""
+    shape = rng.choice(("climb", "drop", "steps", "pulse", "wave", "jumps"))
+    lo, hi = base * 0.5, base * 1.3
+    end = max(0.0, out.left - seconds)                     # never past the session's end (that looped forever)
+    if shape == "steps":
+        while out.left > end:
+            for f in STEP_LEVELS:
+                out.add(hi * f, min(STEP_ON, out.left - end))
+                out.add(0.0, min(STEP_OFF, out.left - end))
+        return
+    if shape == "pulse":
+        while out.left > end:                               # each pulse its own strength
+            out.add(rng.uniform(lo, hi), min(1.0, out.left - end))
+            out.add(0.0, min(1.0, out.left - end))
+        return
+    k = 0
+    while out.left > end:
+        part = min(float(rng.randint(1, 4)), out.left - end)
+        done = 1 - (out.left - end) / seconds
+        if shape == "climb":
+            level = lo + (hi - lo) * done
+        elif shape == "drop":
+            level = hi - (hi - lo) * done
+        elif shape == "wave":
+            level = (lo, (lo + hi) / 2, hi, (lo + hi) / 2)[k % 4]
+        else:
+            level = rng.uniform(lo, hi)
+        out.add(level, part)
+        k += 1
+
+
 def _surprises(steps: list[tuple[float, float]], rng: random.Random, base: float, cap: float) -> list[tuple[float, float]]:
     """Owner, 2026-11-17 (the app): "once a few minutes it changed, stop for a few seconds, then turned on for a few seconds ... so I don't get
     used to one thing". Every 2-4 minutes: off for 3-8 s, then 2-5 s at a level he can't predict, then on as planned. The total stays the same:
@@ -125,8 +158,8 @@ def plan_pattern(rng: random.Random, minutes: float, mode: str, *, profile: str 
                 out.add(top * f, rng.randint(30, 60))
     elif profile == "wear":
         while out.left > 0:                                       # mostly off; now and then a burst he can't predict
-            out.add(0.0, rng.randint(180, 600))
-            out.add(rng.uniform(base * 0.7, base * 1.2), rng.randint(10, 40))
+            out.add(0.0, rng.randint(60, 240))                     # owner, 2026-11-23: 1-4 minutes quiet (was 3-10)
+            _burst(out, rng, base, rng.randint(10, 40))
     elif profile == "prostate":
         warm, finish = total * 0.2, total * 0.15
         while out.left > total - warm:                            # slow warm-up
@@ -181,6 +214,7 @@ class ToySessions:
         self._lock = threading.Lock()
         self._stop: threading.Event | None = None
         self._pause: threading.Event | None = None
+        self._played = 0.0                      # seconds of the pattern played in the current / last session (not paused)
         self._thread: threading.Thread | None = None
 
     def running(self) -> bool:
@@ -235,6 +269,10 @@ class ToySessions:
         toy_log("Continue pressed.")
         return True
 
+    def played_seconds(self) -> float:
+        """Live, 2026-11-23: how much of the session ran, so "Try again" goes on with only what was left."""
+        return self._played
+
     def paused(self) -> bool:
         with self._lock:
             return self._pause is not None and self._thread is not None and self._thread.is_alive() and self._pause.is_set()
@@ -264,6 +302,7 @@ class ToySessions:
                 raise LookupError("the toy was not found")
             logger.info("Toy session started: %d steps.", len(pattern))
             toy_log("Session started.", device=device.name)
+            self._played = 0.0
             paused_for, began = 0.0, time.monotonic()
             last_sent = last_ping = time.monotonic()
 
@@ -320,7 +359,9 @@ class ToySessions:
                         await keep_alive(level, off=False)
                         started = time.monotonic()
                         await asyncio.sleep(min(0.5, left))
-                        left -= time.monotonic() - started
+                        ran = time.monotonic() - started
+                        left -= ran
+                        self._played += ran
                     if stop.is_set():
                         break
             finally:

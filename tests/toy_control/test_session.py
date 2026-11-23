@@ -53,6 +53,17 @@ class TestThePattern:
     def test_a_long_wear_is_mostly_off_and_not_alone_stays_gentle(self) -> None:
         wear = plan_pattern(random.Random(3), 90, "alone", profile="wear", base=0.6)
         assert sum(s for level, s in wear if level == 0) > 0.8 * 90 * 60
+        assert max(s for level, s in wear if level == 0) <= 240           # owner, 2026-11-23: quiet stretches of 1-4 minutes
+        bursts, current = [], []
+        for level, s in wear:                                             # owner, 2026-11-23: a burst is not one level throughout
+            if level == 0 and s > 2:
+                if current:
+                    bursts.append(current)
+                current = []
+            elif level > 0:
+                current.append(level)
+        assert bursts and all(len(set(b)) > 1 for b in bursts if len(b) > 1)
+        assert sum(1 for b in bursts if len(b) > 1) >= len(bursts) // 2
         assert max(level for level, _ in plan_pattern(random.Random(5), 60, "discreet", base=1.0)) <= 0.25
         assert sum(s for _, s in plan_pattern(random.Random(3), 600, "alone", profile="wear")) == MAX_MINUTES * 60
 

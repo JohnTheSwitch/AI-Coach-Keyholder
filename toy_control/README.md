@@ -21,7 +21,8 @@ task's own time (`task_minutes`, 20 when none, at most `MAX_MINUTES` 90). `profi
 his screen recording), then back to the lowest; mixed with waves and a fast pulse so it never stays one thing), teasing (steps past his level, then almost
 nothing, wait), a strongest finish, and every 2-4 minutes a surprise (off 3-8 s, then 2-5 s at a level he can't predict; `_surprises`, also in
 prostate training); prostate training = slow build and long holds; a long wear = mostly off
-with surprise bursts; not alone = gentle waves, at most 0.25. Every session is built around his own level (`store.py`, `toy_sessions`,
+with surprise bursts (quiet 1-4 minutes, owner 2026-11-23; bursts 10-40 s, each a shape he can't guess: climb, drop, steps, pulses, wave
+or random jumps, `_burst`); not alone = gentle waves, at most 0.25. Every session is built around his own level (`store.py`, `toy_sessions`,
 migration 092): after it he answers Too weak (+0.1) / Right (+0.02, so it still climbs over the weeks) / Too much (-0.1), within 0.2-1.0,
 starting at 0.5; no answer keeps it. One session at a
 time; "Stop" ends it; it always ends with StopDeviceCmd. It runs on its own thread, so Intiface never blocks the bot; when the toy cannot be

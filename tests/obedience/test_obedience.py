@@ -974,6 +974,40 @@ def test_run_toy_starts_the_session_for_the_task_he_is_doing(tmp_path) -> None:
     assert toy.started[-1] == 90
 
 
+def test_try_again_goes_on_with_what_was_left(tmp_path) -> None:
+    """Live, 2026-11-23: "Try again" after a broken session restarted the whole 90 minutes; it now runs only what was left."""
+    import json
+    from obedience.service import Task
+
+    class Toy:
+        def __init__(self):
+            self.started, self.played = [], 0.0
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
+            self.started.append(minutes)
+            self.problem = on_problem
+            return True
+
+        def played_seconds(self):
+            return self.played
+
+    w = World(tmp_path)
+    toy = w.tasks.toy = Toy()
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("wear_diver_long", "The Deep Diver in. Photo of the plug base only. Then keep "
+                                                               "it in 90 minutes while you do something else.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    row = w.row()
+    w.tasks.toy_command(U, "run toy 48", MORNING)
+    toy.played = 4 * 60 + 10                                   # it ran a little over 4 minutes, then the link broke
+    toy.problem("the connection closed")
+    with w.core.transaction() as tx:
+        actions = json.loads(tx.fetch_one("SELECT actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:toy_problem:%'")["actions_json"])
+    assert actions[0]["action_id"] == f"obedience:toy44:{row['id']}" and "44 min" in actions[0]["label"]
+    reply = w.tasks.press(user_id=U, row_id=row["id"], action="toy44", now=MORNING)
+    assert "44 minutes" in reply.text and toy.started == [48, 44]
+
+
 def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> None:
     """Owner, 2026-11-17 (option 1): "It's in: run it" on a Deep Diver task runs the toy for the task's time; Stop ends it."""
     from obedience.service import TOY_OFFER, Task
@@ -1015,7 +1049,7 @@ def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> Non
     toy.problem("refused")
     with w.core.transaction() as tx:
         problem = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:toy_problem:%'")
-    assert "couldn't reach your Deep Diver" in problem["text"] and f"obedience:toy:{row['id']}" in problem["actions_json"]   # Try again
+    assert "couldn't reach your Deep Diver" in problem["text"] and f"obedience:toy20:{row['id']}" in problem["actions_json"]   # Try again
     assert w.tasks.press(user_id=U, row_id=row["id"], action="toystop", now=MORNING) == "Stopped." and toy.stopped == 1
     toy.done()                                                                     # afterwards: how was it?
     with w.core.transaction() as tx:
