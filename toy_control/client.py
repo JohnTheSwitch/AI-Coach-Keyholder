@@ -96,6 +96,10 @@ class IntifaceClient:
     async def stop(self, device: Device) -> None:
         await self._call("StopDeviceCmd", {"DeviceIndex": device.index})
 
+    async def ping(self) -> None:
+        """Buttplug's own keep-alive, for a server that asks for one (ServerInfo.MaxPingTime > 0)."""
+        await self._call("Ping")
+
 
 def pick_device(devices: list[Device]) -> Device | None:
     """The Satisfyer if there is one, else the only vibrating device; None when unclear (nothing runs)."""

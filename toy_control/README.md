@@ -31,6 +31,12 @@ an overdue buzz were offered and not chosen (he can't edge with it: only penis s
 **Pause (owner, 2026-11-23).** `pause()` / `resume()`: while paused the toy is off (StopDeviceCmd) and the current step's time waits; on
 Continue the level is sent again and the step goes on. A session left paused for `MAX_PAUSED_SECONDS` (12 h) ends. Stop works while paused.
 
+**Staying connected, and the check buzz (live and owner, 2026-11-23).** In a 3.7-minute quiet step nothing was sent, Intiface's
+WebSocket pings went unanswered and it dropped the bot. The socket is now read all the time (`_aiohttp_connect`, plus a 10 s heartbeat), the
+current command is sent again every `KEEPALIVE_SECONDS` (30 s; the toy also turns itself off after about 5 idle minutes), and Buttplug's
+`Ping` goes out when the server asks for one. Every session starts with `CHECK_BUZZ` (0.4 for 0.6 s) and then a DM: "Connected ... you
+should have felt a short buzz" (with Pause / Stop).
+
 **toy.log (owner, 2026-11-23).** `logs/toy.log` (`infrastructure/decision_log.toy_log`, not in bot.log): the planned session (minutes, mode,
 profile, level, steps, top), its start (device), every command sent (level and how long, off), Pause / Continue / Stop, a failure, and the
 end (stopped early or not, seconds paused, seconds in all).

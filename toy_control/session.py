@@ -37,6 +37,12 @@ SCAN_SECONDS = 10.0
 # Owner, 2026-11-23: "Pause" and "Continue" on a running session; the time left waits while paused. A session left paused this long ends
 # (the toy is already off), so a forgotten pause never holds the one session slot for days.
 MAX_PAUSED_SECONDS = 12 * 3600
+# Live, 2026-11-23: in a 3.7-minute quiet step nothing was sent, Intiface's WebSocket pings went unanswered ("No pongs received") and it dropped
+# the bot. The connection is now read all the time (`_aiohttp_connect`), and the current command is sent again this often, so neither the
+# link nor the toy (the owner: it turns itself off after about 5 idle minutes) ever sits idle.
+KEEPALIVE_SECONDS = 30.0
+# Owner, 2026-11-23: "at the start of each session I would like some confirmation that it works right. Something like a short beep."
+CHECK_BUZZ = (0.4, 0.6)                   # level, seconds; then off for a moment before the session itself
 
 
 def profile_for(catalog_key: str, mode: str, minutes: float) -> str:
@@ -182,7 +188,8 @@ class ToySessions:
             return self._thread is not None and self._thread.is_alive()
 
     def start(self, minutes: float, mode: str, *, profile: str | None = None, base: float = 0.5,
-              on_problem: Callable[[str], None] = lambda text: None, on_done: Callable[[], None] = lambda: None) -> bool:
+              on_problem: Callable[[str], None] = lambda text: None, on_done: Callable[[], None] = lambda: None,
+              on_started: Callable[[], None] = lambda: None) -> bool:
         """False when a session is already running. Returns at once; the session runs on its own thread. `on_done()` after a session that
         reached the toy (also when stopped), `on_problem(text)` when it could not."""
         with self._lock:
@@ -192,7 +199,8 @@ class ToySessions:
             pattern = plan_pattern(self._rng, minutes, mode, profile=profile, base=base)
             toy_log("Session planned.", minutes=minutes, mode=mode, profile=profile, base=base, steps=len(pattern),
                     top=max((lv for lv, _ in pattern), default=0.0))
-            thread = threading.Thread(target=self._run, args=(pattern, stop, on_problem, on_done, pause), name="toy-session", daemon=True)
+            thread = threading.Thread(target=self._run, args=(pattern, stop, on_problem, on_done, pause, on_started), name="toy-session",
+                                      daemon=True)
             self._stop, self._pause, self._thread = stop, pause, thread
         thread.start()
         return True
@@ -231,9 +239,10 @@ class ToySessions:
         with self._lock:
             return self._pause is not None and self._thread is not None and self._thread.is_alive() and self._pause.is_set()
 
-    def _run(self, pattern, stop: threading.Event, on_problem, on_done, pause: threading.Event | None = None) -> None:
+    def _run(self, pattern, stop: threading.Event, on_problem, on_done, pause: threading.Event | None = None,
+             on_started: Callable[[], None] = lambda: None) -> None:
         try:
-            asyncio.run(self._session(pattern, stop, pause or threading.Event()))
+            asyncio.run(self._session(pattern, stop, pause or threading.Event(), on_started))
             on_done()
         except (ToyError, OSError, LookupError) as exc:
             logger.warning("Toy session could not run: %s", exc)
@@ -244,10 +253,11 @@ class ToySessions:
             toy_log("Session failed.", error=exc.__class__.__name__)
             on_problem(exc.__class__.__name__)
 
-    async def _session(self, pattern, stop: threading.Event, pause: threading.Event) -> None:
+    async def _session(self, pattern, stop: threading.Event, pause: threading.Event, on_started: Callable[[], None] = lambda: None) -> None:
         async with self._connect(self._url) as (send, recv):
             client = IntifaceClient(send, recv)
-            await client.handshake()
+            info = await client.handshake()
+            ping_every = float(info.get("MaxPingTime") or 0) / 1000 / 2 if isinstance(info, dict) else 0.0
             devices = await client.device_list() or await client.scan(SCAN_SECONDS)
             device = pick_device(devices)
             if device is None:
@@ -255,6 +265,33 @@ class ToySessions:
             logger.info("Toy session started: %d steps.", len(pattern))
             toy_log("Session started.", device=device.name)
             paused_for, began = 0.0, time.monotonic()
+            last_sent = last_ping = time.monotonic()
+
+            async def keep_alive(level: float, *, off: bool) -> None:
+                nonlocal last_sent, last_ping
+                now_ = time.monotonic()
+                if ping_every > 0 and now_ - last_ping >= ping_every:
+                    await client.ping()
+                    last_ping = now_
+                if now_ - last_sent >= KEEPALIVE_SECONDS:
+                    if off or level <= 0:
+                        await client.stop(device)
+                    else:
+                        await client.vibrate(device, level)
+                    last_sent = now_
+
+            try:
+                level, seconds = CHECK_BUZZ                               # the check buzz: he feels it is connected
+                await client.vibrate(device, level)
+                await asyncio.sleep(seconds)
+                await client.stop(device)
+                toy_log("Check buzz.", level=level, seconds=seconds)
+                await asyncio.sleep(1.0)
+                on_started()
+            except (ToyError, OSError):
+                raise
+            except Exception:
+                logger.exception("The start confirmation failed; the session goes on.")
             try:
                 for level, seconds in pattern:
                     left, sent = float(seconds), False
@@ -268,6 +305,7 @@ class ToySessions:
                                 toy_log("Paused too long: session ended.", paused_seconds=round(paused_for))
                                 stop.set()
                                 break
+                            await keep_alive(0.0, off=True)
                             await asyncio.sleep(0.25)
                             paused_for += 0.25
                             continue
@@ -278,6 +316,8 @@ class ToySessions:
                                 await client.stop(device)
                             toy_log(f"Level {level:.2f}." if level > 0 else "Off.", seconds=round(left, 1))
                             sent = True
+                            last_sent = time.monotonic()
+                        await keep_alive(level, off=False)
                         started = time.monotonic()
                         await asyncio.sleep(min(0.5, left))
                         left -= time.monotonic() - started
@@ -297,16 +337,39 @@ class _aiohttp_connect:
     async def __aenter__(self):
         import aiohttp
         self._session = aiohttp.ClientSession()
-        self._ws = await self._session.ws_connect(self._url)
+        self._ws = await self._session.ws_connect(self._url, autoping=True, heartbeat=10.0)
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def reader() -> None:
+            # Live, 2026-11-23: aiohttp answers the server's pings only inside receive(), so the socket is read all the time, not only
+            # while waiting for an answer.
+            try:
+                while True:
+                    msg = await self._ws.receive()
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await queue.put(msg.data)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        toy_log("Connection to Intiface closed.", kind=str(msg.type))
+                        await queue.put(None)
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                toy_log("Connection to Intiface failed.", error=str(exc))
+                await queue.put(None)
+
+        self._reader = asyncio.create_task(reader())
 
         async def recv() -> str:
-            msg = await self._ws.receive()
-            if msg.type != aiohttp.WSMsgType.TEXT:
+            data = await queue.get()
+            if data is None:
+                await queue.put(None)                   # every later read fails too
                 raise ToyError("the connection closed")
-            return msg.data
+            return data
 
         return self._ws.send_str, recv
 
     async def __aexit__(self, *exc) -> None:
+        self._reader.cancel()
         await self._ws.close()
         await self._session.close()

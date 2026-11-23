@@ -94,7 +94,7 @@ class TestASession:
         s = _sessions([DIVER], servers)
         assert s.resume() is False and s.pause() is False                  # nothing running
         assert s.start(0.05, "alone", on_done=lambda: done.append(1)) is True  # 3 seconds of pattern
-        time.sleep(0.5)
+        time.sleep(2.2)
         assert s.pause() is True and s.pause() is False and s.paused()
         time.sleep(4)                                                       # longer than the whole pattern
         assert s.running() and not done
@@ -120,7 +120,7 @@ class TestASession:
         try:
             s = _sessions([DIVER], [])
             s.start(0.02, "alone")
-            time.sleep(0.3)
+            time.sleep(2.2)
             s.pause()
             time.sleep(0.8)
             s.resume()
@@ -132,6 +132,30 @@ class TestASession:
         for part in ("Session planned.", "Session started.", "Level ", "Pause pressed.", "Off (paused).", "Continue pressed.",
                      "Session ended, toy stopped."):
             assert part in text, part
+
+    def test_a_check_buzz_first_then_the_confirmation(self) -> None:
+        """Owner, 2026-11-23: a short buzz at the start of every session, so he knows it works."""
+        servers, started = [], []
+        s = _sessions([DIVER], servers)
+        s.start(0.02, "alone", on_started=lambda: started.append(1))
+        _wait(s)
+        scalars = [b for k, b in servers[0].sent if k == "ScalarCmd"]
+        assert scalars[0]["Scalars"][0]["Scalar"] == 0.4 and started == [1]
+        kinds = [k for k, _ in servers[0].sent]
+        assert kinds.index("StopDeviceCmd") < kinds.index("ScalarCmd", kinds.index("ScalarCmd") + 1)
+
+    def test_a_long_quiet_step_keeps_the_link_and_the_toy_awake(self, monkeypatch) -> None:
+        """Live, 2026-11-23: a 3.7-minute quiet step sent nothing and Intiface dropped the bot; the toy also sleeps after about 5 idle
+        minutes. The current command is sent again every KEEPALIVE_SECONDS."""
+        import toy_control.session as session
+        monkeypatch.setattr(session, "KEEPALIVE_SECONDS", 0.5)
+        monkeypatch.setattr(session, "plan_pattern", lambda rng, minutes, mode, profile=None, base=0.5: [(0.0, 2.5)])
+        servers = []
+        s = _sessions([DIVER], servers)
+        s.start(1, "alone")
+        _wait(s)
+        stops = [k for k, _ in servers[0].sent].count("StopDeviceCmd")
+        assert stops >= 5                                                   # check buzz off, the step, keep-alives, the final stop
 
     def test_stop_works_while_paused(self) -> None:
         servers = []

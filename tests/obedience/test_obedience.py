@@ -892,7 +892,7 @@ def test_a_toy_pause_moves_the_photo_deadline_up_to_midnight(tmp_path) -> None:
         def __init__(self):
             self.on, self.is_paused, self.stopped = False, False, 0
 
-        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
             self.on = True
             return True
 
@@ -953,7 +953,7 @@ def test_run_toy_starts_the_session_for_the_task_he_is_doing(tmp_path) -> None:
         def __init__(self):
             self.started = []
 
-        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
             self.started.append(minutes)
             return True
 
@@ -983,7 +983,7 @@ def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> Non
         def __init__(self):
             self.started, self.stopped, self.on = [], 0, False
 
-        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
             if self.on:
                 return False
             self.on, self.problem, self.done = True, on_problem, on_done

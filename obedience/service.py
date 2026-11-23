@@ -431,6 +431,8 @@ def uses_anal(text: str) -> bool:
 
 TOY_OFFER = "Press \"It's in: run it\" once it's in and I'll control it myself; if I can't reach it, run it yourself as written."
 TOY_STOPPED = "Stopped."
+# Owner, 2026-11-23: a confirmation at the start of each session (with the check buzz).
+TOY_STARTED = "Connected to your Deep Diver: you should have felt a short buzz. If you didn't, press Stop and check the toy and Intiface."
 # Owner, 2026-11-23: "Pause" / "Continue" on a session the bot runs. The session's time waits, and the photo deadline moves by the time paused,
 # never past midnight of the task's day. Pauses are not limited (the time left still has to be done).
 TOY_PAUSED = ("Paused: the toy is off and its time waits for you. Your photo deadline moves by however long you pause, midnight at the "
@@ -1425,7 +1427,7 @@ class ObedienceTasks:
                 tell("toy_done", TOY_ASK, tuple(ActionSpec(action_id=f"obedience:{a}:{row_id}", label=label) for a, label in TOY_ANSWERS))
 
         if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM, (ActionSpec(action_id=f"obedience:toy:{row_id}", label="Try again"),)),
-                              on_done=done):
+                              on_done=done, on_started=lambda: tell("toy_started", TOY_STARTED, self._toy_buttons(row_id))):
             return OutgoingMessage(text="It's already running.", actions=self._toy_buttons(row_id, paused=bool(getattr(self.toy, "paused", lambda: False)())))
         if levels is not None:
             levels.record_start(task_ref=row_id, mode=mode, profile=profile, level=level, now=now)
