@@ -22,6 +22,7 @@ import re
 import discord
 
 from application.models import ActionSpec
+from infrastructure.decision_log import conversation_log
 from peer_review.discord_buttons import CUSTOM_ID_TEMPLATE as PEER_REVIEW_TEMPLATE
 from peer_review.discord_buttons import PeerReviewDecisionButton
 
@@ -67,6 +68,7 @@ class ReviewConsentButton(discord.ui.DynamicItem[discord.ui.Button], template=RE
         except Exception:
             logger.exception("The consent button failed for lock %s.", self.lock_id)
             text = "Something went wrong; nothing may have been recorded. Please check with the CLI."
+        conversation_log("Button.", text, button=self.item.label, id=self.item.custom_id)
         await interaction.followup.send(text)
         if interaction.message is not None:
             try:
@@ -97,6 +99,7 @@ class CoachButton(discord.ui.DynamicItem[discord.ui.Button], template=COACH_TEMP
         except Exception:
             logger.exception("A coach button failed.")
             text = "Something went wrong; please try again."
+        conversation_log("Button.", text, button=self.item.label, id=self.item.custom_id)
         await interaction.followup.send(text)
         if interaction.message is not None:
             try:
@@ -128,8 +131,11 @@ class DmActionButton(discord.ui.DynamicItem[discord.ui.Button], template=DM_ACTI
             reply = await asyncio.to_thread(facade.press, discord_user_id=str(interaction.user.id), action=self.action, ident=self.ident)
         except Exception:
             logger.exception("A DM button failed (%s).", self.scope)
+            conversation_log("Button failed.", button=self.item.label, id=self.item.custom_id)
             await interaction.followup.send("Something went wrong; please try again.")
             return
+        conversation_log("Button.", reply.text, button=self.item.label, id=self.item.custom_id,
+                         buttons=[a.label for a in reply.actions] if reply.actions else None)
         view = actions_view(reply.actions) if reply.actions else None
         await interaction.followup.send(reply.text, **({"view": view} if view is not None else {}))
         if interaction.message is not None:

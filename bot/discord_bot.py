@@ -472,9 +472,13 @@ class CoachKeyholderBot(discord.Client):
             # a worker thread -- never on this event loop. Database is
             # safe to call concurrently from multiple threads now (see
             # infrastructure/database.py's own thread-local guard).
+            from infrastructure.decision_log import conversation_log
+            conversation_log("In.", message.content, late=late or None)
             outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
             from_model = bool(getattr(outgoing, "from_model", False))     # restored after a restart only when the model wrote it
+            conversation_log("Reply.", reply_text, written_by="model" if from_model else "code",
+                             buttons=[a.label for a in outgoing.actions] if outgoing.actions else None)
             if late:
                 reply_text = f"*(You sent this while I was offline: {discord.utils.format_dt(message.created_at, 't')}.)*\n{reply_text}"
             reply_embed = _build_discord_embed(outgoing.embed) if outgoing.embed is not None else None
@@ -1130,6 +1134,7 @@ def main() -> None:
         bot.obedience_loop = obedience.loop(clock)
         application_service.gear_command = obedience.gear_command
         application_service.extra_task_command = obedience.extra_task_command     # `extra task` (owner, 2026-11-16)
+        application_service.toy_command = obedience.toy_command                   # `run toy [minutes]` (owner, 2026-11-23)
         from system.obedience_wiring import build_task_board               # P1 (owner, 2026-11-15): the weekly task board
         task_board = build_task_board(core, obedience, window_config_from(config),
                                       enabled=lambda u=obedience.user_id: features.is_on(u, "task_board"))

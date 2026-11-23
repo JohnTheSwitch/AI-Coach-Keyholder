@@ -23,6 +23,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
@@ -93,7 +94,9 @@ class VacationService:
                        (vid, user_id, start.isoformat(), end.isoformat(), _iso(start_at), _iso(end_at), _iso(now), _iso(now)))
             return ScheduleOutcome.SCHEDULED, self._open_in(tx, user_id, now)
 
-        return apply_transition(self._core, write=write)
+        outcome = apply_transition(self._core, write=write)
+        decision("vacation", "A vacation was asked for.", outcome=outcome[0].value, start=start.isoformat(), end=end.isoformat())
+        return outcome
 
     def cancel_upcoming(self, user_id: str, *, now: datetime) -> bool:
         """Drops a vacation that has not started yet."""
@@ -104,7 +107,9 @@ class VacationService:
             tx.execute("UPDATE vacations SET status = 'cancelled', updated_at = ? WHERE id = ?", (_iso(now), v.id))
             return True
 
-        return apply_transition(self._core, write=write)
+        done = apply_transition(self._core, write=write)
+        decision("vacation", "Cancelling an upcoming vacation.", done=done)
+        return done
 
     def end_now(self, user_id: str, *, now: datetime) -> bool:
         """Ends a running vacation at once."""
@@ -115,7 +120,9 @@ class VacationService:
             tx.execute("UPDATE vacations SET end_at = ?, ended_early = 1, updated_at = ? WHERE id = ?", (_iso(now), _iso(now), v.id))
             return True
 
-        return apply_transition(self._core, write=write)
+        done = apply_transition(self._core, write=write)
+        decision("vacation", "Ending a running vacation now.", done=done)
+        return done
 
     # ------------------------------------------------------------------ reads
 

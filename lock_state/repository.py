@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
@@ -126,4 +127,6 @@ class LockStateAdministration:
             )
             return report
 
-        return apply_transition(self._core, write=write)
+        report = apply_transition(self._core, write=write)
+        decision("lock_state", "The wearer reported his lock state.", status=report.status.value, sequence=report.sequence_number)
+        return report

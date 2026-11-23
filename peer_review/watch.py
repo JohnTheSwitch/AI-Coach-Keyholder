@@ -40,6 +40,7 @@ from typing import Callable, Iterable
 
 from chaster.peer_reviews import PeerReviewObservation, PeerReviewReport, ReviewSource, ReviewStatus
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 
@@ -201,6 +202,8 @@ class PeerReviewWatch:
                     (str(uuid.uuid4()), stamp, lock_id, obs.review_id, obs.source.value, previous, obs.status.value,
                      obs.verified_votes, obs.rejected_votes))
                 transitions += 1
+                logged.append(dict(review=obs.review_id, source=obs.source.value, previous=previous, now=obs.status.value,
+                                   verified_votes=obs.verified_votes, rejected_votes=obs.rejected_votes, baseline=is_baseline or None))
                 if obs.status is ReviewStatus.REJECTED and incident is None and not is_baseline and obs.review_id not in spot_checks:
                     tx.execute("UPDATE peer_reviews SET incident_id = ? WHERE lock_id = ? AND review_id = ? AND incident_id IS NULL",
                                (str(uuid.uuid4()), lock_id, obs.review_id))
@@ -209,7 +212,11 @@ class PeerReviewWatch:
                 tx.execute("INSERT OR IGNORE INTO peer_review_locks (lock_id, baselined_at) VALUES (?, ?)", (lock_id, stamp))
             return transitions, claimed
 
-        return apply_transition(self._core, write=write)
+        logged: list[dict] = []
+        result = apply_transition(self._core, write=write)
+        for line in logged:                       # owner, 2026-11-23 (transparency): every vote outcome in decisions.log
+            decision("peer_review", "A Chaster verification changed state.", **line)
+        return result
 
     def _register_claimed(self, now: datetime) -> int:
         with self._core.transaction() as tx:

@@ -50,6 +50,9 @@ logger = logging.getLogger("ai_coach_keyholder.obedience")
 __all__ = ["ObedienceTasks", "Ports", "get_verified_training", "get_training_outcomes", "plan_extra_task", "credit_training", "plan_board_task", "get_obedience_state", "CATALOG", "Task", "PHOTO_DEADLINE", "WORKOUT_SHARE", "GEAR", "DEFAULT_OWNED", "ALL_GEAR"]
 
 PHOTO_DEADLINE = timedelta(minutes=60)
+# Owner, 2026-11-23: "I'll start myself and then we will continue after the restart". `run toy` or `run toy 45` in the DM starts the bot's
+# session for the task he is doing now (the full task time, or the minutes he names, never more), like pressing "It's in: run it".
+_RUN_TOY = re.compile(r"(run (the )?toy|run (the )?deep diver|spust hracku|spusť hračku)( (?P<min>\d{1,3})( ?(min|minutes|minut))?)?")
 _EXTRA_TASK = re.compile(r"(extra (erotic )?task|ukol navic|úkol navíc)( (at|v) (?P<at>\d{1,2}:\d{2}))?")
 VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
@@ -432,7 +435,8 @@ TOY_STOPPED = "Stopped."
 # never past midnight of the task's day. Pauses are not limited (the time left still has to be done).
 TOY_PAUSED = ("Paused: the toy is off and its time waits for you. Your photo deadline moves by however long you pause, midnight at the "
               "latest.")
-TOY_PROBLEM = "I couldn't reach your Deep Diver (Intiface open on the PC, toy on and near it?). Run it yourself as the task says."
+TOY_PROBLEM = ("I couldn't reach your Deep Diver (Intiface open on the PC, toy on and near it?). Fix that and press Try again (or send "
+               "\"run toy\", or \"run toy 45\" for the minutes left), or run it yourself as the task says.")   # live, 2026-11-23: the Try again button (the first button was gone after one press)
 TOY_DEFAULT_MINUTES = 20
 TOY_ASK = "How was that?"
 TOY_ANSWERS = (("toyweak", "Too weak"), ("toyright", "Right"), ("toymuch", "Too much"))
@@ -1207,6 +1211,25 @@ class ObedienceTasks:
         return (f"Good. An extra task at {self._ports.local_clock(at)}: I'll ask whether you're alone, then it goes to Chaster. "
                 "It counts like any task: a photo, the vote, and the usual consequences if it isn't done.")
 
+    def toy_command(self, user_id: str, text: str, now: datetime):
+        """`run toy [minutes]`: the bot runs the Deep Diver for his assigned Deep Diver task. None when the message is not this request."""
+        said = " ".join((text or "").lower().split()).strip(" .!?")
+        match = _RUN_TOY.fullmatch(said)
+        if user_id != self.user_id or match is None:
+            return None
+        if self.toy is None:
+            return "I can't run the toy for you."
+        with self._core.transaction() as tx:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM obedience_tasks WHERE user_id = ? AND status = 'assigned' "
+                                                  "ORDER BY created_at DESC", (self.user_id,))]
+        row = next((r for r in rows if uses_toy(r["text"] or "")), None)
+        if row is None:
+            return "There's no Deep Diver task to run right now."
+        minutes = int(match.group("min")) if match.group("min") else None
+        if minutes is not None and minutes < 1:
+            return "Give me at least one minute."
+        return self._run_toy(row, now, minutes=minutes)
+
     def gear_command(self, user_id: str, text: str, now: datetime) -> str | None:
         """`gear`, `gear add <piece>`, `gear remove <piece>` (`... broken` / `lost` / `never had`: at once); None for any other message."""
         words = (text or "").strip().lower().split()
@@ -1377,13 +1400,14 @@ class ObedienceTasks:
         decision("obedience", "An obedience task was cancelled for health or safety; no consequence.", task=row["catalog_key"])
         return "Cancelled, no consequence. Look after yourself first."
 
-    def _run_toy(self, row: dict, now: datetime):
+    def _run_toy(self, row: dict, now: datetime, *, minutes: int | None = None):
         """Owner, 2026-11-17: "It's in: run it" on an assigned task that uses the Deep Diver. A session shaped for the task, built around his
         own level (`self.toy_levels`), and afterwards "Too weak / Right / Too much" moves that level."""
         if self.toy is None or row["status"] != "assigned" or not uses_toy(row["text"] or ""):
             return "There's nothing to run for this task."
         from toy_control.session import MAX_MINUTES, profile_for
-        minutes = min(task_minutes(row["text"] or "") or TOY_DEFAULT_MINUTES, MAX_MINUTES)
+        full = min(task_minutes(row["text"] or "") or TOY_DEFAULT_MINUTES, MAX_MINUTES)
+        minutes = full if minutes is None else min(minutes, full)      # `run toy 45`: what is left of the task, never more than all of it
         mode = row["mode"] or DISCREET
         profile = profile_for(row["catalog_key"] or "", mode, minutes)
         levels = self.toy_levels
@@ -1400,7 +1424,7 @@ class ObedienceTasks:
             if levels is not None:
                 tell("toy_done", TOY_ASK, tuple(ActionSpec(action_id=f"obedience:{a}:{row_id}", label=label) for a, label in TOY_ANSWERS))
 
-        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM),
+        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM, (ActionSpec(action_id=f"obedience:toy:{row_id}", label="Try again"),)),
                               on_done=done):
             return OutgoingMessage(text="It's already running.", actions=self._toy_buttons(row_id, paused=bool(getattr(self.toy, "paused", lambda: False)())))
         if levels is not None:

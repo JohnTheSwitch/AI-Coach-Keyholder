@@ -9,6 +9,8 @@ Plain-text files in the log folder, next to bot.log:
   - `release.log`: only the release (unlock) decisions, including the planned release time. It holds the secret release time, so a wearer who wants
     the surprise should not open it;
   - `model.log`: every exchange with the local model, the whole prompt and the raw answer, so a bad reply can be traced to what the model was given;
+  - `conversation.log` (owner, 2026-11-23, the transparency request of 2026-11-10): every DM he sends, every reply, every message the bot
+    sends on its own (delivered or failed) and every button he presses, with the button's answer;
   - `toy.log` (owner, 2026-11-23): every session the bot runs on the Deep Diver, and every command it sends to the toy (level, off, pause,
     continue, stop), so what the toy did can be followed second by second.
 
@@ -24,12 +26,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-__all__ = ["decision", "release_decision", "log_event", "model_call", "toy_log", "install_decision_files", "system_version", "log_system_version", "DECISIONS_LOGGER", "RELEASE_LOGGER", "MODEL_LOGGER", "TOY_LOGGER"]
+__all__ = ["decision", "release_decision", "log_event", "model_call", "toy_log", "conversation_log", "install_decision_files", "system_version", "log_system_version", "DECISIONS_LOGGER", "RELEASE_LOGGER", "MODEL_LOGGER", "TOY_LOGGER", "CONVERSATION_LOGGER"]
 
 DECISIONS_LOGGER = "ai_coach_keyholder.decisions"
 RELEASE_LOGGER = "ai_coach_keyholder.decisions.release"
 MODEL_LOGGER = "ai_coach_keyholder.model_calls"
 TOY_LOGGER = "ai_coach_keyholder.toy_commands"
+CONVERSATION_LOGGER = "ai_coach_keyholder.conversation"
 _MAX_BYTES = 5 * 1024 * 1024
 _BACKUPS = 5
 
@@ -39,6 +42,8 @@ _model = logging.getLogger(MODEL_LOGGER)
 _model.propagate = False            # whole prompts are long: they go to model.log only, never into bot.log
 _toy = logging.getLogger(TOY_LOGGER)
 _toy.propagate = False              # a command every half second: toy.log only, never into bot.log
+_conversation = logging.getLogger(CONVERSATION_LOGGER)
+_conversation.propagate = False     # whole messages: conversation.log only
 
 
 def _clean(value: Any, key: str = "") -> Any:
@@ -115,12 +120,21 @@ def toy_log(what: str, **details: Any) -> None:
         pass
 
 
+def conversation_log(what: str, text: str | None = None, **details: Any) -> None:
+    """One entry in conversation.log: what happened ("In", "Reply", "Sent", "Button"), its details, then the whole text on the next lines."""
+    try:
+        line = _line("dm", what, details)
+        _conversation.info(line + ("\n" + str(text) if text else ""))
+    except Exception:  # pragma: no cover
+        pass
+
+
 def install_decision_files(log_dir: str | Path) -> None:
     """Attaches the rotating files. Idempotent. Decision lines still reach the main log as well; model exchanges do not."""
     folder = Path(log_dir)
     folder.mkdir(parents=True, exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(message)s")
-    for logger, name in ((_decisions, "decisions.log"), (_release, "release.log"), (_model, "model.log"), (_toy, "toy.log")):
+    for logger, name in ((_decisions, "decisions.log"), (_release, "release.log"), (_model, "model.log"), (_toy, "toy.log"), (_conversation, "conversation.log")):
         path = str((folder / name).resolve())
         if any(isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == path for h in logger.handlers):
             continue
@@ -149,13 +163,14 @@ def system_version(repo: str | Path) -> dict[str, Any]:
 
 
 def log_system_version(repo: str | Path, **extra: Any) -> dict[str, Any]:
-    """One "System started" line in every log file (bot.log, decisions.log, release.log, model.log, toy.log), so each line after it can be tied to code."""
+    """One "System started" line in every log file (bot.log, decisions.log, release.log, model.log, toy.log, conversation.log), so each line after it can be tied to code."""
     try:
         details = {**system_version(repo), **extra}
         line = _line("system", "System started.", details)
         _release.info(line)            # reaches release.log, decisions.log and bot.log
         _model.info(line)
         _toy.info(line)
+        _conversation.info(line)
         return details
     except Exception:
         logging.getLogger(__name__).debug("The version line could not be written.", exc_info=True)

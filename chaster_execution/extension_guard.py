@@ -30,6 +30,7 @@ from chaster.extension_plan import ReviewPlan, plan_extension_policy
 from chaster_execution.models import TransportOutcome
 from infrastructure.clock import Clock
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 
@@ -117,6 +118,7 @@ class ExtensionGuard:
             self._tell(f"unverified:{plan.plan_id}", f"I corrected a setting on lock {config.lock_id} but a fresh read does not show it ({_describe(plan)}). Please check it.", now)
             return f"{config.lock_id}: {outcome}"
         logger.info("Extension guard corrected lock %s: %s.", config.lock_id, _describe(plan))
+        decision("extension_guard", "A Chaster lock setting was put back to what it must be.", lock_id=config.lock_id, changes=_describe(plan))
         self._tell(f"applied:{audit_id}", f"I corrected a setting on lock {config.lock_id}: {_describe(plan)}.", now)
         return None
 

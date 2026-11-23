@@ -19,7 +19,7 @@ from tests.release_engine.test_service import OK, U, core, make, ready  # noqa: 
 def files(tmp_path):
     install_decision_files(tmp_path / "logs")
     yield tmp_path / "logs"
-    for name in (DECISIONS_LOGGER, RELEASE_LOGGER):
+    for name in (DECISIONS_LOGGER, RELEASE_LOGGER, decision_log.MODEL_LOGGER, decision_log.TOY_LOGGER, decision_log.CONVERSATION_LOGGER):
         logger = logging.getLogger(name)
         for h in list(logger.handlers):
             logger.removeHandler(h)
@@ -39,6 +39,17 @@ class TestFiles:
     def test_a_release_decision_goes_to_both(self, files) -> None:
         release_decision("Release planned.", planned_unfreeze_at="2026-11-11T17:05:00Z")
         assert "2026-11-11T17:05:00Z" in _read(files / "release.log") and "Release planned" in _read(files / "decisions.log")
+
+    def test_a_conversation_goes_to_conversation_log_only(self, files) -> None:
+        """Owner, 2026-11-23 (transparency): every DM in and out, whole, in conversation.log."""
+        decision_log.conversation_log("Reply.", "Running again. Photo now due by 22:57.", written_by="code", buttons=["Pause", "Stop"])
+        text = _read(files / "conversation.log")
+        assert "[dm] Reply." in text and "Photo now due by 22:57." in text and '"Pause"' in text
+        assert "Running again" not in _read(files / "decisions.log")
+
+    def test_toy_commands_go_to_toy_log_only(self, files) -> None:
+        decision_log.toy_log("Level 0.45.", seconds=0.5)
+        assert "[toy] Level 0.45." in _read(files / "toy.log") and "Level 0.45" not in _read(files / "decisions.log")
 
     def test_installing_twice_writes_each_line_once(self, files) -> None:
         install_decision_files(files)
@@ -179,7 +190,7 @@ class TestTheVersionIsInEveryLog:
     def test_the_start_line_reaches_every_file(self, files, monkeypatch) -> None:
         monkeypatch.setattr(decision_log, "system_version", lambda repo: {"commit": "abc123def456", "dirty": False})
         decision_log.log_system_version(".", model="m")
-        for name in ("decisions.log", "release.log", "model.log"):
+        for name in ("decisions.log", "release.log", "model.log", "toy.log", "conversation.log"):
             text = _read(files / name)
             assert "System started." in text and "abc123def456" in text and '"model": "m"' in text
 

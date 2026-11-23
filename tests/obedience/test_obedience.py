@@ -944,6 +944,36 @@ def test_a_toy_pause_moves_the_photo_deadline_up_to_midnight(tmp_path) -> None:
     assert len(moved) == 2
 
 
+def test_run_toy_starts_the_session_for_the_task_he_is_doing(tmp_path) -> None:
+    """Owner, 2026-11-23: he started the task himself (Intiface was closed), then hands the toy to the bot with `run toy 45`."""
+    from obedience.service import Task
+    from application.models import OutgoingMessage
+
+    class Toy:
+        def __init__(self):
+            self.started = []
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+            self.started.append(minutes)
+            return True
+
+    w = World(tmp_path)
+    assert w.tasks.toy_command(U, "run toy", MORNING) == "I can't run the toy for you."
+    toy = w.tasks.toy = Toy()
+    assert w.tasks.toy_command(U, "hello", MORNING) is None and w.tasks.toy_command("other", "run toy", MORNING) is None
+    assert w.tasks.toy_command(U, "run toy", MORNING) == "There's no Deep Diver task to run right now."
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("wear_diver_long", "The Deep Diver in. Photo of the plug base only. Then keep "
+                                                               "it in 90 minutes while you do something else.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    reply = w.tasks.toy_command(U, "Run toy 45", MORNING)
+    assert isinstance(reply, OutgoingMessage) and "45 minutes" in reply.text and toy.started == [45]
+    w.tasks.toy_command(U, "run toy 500 min", MORNING)
+    assert toy.started[-1] == 90                                         # never more than the task's own time
+    w.tasks.toy_command(U, "run toy", MORNING)
+    assert toy.started[-1] == 90
+
+
 def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> None:
     """Owner, 2026-11-17 (option 1): "It's in: run it" on a Deep Diver task runs the toy for the task's time; Stop ends it."""
     from obedience.service import TOY_OFFER, Task
@@ -984,7 +1014,8 @@ def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> Non
     assert "already running" in w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING).text
     toy.problem("refused")
     with w.core.transaction() as tx:
-        assert "couldn't reach your Deep Diver" in tx.fetch_one("SELECT text FROM notifications WHERE dedupe_key LIKE 'obedience:toy_problem:%'")["text"]
+        problem = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:toy_problem:%'")
+    assert "couldn't reach your Deep Diver" in problem["text"] and f"obedience:toy:{row['id']}" in problem["actions_json"]   # Try again
     assert w.tasks.press(user_id=U, row_id=row["id"], action="toystop", now=MORNING) == "Stopped." and toy.stopped == 1
     toy.done()                                                                     # afterwards: how was it?
     with w.core.transaction() as tx:

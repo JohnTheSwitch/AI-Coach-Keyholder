@@ -188,6 +188,7 @@ class ApplicationService:
         # Work queue Q4c (owner, 2026-11-15): training.service.TrainingPlan; `log squat 105 4x9` is recorded before any model.
         self.training_log = None
         self.training_extra = None      # `extra training` (owner, 2026-11-16)
+        self.toy_command = None  # `run toy [minutes]` (owner, 2026-11-23): obedience.service.ObedienceTasks.toy_command
         self.extra_task_command = None  # `extra task [at HH:MM]` (owner, 2026-11-16): obedience.service.ObedienceTasks.extra_task_command
         self.release_status = None      # Proposal A (owner, 2026-11-16): system.release_status.ReleaseStatus.answer, before any model
         self.opt_outs = None                     # opt_outs.service.OptOuts (G3, owner 2026-11-15): switch-offs wait 24 h while locked
@@ -356,6 +357,15 @@ class ApplicationService:
                     custom_reply = None
                 if custom_reply is not None:
                     return OutgoingMessage(text=custom_reply)
+
+            if self.toy_command is not None:
+                try:
+                    toy_reply = self.toy_command(user.id, incoming.text, incoming.received_at)
+                except Exception:
+                    logger.exception("The toy could not be started; the message is handled normally.")
+                    toy_reply = None
+                if toy_reply is not None:
+                    return toy_reply if isinstance(toy_reply, OutgoingMessage) else OutgoingMessage(text=toy_reply)
 
             if self.extra_task_command is not None:
                 try:

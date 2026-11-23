@@ -157,5 +157,9 @@ Too much) to set his level for next time. Without a reachable toy he gets a DM t
 it stopped. The photo deadline moves by the time paused (also when a pause ends with Stop), never past midnight of the task's day
 (`Ports.midnight`; event `obedience.task_deadline_moved`, reason `toy_paused`). Pauses are not limited: the time left still has to be done.
 
+**Try again and `run toy` (live, 2026-11-23).** When the toy can't be reached, the message carries a Try again button (the first one is
+gone after one press). `run toy` or `run toy 45` in the DM starts the session for his assigned Deep Diver task, like the button: the task's
+own time, or the minutes he names, never more (he started a task himself while Intiface was closed and handed it to the bot later).
+
 
 **Another wearer (2026-11-17):** `ObedienceTasks.custom` makes their erotic task come only from their own approved tasks (`custom_tasks/`), never this catalogue; with none that fits, `CUSTOM_FALLBACK`. The coach is told the short training session is optional.

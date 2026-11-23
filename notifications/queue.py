@@ -122,6 +122,15 @@ class NotificationQueue:
                            (attempts, _iso(now + delay), result.value, notification.id))
 
         apply_transition(self._core, write=write)
+        try:
+            from infrastructure.decision_log import conversation_log
+            what = ("Sent." if result is DeliveryResult.DELIVERED else
+                    "Sending failed for good." if attempts >= MAX_ATTEMPTS else "Sending failed; retried later.")
+            conversation_log(what, notification.text if result is DeliveryResult.DELIVERED or attempts == 1 else None,
+                             kind=notification.kind, outcome=result.value, attempt=attempts,
+                             buttons=[a.label for a in notification.actions] if notification.actions else None)
+        except Exception:  # pragma: no cover - a log line never stops a delivery
+            pass
 
     def counts(self) -> dict[str, int]:
         with self._core.transaction() as tx:

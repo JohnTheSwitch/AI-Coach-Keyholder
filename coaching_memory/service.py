@@ -27,6 +27,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
+from infrastructure.decision_log import decision
 from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
@@ -134,7 +135,9 @@ class CoachingMemoryService:
                        (str(uuid.uuid4()), user_id, category, text, key, _iso(now)))
             return WriteOutcome.STORED
 
-        return apply_transition(self._core, write=write)
+        outcome = apply_transition(self._core, write=write)
+        decision("coaching_memory", "A memory note from a conversation.", outcome=outcome.value, category=category)   # the note itself: `memory`
+        return outcome
 
     def sink(self, subject_key: str, parsed, now: datetime, user_message: str | None = None) -> None:
         """The structured-output sink of the conversation engine: stores a valid memory note, ignores everything else.
@@ -172,13 +175,17 @@ class CoachingMemoryService:
             tx.execute("DELETE FROM wearer_dossier WHERE id = ? AND user_id = ?", (rows[0]["id"], user_id))
             return 1
 
-        return apply_transition(self._core, write=write)
+        removed = apply_transition(self._core, write=write)
+        decision("coaching_memory", "The wearer asked to forget one memory note.", removed=removed)
+        return removed
 
     def forget_all(self, user_id: str) -> int:
         def write(tx: Transaction, _s: object) -> int:
             return tx.execute("DELETE FROM wearer_dossier WHERE user_id = ?", (user_id,)).rowcount
 
-        return apply_transition(self._core, write=write)
+        removed = apply_transition(self._core, write=write)
+        decision("coaching_memory", "The wearer asked to forget all memory notes.", removed=removed)
+        return removed
 
 
 def _entry(row) -> MemoryEntry:
