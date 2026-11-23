@@ -8,7 +8,7 @@ task (OBEDIENCE_TASK_MISSED, warning only). None, with a note, when the spot che
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
 from infractions.signals import SignalKind
 from obedience.service import ObedienceTasks, Ports
@@ -82,7 +82,8 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                                        raise_failure=raise_failure,
                                        in_exemption=(lambda: False) if exemptions is None else (lambda: exemptions.wear_exemption_in_force(user_id)),
                                        training=plan.day_task, training_tick=plan.tick,
-                                       feature_on=(lambda f: True) if features is None else (lambda f: features.is_on(user_id, f))))
+                                       feature_on=(lambda f: True) if features is None else (lambda f: features.is_on(user_id, f)),
+                                       midnight=lambda d: window_cfg.to_utc(d + timedelta(days=1), time(0, 0))))
     tasks.training = plan                                     # work queue Q4c: the bot wires its `log` and its Monday buttons
     tasks.trust_domain = domain                               # owner, 2026-11-17: a task verified in Chaster earns like an answered check-in
     plan.after_today = tasks.take_training_today              # bug fix 2026-11-16: "Today" switches a task that is only planned

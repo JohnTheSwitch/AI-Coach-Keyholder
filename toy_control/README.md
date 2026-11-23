@@ -27,3 +27,10 @@ starting at 0.5; no answer keeps it. One session at a
 time; "Stop" ends it; it always ends with StopDeviceCmd. It runs on its own thread, so Intiface never blocks the bot; when the toy cannot be
 reached he gets a DM to run it himself. Only the owner's bot sets `obedience.toy`; tenants have none. Teasing at random times, edging and
 an overdue buzz were offered and not chosen (he can't edge with it: only penis stimulation would do that).
+
+**Pause (owner, 2026-11-23).** `pause()` / `resume()`: while paused the toy is off (StopDeviceCmd) and the current step's time waits; on
+Continue the level is sent again and the step goes on. A session left paused for `MAX_PAUSED_SECONDS` (12 h) ends. Stop works while paused.
+
+**toy.log (owner, 2026-11-23).** `logs/toy.log` (`infrastructure/decision_log.toy_log`, not in bot.log): the planned session (minutes, mode,
+profile, level, steps, top), its start (device), every command sent (level and how long, off), Pause / Continue / Stop, a failure, and the
+end (stopped early or not, seconds paused, seconds in all).

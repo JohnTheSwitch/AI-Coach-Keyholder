@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Callable
 
+from infrastructure.decision_log import toy_log
 from toy_control.client import DEFAULT_URL, IntifaceClient, ToyError, pick_device
 
 __all__ = ["ToySessions", "plan_pattern", "profile_for", "MAX_MINUTES", "LEVELS", "PROFILES"]
@@ -33,6 +34,9 @@ FLOOR = 0.05                              # the "almost nothing" of a tease
 PROFILES = ("default", "prostate", "wear", "discreet")
 LEVELS = {"alone": (FLOOR, 1.0), "discreet": (FLOOR, DISCREET_MAX)}
 SCAN_SECONDS = 10.0
+# Owner, 2026-11-23: "Pause" and "Continue" on a running session; the time left waits while paused. A session left paused this long ends
+# (the toy is already off), so a forgotten pause never holds the one session slot for days.
+MAX_PAUSED_SECONDS = 12 * 3600
 
 
 def profile_for(catalog_key: str, mode: str, minutes: float) -> str:
@@ -170,6 +174,7 @@ class ToySessions:
         self._rng = rng or random.Random()
         self._lock = threading.Lock()
         self._stop: threading.Event | None = None
+        self._pause: threading.Event | None = None
         self._thread: threading.Thread | None = None
 
     def running(self) -> bool:
@@ -183,10 +188,12 @@ class ToySessions:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
-            stop = threading.Event()
+            stop, pause = threading.Event(), threading.Event()
             pattern = plan_pattern(self._rng, minutes, mode, profile=profile, base=base)
-            thread = threading.Thread(target=self._run, args=(pattern, stop, on_problem, on_done), name="toy-session", daemon=True)
-            self._stop, self._thread = stop, thread
+            toy_log("Session planned.", minutes=minutes, mode=mode, profile=profile, base=base, steps=len(pattern),
+                    top=max((lv for lv, _ in pattern), default=0.0))
+            thread = threading.Thread(target=self._run, args=(pattern, stop, on_problem, on_done, pause), name="toy-session", daemon=True)
+            self._stop, self._pause, self._thread = stop, pause, thread
         thread.start()
         return True
 
@@ -196,21 +203,48 @@ class ToySessions:
         if stop is None or thread is None or not thread.is_alive():
             return False
         stop.set()
+        toy_log("Stop pressed.")
         thread.join(timeout=10)
         return True
 
-    def _run(self, pattern, stop: threading.Event, on_problem, on_done) -> None:
+    def pause(self) -> bool:
+        """Owner, 2026-11-23: the toy goes off and the session's time stops. False when nothing is running or it is already paused."""
+        with self._lock:
+            pause, thread = self._pause, self._thread
+            if pause is None or thread is None or not thread.is_alive() or pause.is_set():
+                return False
+            pause.set()
+        toy_log("Pause pressed.")
+        return True
+
+    def resume(self) -> bool:
+        """The session goes on where it stopped. False when nothing is paused."""
+        with self._lock:
+            pause, thread = self._pause, self._thread
+            if pause is None or thread is None or not thread.is_alive() or not pause.is_set():
+                return False
+            pause.clear()
+        toy_log("Continue pressed.")
+        return True
+
+    def paused(self) -> bool:
+        with self._lock:
+            return self._pause is not None and self._thread is not None and self._thread.is_alive() and self._pause.is_set()
+
+    def _run(self, pattern, stop: threading.Event, on_problem, on_done, pause: threading.Event | None = None) -> None:
         try:
-            asyncio.run(self._session(pattern, stop))
+            asyncio.run(self._session(pattern, stop, pause or threading.Event()))
             on_done()
         except (ToyError, OSError, LookupError) as exc:
             logger.warning("Toy session could not run: %s", exc)
+            toy_log("Session could not run.", error=str(exc))
             on_problem(str(exc))
         except Exception as exc:                                    # aiohttp errors and the like: never take the bot down
             logger.exception("Toy session failed.")
+            toy_log("Session failed.", error=exc.__class__.__name__)
             on_problem(exc.__class__.__name__)
 
-    async def _session(self, pattern, stop: threading.Event) -> None:
+    async def _session(self, pattern, stop: threading.Event, pause: threading.Event) -> None:
         async with self._connect(self._url) as (send, recv):
             client = IntifaceClient(send, recv)
             await client.handshake()
@@ -219,20 +253,41 @@ class ToySessions:
             if device is None:
                 raise LookupError("the toy was not found")
             logger.info("Toy session started: %d steps.", len(pattern))
+            toy_log("Session started.", device=device.name)
+            paused_for, began = 0.0, time.monotonic()
             try:
                 for level, seconds in pattern:
+                    left, sent = float(seconds), False
+                    while left > 0 and not stop.is_set():
+                        if pause.is_set():                                   # owner, 2026-11-23: off, and the step's time waits
+                            if sent:
+                                await client.stop(device)
+                                toy_log("Off (paused).")
+                                sent = False
+                            if paused_for >= MAX_PAUSED_SECONDS:
+                                toy_log("Paused too long: session ended.", paused_seconds=round(paused_for))
+                                stop.set()
+                                break
+                            await asyncio.sleep(0.25)
+                            paused_for += 0.25
+                            continue
+                        if not sent:
+                            if level > 0:
+                                await client.vibrate(device, level)
+                            else:
+                                await client.stop(device)
+                            toy_log(f"Level {level:.2f}." if level > 0 else "Off.", seconds=round(left, 1))
+                            sent = True
+                        started = time.monotonic()
+                        await asyncio.sleep(min(0.5, left))
+                        left -= time.monotonic() - started
                     if stop.is_set():
                         break
-                    if level > 0:
-                        await client.vibrate(device, level)
-                    else:
-                        await client.stop(device)
-                    end = time.monotonic() + seconds
-                    while not stop.is_set() and time.monotonic() < end:
-                        await asyncio.sleep(min(0.5, end - time.monotonic()))
             finally:
                 await client.stop(device)
                 logger.info("Toy session ended.")
+                toy_log("Session ended, toy stopped.", stopped_early=stop.is_set(), paused_seconds=round(paused_for),
+                        wall_seconds=round(time.monotonic() - began))
 
 
 class _aiohttp_connect:

@@ -88,6 +88,59 @@ class TestASession:
         assert s.stop() is True and not s.running()
         assert servers[0].sent[-1][0] == "StopDeviceCmd" and s.stop() is False
 
+    def test_pause_turns_it_off_and_its_time_waits(self) -> None:
+        """Owner, 2026-11-23: Pause / Continue. While paused the toy is off and the session's time does not run."""
+        servers, done = [], []
+        s = _sessions([DIVER], servers)
+        assert s.resume() is False and s.pause() is False                  # nothing running
+        assert s.start(0.05, "alone", on_done=lambda: done.append(1)) is True  # 3 seconds of pattern
+        time.sleep(0.5)
+        assert s.pause() is True and s.pause() is False and s.paused()
+        time.sleep(4)                                                       # longer than the whole pattern
+        assert s.running() and not done
+        assert servers[0].sent[-1][0] == "StopDeviceCmd"                    # off while paused
+        assert s.resume() is True and s.resume() is False and not s.paused()
+        _wait(s)
+        assert done == [1] and servers[0].sent[-1][0] == "StopDeviceCmd"
+
+    def test_every_command_goes_to_the_toy_log(self) -> None:
+        """Owner, 2026-11-23: what the bot did with the toy can be followed in toy.log."""
+        import logging
+        from infrastructure.decision_log import TOY_LOGGER
+        lines = []
+
+        class Keep(logging.Handler):
+            def emit(self, record):
+                lines.append(record.getMessage())
+
+        log = logging.getLogger(TOY_LOGGER)
+        handler, level = Keep(), log.level
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
+        try:
+            s = _sessions([DIVER], [])
+            s.start(0.02, "alone")
+            time.sleep(0.3)
+            s.pause()
+            time.sleep(0.8)
+            s.resume()
+            _wait(s)
+        finally:
+            log.removeHandler(handler)
+            log.setLevel(level)
+        text = " | ".join(lines)
+        for part in ("Session planned.", "Session started.", "Level ", "Pause pressed.", "Off (paused).", "Continue pressed.",
+                     "Session ended, toy stopped."):
+            assert part in text, part
+
+    def test_stop_works_while_paused(self) -> None:
+        servers = []
+        s = _sessions([DIVER], servers)
+        s.start(10, "alone")
+        time.sleep(0.3)
+        s.pause()
+        assert s.stop() is True and not s.running()
+
     def test_no_toy_tells_him_and_runs_nothing(self) -> None:
         servers, told, done = [], [], []
         s = _sessions([], servers)

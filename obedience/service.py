@@ -33,7 +33,7 @@ import random
 import re
 import uuid
 from dataclasses import dataclass, replace as _replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 
 from application.models import ActionSpec, OutgoingMessage
@@ -428,6 +428,10 @@ def uses_anal(text: str) -> bool:
 
 TOY_OFFER = "Press \"It's in: run it\" once it's in and I'll control it myself; if I can't reach it, run it yourself as written."
 TOY_STOPPED = "Stopped."
+# Owner, 2026-11-23: "Pause" / "Continue" on a session the bot runs. The session's time waits, and the photo deadline moves by the time paused,
+# never past midnight of the task's day. Pauses are not limited (the time left still has to be done).
+TOY_PAUSED = ("Paused: the toy is off and its time waits for you. Your photo deadline moves by however long you pause, midnight at the "
+              "latest.")
 TOY_PROBLEM = "I couldn't reach your Deep Diver (Intiface open on the PC, toy on and near it?). Run it yourself as the task says."
 TOY_DEFAULT_MINUTES = 20
 TOY_ASK = "How was that?"
@@ -510,6 +514,7 @@ class Ports:
     training: Callable[[date], object] | None = None       # Q4c: training.service.TrainingPlan.day_task (the plan's session, or None)
     training_tick: Callable[[datetime], None] | None = None  # Q4c: the Monday question about the short session
     feature_on: Callable[[str], bool] = lambda feature: True   # owner, 2026-11-16 (features/): "workouts", "erotic_tasks"
+    midnight: Callable[[date], datetime] | None = None     # the end of a local day (owner, 2026-11-23: a toy pause moves a deadline up to it)
 
 
 def get_verified_training(core: CoreDatabase, user_id: str, local_date: str) -> list[str]:
@@ -681,6 +686,7 @@ class ObedienceTasks:
         self._ports = ports
         self.toy = None              # toy_control.session.ToySessions (owner, 2026-11-17): set by the bot for the owner only
         self.toy_levels = None       # toy_control.store.ToyLevels: his own level, moved by his answer after each session
+        self._toy_paused: dict[str, datetime] = {}   # row id -> when he pressed Pause (owner, 2026-11-23); a restart ends the session anyway
         self._rng = rng or random.SystemRandom()
         # Owner, 2026-11-16 (multi-wearer): DEFAULT_OWNED is the owner's inventory; an additional wearer starts with nothing and adds gear.
         self.default_owned: frozenset = DEFAULT_OWNED
@@ -1333,7 +1339,21 @@ class ObedienceTasks:
         if row is None or row["user_id"] != user_id:
             return "That isn't yours to decide."
         if action == "toystop":
-            return TOY_STOPPED if self.toy is not None and self.toy.stop() else "Nothing is running."
+            stopped = self.toy is not None and self.toy.stop()
+            moved = self._toy_unpause(row, now)                 # a pause that ends with Stop still moves the deadline
+            return (TOY_STOPPED + moved) if stopped else "Nothing is running."
+        if action == "toypause":
+            if self.toy is None or not self.toy.pause():
+                return "Nothing is running."
+            self._toy_paused[row["id"]] = now
+            decision("obedience", "The wearer paused the toy.", task=row["catalog_key"])
+            return OutgoingMessage(text=TOY_PAUSED, actions=self._toy_buttons(row["id"], paused=True))
+        if action == "toygo":
+            if self.toy is None or not self.toy.resume():
+                return "Nothing is paused."
+            moved = self._toy_unpause(row, now)
+            decision("obedience", "The wearer continued the toy.", task=row["catalog_key"])
+            return OutgoingMessage(text="Running again." + moved, actions=self._toy_buttons(row["id"]))
         if action in ("toyweak", "toyright", "toymuch"):
             return self._toy_feedback(row, action, now)
         if action not in ("cannot", "later", "alone", "discreet", "toy"):
@@ -1382,13 +1402,47 @@ class ObedienceTasks:
 
         if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=lambda text: tell("toy_problem", TOY_PROBLEM),
                               on_done=done):
-            return OutgoingMessage(text="It's already running.", actions=(ActionSpec(action_id=f"obedience:toystop:{row_id}", label="Stop"),))
+            return OutgoingMessage(text="It's already running.", actions=self._toy_buttons(row_id, paused=bool(getattr(self.toy, "paused", lambda: False)())))
         if levels is not None:
             levels.record_start(task_ref=row_id, mode=mode, profile=profile, level=level, now=now)
         decision("obedience", "The bot is running the toy for a task.", task=row["catalog_key"], minutes=minutes, mode=mode, profile=profile)
         return OutgoingMessage(text=f"Running it for {minutes} minutes; I decide how strong and when. Your task goes on as written. "
-                               "Press Stop if you need to; the toy's own button always works too.",
-                               actions=(ActionSpec(action_id=f"obedience:toystop:{row_id}", label="Stop"),))
+                               "Pause or Stop if you need to; the toy's own button always works too.",
+                               actions=self._toy_buttons(row_id))
+
+    @staticmethod
+    def _toy_buttons(row_id: str, *, paused: bool = False) -> tuple:
+        first = ActionSpec(action_id=f"obedience:toygo:{row_id}", label="Continue") if paused else \
+            ActionSpec(action_id=f"obedience:toypause:{row_id}", label="Pause")
+        return (first, ActionSpec(action_id=f"obedience:toystop:{row_id}", label="Stop"))
+
+    def _toy_unpause(self, row: dict, now: datetime) -> str:
+        """Owner, 2026-11-23: the photo deadline moves by the time paused, never past midnight of the task's day. Returns the sentence that
+        tells him the new deadline, or "" when nothing moved."""
+        since = self._toy_paused.pop(row["id"], None)
+        fresh = self._row(row["id"])
+        if since is None or fresh is None or fresh["status"] != "assigned" or not fresh["deadline"] or now <= since:
+            return ""
+        old = _parse_iso(fresh["deadline"])
+        day = date.fromisoformat(fresh["local_date"])
+        end = (self._ports.midnight(day) if self._ports.midnight is not None
+               else datetime.combine(day + timedelta(days=1), time(0, 0), tzinfo=timezone.utc))
+        deadline = min(old + (now - since), max(old, end))
+        if deadline <= old:
+            return ""
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET deadline = ? WHERE id = ? AND status = 'assigned' AND deadline = ?",
+                              (_iso(deadline), row["id"], fresh["deadline"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.task_deadline_moved", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"], "deadline": _iso(deadline), "reason": "toy_paused"}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return ""
+        decision("obedience", "A toy pause moved the photo deadline.", task=row["catalog_key"], deadline=_iso(deadline))
+        return f" Photo now due by {self._ports.local_clock(deadline)}."
 
     def _toy_feedback(self, row: dict, action: str, now: datetime) -> str:
         from toy_control.store import FEEDBACK

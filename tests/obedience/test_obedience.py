@@ -883,6 +883,67 @@ def test_the_daily_task_is_never_a_workout_either(tmp_path) -> None:
             assert not w.tasks._pick(MORNING.date(), mode).key.startswith("workout_")
 
 
+def test_a_toy_pause_moves_the_photo_deadline_up_to_midnight(tmp_path) -> None:
+    """Owner, 2026-11-23: Pause / Continue on a session the bot runs; the photo deadline moves by the time paused, midnight at the latest."""
+    from obedience.service import Task
+    from application.models import OutgoingMessage
+
+    class Toy:
+        def __init__(self):
+            self.on, self.is_paused, self.stopped = False, False, 0
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done):
+            self.on = True
+            return True
+
+        def pause(self):
+            if not self.on or self.is_paused:
+                return False
+            self.is_paused = True
+            return True
+
+        def resume(self):
+            if not self.on or not self.is_paused:
+                return False
+            self.is_paused = False
+            return True
+
+        def paused(self):
+            return self.is_paused
+
+        def stop(self):
+            was, self.on, self.is_paused = self.on, False, False
+            self.stopped += was
+            return was
+
+    w = World(tmp_path)
+    toy = w.tasks.toy = Toy()
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:wall+vibe", "Facing a wall, hands behind your head, Deep Diver in and "
+                                                               "vibrating. Photo from behind, waist down only. 20 minutes.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    row = w.row()
+    first = datetime.fromisoformat(row["deadline"])
+    assert w.tasks.press(user_id=U, row_id=row["id"], action="toygo", now=MORNING) == "Nothing is paused."
+    w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING)
+    paused = w.tasks.press(user_id=U, row_id=row["id"], action="toypause", now=MORNING)
+    assert isinstance(paused, OutgoingMessage) and toy.is_paused
+    assert paused.actions[0].action_id == f"obedience:toygo:{row['id']}"
+    assert w.tasks.press(user_id=U, row_id=row["id"], action="toypause", now=MORNING) == "Nothing is running."   # already paused
+    back = w.tasks.press(user_id=U, row_id=row["id"], action="toygo", now=MORNING + timedelta(minutes=30))
+    assert not toy.is_paused and back.actions[0].action_id == f"obedience:toypause:{row['id']}"
+    assert datetime.fromisoformat(w.row()["deadline"]) == first + timedelta(minutes=30)
+    assert (first + timedelta(minutes=30)).strftime("%H:%M") in back.text
+    # unlimited pauses, but never past midnight of the task's day; a pause that ends with Stop still counts
+    w.tasks.press(user_id=U, row_id=row["id"], action="toypause", now=MORNING + timedelta(minutes=30))
+    stopped = w.tasks.press(user_id=U, row_id=row["id"], action="toystop", now=MORNING + timedelta(hours=20))
+    assert stopped.startswith("Stopped.") and "00:00" in stopped
+    assert datetime.fromisoformat(w.row()["deadline"]) == datetime(2026, 11, 16, 0, 0, tzinfo=timezone.utc)
+    with w.core.transaction() as tx:
+        moved = tx.fetch_all("SELECT event_type FROM domain_events WHERE event_type = 'obedience.task_deadline_moved'")
+    assert len(moved) == 2
+
+
 def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> None:
     """Owner, 2026-11-17 (option 1): "It's in: run it" on a Deep Diver task runs the toy for the task's time; Stop ends it."""
     from obedience.service import TOY_OFFER, Task
@@ -919,7 +980,7 @@ def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> Non
     reply = w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING)
     assert isinstance(reply, OutgoingMessage) and "20 minutes" in reply.text
     assert toy.started == [(20, row["mode"], "default" if row["mode"] == "alone" else "discreet", 0.5)]
-    assert reply.actions[0].action_id == f"obedience:toystop:{row['id']}"
+    assert [a.action_id for a in reply.actions] == [f"obedience:toypause:{row['id']}", f"obedience:toystop:{row['id']}"]
     assert "already running" in w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING).text
     toy.problem("refused")
     with w.core.transaction() as tx:
