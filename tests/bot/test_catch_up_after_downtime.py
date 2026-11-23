@@ -192,10 +192,11 @@ class TestAfterTheComputerSlept:
         from infractions.wiring import detector_loop
 
         class Clock:
-            times = iter([NOW, NOW + timedelta(hours=8)])
+            times = [NOW, NOW + timedelta(hours=8)]
 
             def now(self):
-                return next(self.times)
+                # After the jump the clock stands still, so later passes see no further gap.
+                return self.times.pop(0) if len(self.times) > 1 else self.times[0]
 
         moved = []
         wiring = Mock(interval_seconds=0, run=Mock(return_value=[]))
@@ -203,12 +204,17 @@ class TestAfterTheComputerSlept:
 
         async def scenario():
             task = asyncio.create_task(detector_loop(wiring, Clock(), initial_delay_seconds=0))
-            for _ in range(20):
-                await asyncio.sleep(0)
+            # The loop hops to a worker thread twice before it moves the deadlines, which can take
+            # many turns on a busy machine, so wait for the call itself (bounded) instead of a fixed count.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 5.0
+            while not moved and loop.time() < deadline:
+                await asyncio.sleep(0.01)
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
-        try:
-            _run(scenario())
-        except (asyncio.CancelledError, StopIteration, RuntimeError):
-            pass
+        _run(scenario())
         assert moved == [{"down_since": NOW, "back_at": NOW + timedelta(hours=8)}]
