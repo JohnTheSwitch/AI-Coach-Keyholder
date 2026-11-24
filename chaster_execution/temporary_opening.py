@@ -124,7 +124,10 @@ class ExemptionOpening:
             return None
         if body["openedAt"] is not None:
             return OpeningStatus(is_open=True, relocked_at=None)
-        times = sorted(t for t in (_event_time(e) for e in history if e.get("type") == LOCKED_EVENT) if t is not None and t >= opened_at)
+        # Live, 2026-11-24: he relocked late and nothing matched. A late relock is most likely its own type (`temporary_opening_locked_late`),
+        # so every type that starts with the relock's name counts.
+        times = sorted(t for t in (_event_time(e) for e in history if str(e.get("type") or "").startswith(LOCKED_EVENT))
+                       if t is not None and t >= opened_at)
         if not times:
             # Live, 2026-11-24: a hygiene opening (with a verification picture required after it) closed with no relock entry found. What the
             # history did hold is logged, so the next one shows whether Chaster names the relock differently or it fell out of the page.

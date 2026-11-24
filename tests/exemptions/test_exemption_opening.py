@@ -452,6 +452,12 @@ class TestTheExecutor:
         line = next(r.getMessage() for r in caplog.records if "no relock entry" in r.getMessage())
         assert "verification_picture_submitted" in line and "tasks_task_completed" not in line and '"entries": 2' in line
 
+    def test_a_late_relock_is_found_too(self) -> None:
+        """Live, 2026-11-24: he relocked late and the relock was not found; a late relock has its own type."""
+        chaster = Chaster()
+        chaster.history = [{"type": "temporary_opening_locked_late", "createdAt": iso(NOW + timedelta(minutes=42))}]
+        assert _executor(chaster).status(opened_at=NOW).relocked_at == NOW + timedelta(minutes=42)
+
     def test_open_on_chaster_is_open(self) -> None:
         chaster = Chaster()
         chaster.opened_at = iso(NOW)

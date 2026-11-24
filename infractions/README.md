@@ -110,3 +110,13 @@ A release-window overrun asks for the relock picture. When he answered "I was ne
 and said not explained. Now code decides it first: `stayed_locked(window_start, window_end)` (`system/keyholder_lock_source.get_lock_stayed_locked`,
 from the lock observations) returning True clears the finding as `never_opened`, both before the judge and again before it counts. False, unknown
 or an unreadable observation changes nothing.
+
+## The lock history (owner, 2026-11-24)
+
+"The system could check chaster logs and try to find hygiene openings that weren't allowed." Every 30 minutes the hygiene watch also reads
+the lock history (`POST /locks/{id}/history`, read-only, the newest 100 entries). A `temporary_opening_opened` from the last 3 days that the
+watch never saw (the PC was off or asleep) and the bot did not open itself (no `wear_exemptions` opening within 5 minutes) is recorded with
+the history's times (a relock entry, `temporary_opening_locked` or `..._late`, gives a known length) and asked about: "Ask, then judge", the
+same planned-or-health question and the same judging as a live one. A relock found late afterwards goes the usual late way, the same as live
+(`chaster_execution/temporary_opening.py` now matches every relock type, the late one included). Last night's opening (2026-11-23 22:28) was
+left as it is, by the owner's choice.

@@ -315,6 +315,55 @@ class TestOpeningsTheBotMadeItself:
         assert w.excuses.reason(USER, NOW, NOW + timedelta(minutes=5)) is None
 
 
+class TestTheLockHistory:
+    """Owner, 2026-11-24: openings in the lock history the watch never saw (the PC was off) are asked about, then judged as usual."""
+
+    def world(self, tmp_path, history):
+        w = World(tmp_path)
+        w.hygiene._history = lambda _lock, _now: history
+        return w
+
+    def test_a_missed_opening_is_asked_about_and_judged_on_its_real_length(self, tmp_path) -> None:
+        start = NOW - timedelta(hours=8)
+        w = self.world(tmp_path, [{"type": "temporary_opening_locked_late", "createdAt": iso(start + timedelta(minutes=50))},
+                                  {"type": "temporary_opening_opened", "createdAt": iso(start)},
+                                  {"type": "tasks_task_completed", "createdAt": iso(start - timedelta(hours=1))}])
+        w.hygiene.poll(NOW)
+        rows = w.q("SELECT id, opened_at, closed_at, duration_known FROM hygiene_openings")
+        assert [(r["opened_at"], r["closed_at"], r["duration_known"]) for r in rows] == [(iso(start), iso(start + timedelta(minutes=50)), 1)]
+        card = w.q("SELECT text, actions_json FROM notifications WHERE kind = 'hygiene_opening'")[0]
+        assert "While I was away" in card["text"] and f"hygiene:planned:{rows[0]['id']}" in card["actions_json"]
+        w.at = NOW
+        w.hygiene_dm.press(discord_user_id="42", action="planned", ident=rows[0]["id"])
+        w.hygiene.poll(NOW + timedelta(minutes=31))
+        assert w.status() == [("hygiene_duration", "waiting")]             # 50 minutes against 30 + 10
+
+    def test_once_only_and_never_one_the_bot_saw_or_opened(self, tmp_path) -> None:
+        bot_opened, seen = NOW - timedelta(hours=5), NOW - timedelta(hours=3)
+        w = self.world(tmp_path, [{"type": "temporary_opening_opened", "createdAt": iso(bot_opened)},
+                                  {"type": "temporary_opening_opened", "createdAt": iso(seen + timedelta(seconds=20))},
+                                  {"type": "temporary_opening_opened", "createdAt": iso(NOW - timedelta(days=5))}])   # too old to dig up
+        with w.core.raw_connection() as conn:
+            conn.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, kind, minutes, opening_lock_id, opened_at) VALUES ('e', ?, 'ended', ?, 'hygiene', 30, ?, ?)",
+                         (USER, iso(bot_opened), LOCK, iso(bot_opened + timedelta(seconds=3))))
+            conn.execute("INSERT INTO hygiene_openings (id, user_id, lock_id, opened_at, last_seen_open_at, closed_at) VALUES ('h', ?, ?, ?, ?, ?)",
+                         (USER, LOCK, iso(seen), iso(seen), iso(seen + timedelta(minutes=10))))
+            conn.commit()
+        w.hygiene.poll(NOW)
+        w.hygiene.poll(NOW + timedelta(hours=1))
+        assert [r["id"] for r in w.q("SELECT id FROM hygiene_openings")] == ["h"]
+        assert w.q("SELECT * FROM notifications WHERE kind = 'hygiene_opening'") == []
+
+    def test_an_unreadable_history_changes_nothing(self, tmp_path) -> None:
+        w = World(tmp_path)
+
+        def boom(_lock, _now):
+            raise OSError("down")
+
+        w.hygiene._history = boom
+        assert any("history" in p for p in w.hygiene.poll(NOW)) and w.q("SELECT * FROM hygiene_openings") == []
+
+
 class TestReads:
     def test_a_failed_read_never_closes_an_opening(self, tmp_path) -> None:
         w = World(tmp_path)

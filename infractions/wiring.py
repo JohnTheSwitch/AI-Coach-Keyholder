@@ -151,8 +151,13 @@ def build_detectors(config, core: CoreDatabase, *, token_manager, lock_client, c
                 state = trust.get_domain_state(d)
                 return None if state is None else float(state.score)
 
+            def read_history(lock_id: str, now: datetime) -> list:
+                return token_manager.call_with_token(account, now=now, operation=lambda token: lock_client.get_lock_history(access_token=token, lock_id=lock_id,
+                                                                                                                        limit=100))
+
             out.hygiene = HygieneWatch(config.db_path, core=core, user_id=account, trust_domain=domain, signals=out.signals, list_worn_locks=worn,
-                                       read_opening=read_opening, get_trust_score=score, interval_seconds=out.interval_seconds)
+                                       read_opening=read_opening, get_trust_score=score, interval_seconds=out.interval_seconds,
+                                       read_history=read_history)   # owner, 2026-11-24: openings in the lock history it never saw
             out.notes.append(f"Hygiene watch enabled: every {out.interval_seconds} s; a planned break past the limits is asked about, then judged.")
     if want_claims:
         domain = getattr(config, "lock_claim_trust_domain", None) or "honesty"

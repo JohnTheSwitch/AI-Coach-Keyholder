@@ -30,6 +30,7 @@ from application.models import ActionSpec
 from chaster.managed_locks import ManagedLock
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
+from infrastructure.decision_log import decision
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
 from infractions.signals import InfractionSignals, SignalKind
@@ -45,6 +46,15 @@ __all__ = ["HygienePolicy", "HygieneWatch", "OpeningNotAvailable", "policy_for",
 OVERRUN_GRACE = timedelta(minutes=10)
 ROLLING_WEEK = timedelta(days=7)
 MAX_FOLLOW_GAP_INTERVALS = 3                # openings not seen for longer than this many polls have an unknown close
+# Owner, 2026-11-24: "the system could check chaster logs and try to find hygiene openings that weren't allowed". The lock history is read
+# this often; an opening in it that this watch never saw (the PC was off or asleep) and the bot did not open itself is asked about like any
+# other ("Ask, then judge"). Only openings this recent are looked at, so the first read never digs up old ones.
+HISTORY_EVERY = timedelta(minutes=30)
+HISTORY_LOOKBACK = timedelta(days=3)
+SAME_OPENING = timedelta(minutes=5)         # Chaster's event time and its openedAt, or the bot's own opening time, differ by seconds
+OPENED_EVENT, LOCKED_EVENT = "temporary_opening_opened", "temporary_opening_locked"
+MISSED_OPENING_QUESTION = ("While I was away, your lock history shows a hygiene opening ({when}). Was this a planned break, or a health or comfort "
+                           "need? Either is fine, and a health need never counts against anything.")
 
 OPENING_QUESTION = ("I saw your lock open for a hygiene opening. Was this a planned break, or a health or comfort need? Either is fine, and a health need "
                     "never counts against anything.")
@@ -90,7 +100,8 @@ def parse_opened_at(body: object) -> str | None:
 class HygieneWatch:
     def __init__(self, db_path: str | Path | None = None, *, core: CoreDatabase | None = None, user_id: str, trust_domain: str, signals: InfractionSignals,
                  list_worn_locks: Callable[[datetime], tuple[tuple[ManagedLock, ...], list[str]]],
-                 read_opening: Callable[[str, datetime], object], get_trust_score: Callable[[], float | None], interval_seconds: int) -> None:
+                 read_opening: Callable[[str, datetime], object], get_trust_score: Callable[[], float | None], interval_seconds: int,
+                 read_history: Callable[[str, datetime], list] | None = None, local_clock: Callable[[datetime], str] | None = None) -> None:
         self._core = core if core is not None else CoreDatabase(Path(db_path))
         self._user = user_id
         self._domain = trust_domain
@@ -99,6 +110,9 @@ class HygieneWatch:
         self._read = read_opening
         self._score = get_trust_score
         self._max_gap = timedelta(seconds=interval_seconds * MAX_FOLLOW_GAP_INTERVALS)
+        self._history = read_history
+        self._clock_text = local_clock or (lambda t: t.strftime("%a %d %b %H:%M UTC"))
+        self._history_at: datetime | None = None
 
     def poll(self, now: datetime) -> list[str]:
         """Returns the problems of this pass. A lock that could not be read is simply not updated: an unread state never closes an opening."""
@@ -115,8 +129,53 @@ class HygieneWatch:
                 problems.append(f"{lock.lock_id}: {type(exc).__name__}")
                 continue
             self._observe(lock.lock_id, opened_at, now)
+            if self._history is not None and (self._history_at is None or now - self._history_at >= HISTORY_EVERY):
+                try:
+                    self._backfill(lock.lock_id, self._history(lock.lock_id, now), opened_at, now)
+                except Exception as exc:
+                    problems.append(f"{lock.lock_id} history: {type(exc).__name__}")
+        if self._history is not None and (self._history_at is None or now - self._history_at >= HISTORY_EVERY):
+            self._history_at = now
         self.evaluate(now)
         return problems
+
+    def _backfill(self, lock_id: str, history: list, open_now: str | None, now: datetime) -> int:
+        """Owner, 2026-11-24: openings in the lock history that this watch never saw and the bot did not open itself. Each is recorded with the
+        times the history gives (a relock found = a known length) and asked about like a live one; then the usual judging applies."""
+        events = []
+        for e in history or []:
+            try:
+                events.append((str(e.get("type") or ""), parse_iso(e["createdAt"])))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        events.sort(key=lambda x: x[1])
+        found = 0
+        for i, (kind, at) in enumerate(events):
+            if kind != OPENED_EVENT or at < now - HISTORY_LOOKBACK:
+                continue
+            if open_now is not None and abs(parse_iso(open_now) - at) <= SAME_OPENING:
+                continue                                        # still open: the live watch has it
+            relock = next((t for k, t in events[i + 1:] if k.startswith(LOCKED_EVENT)), None)
+            found += apply_transition(self._core, write=lambda tx, _s, at=at, relock=relock: self._record_missed(tx, lock_id, at, relock, now))
+        return found
+
+    def _record_missed(self, tx: Transaction, lock_id: str, opened: datetime, relocked: datetime | None, now: datetime) -> int:
+        lo, hi = _iso(opened - SAME_OPENING), _iso(opened + SAME_OPENING)
+        if tx.fetch_one("SELECT 1 FROM hygiene_openings WHERE lock_id = ? AND opened_at >= ? AND opened_at <= ?", (lock_id, lo, hi)) is not None:
+            return 0                                            # seen live (or recorded before)
+        if tx.fetch_one("SELECT 1 FROM wear_exemptions WHERE opening_lock_id = ? AND opened_at >= ? AND opened_at <= ?", (lock_id, lo, hi)) is not None:
+            return 0                                            # the bot opened this itself, for a reason it already knows
+        opening_id = str(uuid4())
+        closed = relocked or now
+        tx.execute("INSERT OR IGNORE INTO hygiene_openings (id, user_id, lock_id, opened_at, last_seen_open_at, closed_at, duration_known) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)", (opening_id, self._user, lock_id, _iso(opened), _iso(closed), _iso(closed), 1 if relocked else 0))
+        enqueue_in_transaction(tx, user_id=self._user, kind="hygiene_opening", dedupe_key=f"hygiene:opening:{opening_id}",
+                               text=MISSED_OPENING_QUESTION.format(when=self._clock_text(opened)), now=now,
+                               actions=(ActionSpec(action_id=f"hygiene:planned:{opening_id}", label="Planned break"),
+                                        ActionSpec(action_id=f"hygiene:health:{opening_id}", label="Health or comfort need", style="success")))
+        decision("hygiene", "An opening the bot never saw was found in the lock history; he is asked about it.", lock_id=lock_id,
+                 opened_at=_iso(opened), relocked_at=_iso(relocked) if relocked else None)
+        return 1
 
     def classify(self, *, user_id: str, opening_id: str, health: bool, now: datetime) -> bool:
         """The wearer's answer. "Planned" can become "health" at any time and never the other way round."""
