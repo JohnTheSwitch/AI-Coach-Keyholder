@@ -440,6 +440,18 @@ class TestTheExecutor:
         status = _executor(chaster).status(opened_at=NOW)
         assert status.is_open is False and status.relocked_at == NOW + timedelta(hours=1)
 
+    def test_no_relock_entry_logs_what_the_history_held(self, caplog) -> None:
+        """Live, 2026-11-24: a closed opening with no relock entry; the decision log now says what Chaster's history did hold."""
+        import logging
+        chaster = Chaster()
+        chaster.history = [{"type": "verification_picture_submitted", "createdAt": iso(NOW + timedelta(minutes=40))},
+                           {"type": "tasks_task_completed", "createdAt": iso(NOW - timedelta(hours=2))}]
+        with caplog.at_level(logging.INFO, logger="ai_coach_keyholder.decisions"):
+            status = _executor(chaster).status(opened_at=NOW)
+        assert status.is_open is False and status.relocked_at is None
+        line = next(r.getMessage() for r in caplog.records if "no relock entry" in r.getMessage())
+        assert "verification_picture_submitted" in line and "tasks_task_completed" not in line and '"entries": 2' in line
+
     def test_open_on_chaster_is_open(self) -> None:
         chaster = Chaster()
         chaster.opened_at = iso(NOW)

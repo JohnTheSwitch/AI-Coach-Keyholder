@@ -28,6 +28,7 @@ from chaster.extension_config import LockConfiguration
 from chaster.extension_plan import ReviewPlan, plan_opening_settings
 from chaster.lock_client import CHASTER_USER_AGENT
 from chaster_execution.models import TransportOutcome
+from infrastructure.decision_log import decision
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso
 
@@ -124,6 +125,13 @@ class ExemptionOpening:
         if body["openedAt"] is not None:
             return OpeningStatus(is_open=True, relocked_at=None)
         times = sorted(t for t in (_event_time(e) for e in history if e.get("type") == LOCKED_EVENT) if t is not None and t >= opened_at)
+        if not times:
+            # Live, 2026-11-24: a hygiene opening (with a verification picture required after it) closed with no relock entry found. What the
+            # history did hold is logged, so the next one shows whether Chaster names the relock differently or it fell out of the page.
+            since = [(e.get("type"), _event_time(e)) for e in history if isinstance(e, dict)]
+            decision("exemptions", "A closed opening has no relock entry in Chaster's history.", lock_id=self.lock_id, opened_at=_iso(opened_at),
+                     entries=len(history), oldest=_iso(min((t for _, t in since if t), default=opened_at)),
+                     types_since_opening=sorted({str(k) for k, t in since if t is not None and t >= opened_at}))
         return OpeningStatus(is_open=False, relocked_at=times[0] if times else None)
 
     def restore(self, saved: dict | None) -> bool:
