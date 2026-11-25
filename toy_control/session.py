@@ -207,8 +207,12 @@ class ToySessions:
     """`connect(url)` -> async context manager yielding (send, recv); default aiohttp. `on_problem(text)` is told when the toy could not be
     reached (called on the session's thread)."""
 
-    def __init__(self, *, url: str = DEFAULT_URL, connect=None, rng: random.Random | None = None) -> None:
+    def __init__(self, *, url: str = DEFAULT_URL, connect=None, rng: random.Random | None = None,
+                 start_intiface: Callable[[], bool] | None = None) -> None:
+        """`start_intiface()` (owner, 2026-11-25): starts Intiface when nothing answers; True when its server is up. None: never started."""
         self._url = url
+        self._start_intiface = start_intiface
+        self._reached = False
         self._connect = connect or _aiohttp_connect
         self._rng = rng or random.Random()
         self._lock = threading.Lock()
@@ -280,7 +284,15 @@ class ToySessions:
     def _run(self, pattern, stop: threading.Event, on_problem, on_done, pause: threading.Event | None = None,
              on_started: Callable[[], None] = lambda: None) -> None:
         try:
-            asyncio.run(self._session(pattern, stop, pause or threading.Event(), on_started))
+            self._reached = False
+            try:
+                asyncio.run(self._session(pattern, stop, pause or threading.Event(), on_started))
+            except OSError:
+                # Owner, 2026-11-25: Intiface not running -> the bot starts it and tries once more. Only before the toy was reached, so a link
+                # lost mid-session never starts the pattern over.
+                if self._reached or self._start_intiface is None or stop.is_set() or not self._start_intiface():
+                    raise
+                asyncio.run(self._session(pattern, stop, pause or threading.Event(), on_started))
             on_done()
         except (ToyError, OSError, LookupError) as exc:
             logger.warning("Toy session could not run: %s", exc)
@@ -295,6 +307,7 @@ class ToySessions:
         async with self._connect(self._url) as (send, recv):
             client = IntifaceClient(send, recv)
             info = await client.handshake()
+            self._reached = True
             ping_every = float(info.get("MaxPingTime") or 0) / 1000 / 2 if isinstance(info, dict) else 0.0
             devices = await client.device_list() or await client.scan(SCAN_SECONDS)
             device = pick_device(devices)

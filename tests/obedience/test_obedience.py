@@ -1073,3 +1073,26 @@ def test_no_toy_button_without_the_deep_diver_or_without_the_toy(tmp_path) -> No
         n = tx.fetch_one("SELECT text, actions_json FROM notifications WHERE dedupe_key LIKE 'obedience:task:%'")
     assert TOY_OFFER not in n["text"] and "obedience:toy:" not in n["actions_json"]
     assert "nothing to run" in w.tasks.press(user_id=U, row_id=w.row()["id"], action="toy", now=MORNING)
+
+
+def test_a_rope_tie_is_held_at_least_20_minutes_and_every_time_is_a_multiple_of_5() -> None:
+    """Owner, 2026-11-25: tying takes long, so a rope pose is held 20, 25 or 30 minutes; all task times are multiples of 5 (under 5 excepted;
+    the minutes left on "Try again (N min)" are exact on purpose)."""
+    import random
+    import re
+    from obedience.service import compose, CATALOG, ALONE, DISCREET, ALL_GEAR
+    seen_rope = 0
+    for seed in range(400):
+        for mode in (ALONE, DISCREET):
+            task = compose(random.Random(seed), set(), set(), ALL_GEAR, mode)
+            if task is None:
+                continue
+            minutes = int(re.search(r"(\d+) minutes", task.text).group(1))
+            assert minutes % 5 == 0
+            if "thighs" in task.key:
+                seen_rope += 1
+                assert minutes >= 20 and mode == ALONE, task.text
+    assert seen_rope > 0
+    for task in CATALOG:
+        for n, unit in re.findall(r"(\d+)[ -](minutes?|hours?)", task.text):
+            assert int(n) < 5 or int(n) % 5 == 0 or unit.startswith("hour"), task.text

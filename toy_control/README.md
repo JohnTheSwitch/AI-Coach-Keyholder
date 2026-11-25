@@ -41,3 +41,9 @@ should have felt a short buzz" (with Pause / Stop).
 **toy.log (owner, 2026-11-23).** `logs/toy.log` (`infrastructure/decision_log.toy_log`, not in bot.log): the planned session (minutes, mode,
 profile, level, steps, top), its start (device), every command sent (level and how long, off), Pause / Continue / Stop, a failure, and the
 end (stopped early or not, seconds paused, seconds in all).
+
+**Intiface starts on its own (owner, 2026-11-25).** "Could we make it open Intiface in the background on its own, so the only thing I would need
+to do is insert, turn on and press that it's in?" When a session finds nothing on Intiface's port, `launcher.IntifaceLauncher` starts Intiface
+Central's own program (`%APPDATA%\IntifaceCentral\intiface_central.exe`, or `INTIFACE_PATH`) minimized without taking the focus, waits up to
+45 seconds for its server (its "start server on startup" setting is on), and the session tries once more. Only before the toy was reached: a
+link lost mid-session never starts the pattern over. Only for a local URL; the bot never closes Intiface. Logged in toy.log.

@@ -208,6 +208,11 @@ _POSE_BAN = {("cuffs", "wall"), ("cuffs", "corner"), ("thighs", "wall"), ("thigh
              ("cuffs_back", "wall"), ("cuffs_back", "corner"), ("cuffs_back", "fours")}   # hands are behind / legs must move
 BACK_BLIND_AFTER = 3
 BLIND_RESTRAINED_MINUTES = 20
+# Owner, 2026-11-25: "it doesn't make sense to only do it for 10 minutes if it takes so long to tie it up". A rope tie is held 20, 25 or 30
+# minutes; a combination that cannot last 20 (discreet, sensory deprivation, clamps) is not given with rope. Every task time is a multiple of 5
+# (owner, same day), except one under 5 minutes.
+ROPE_MINUTES = 20
+STEP_MINUTES = (10, 15, 20, 25, 30)
 GAG_MINUTES = 20
 GAG_NOTE = "Ball gag in the whole time (only I know). Out at once if you feel sick or can't breathe freely through your nose."
 REPEAT_DAYS = 14
@@ -229,7 +234,7 @@ EXTRAS: tuple[Task, ...] = (
          frozenset({"dildo_big"})),
     Task("rope_harness", "A chest harness in the red rope. Photo from the neck down, no face. Keep it 20 minutes, shears within reach.",
          "erotic", frozenset({"rope_cotton"}), ALONE_ONLY),
-    Task("rope_ankles", "Your ankles tied with the hemp rope. Photo of your ankles only. Keep it 15 minutes, shears within reach.",
+    Task("rope_ankles", "Your ankles tied with the hemp rope. Photo of your ankles only. Keep it 20 minutes, shears within reach.",
          "erotic", frozenset({"rope_hemp"})),
     Task("selfbond_cuffs", "Kneeling, wrists in the leather cuffs locked together in front, key within reach on the floor. " + PHOTO_BEHIND + " 20 minutes.",
          "erotic", frozenset({"leather_cuffs", "padlocks"}), ALONE_ONLY, frozenset({"cuffs"})),
@@ -348,12 +353,23 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
             if any((a, pose) in _POSE_BAN for a in addons) or set(addons) & yesterday_gear:
                 continue
             key = "pose:" + pose + "+" + "+".join(addons)
-            if key not in banned:
+            if key not in banned and _cap(minutes, addons, mode) >= _floor(addons):
                 combos.append((key, words, minutes, addons))
     if not combos:
         return None
     weights = [AVOID_WEIGHT if task_parts(c[0]) & avoided else 1.0 for c in combos]
     key, words, minutes, addons = rng.choices(combos, weights=weights)[0] if avoided else rng.choice(combos)
+    cap, floor = _cap(minutes, addons, mode), _floor(addons)
+    minutes = rng.choice([m for m in STEP_MINUTES if floor <= m <= cap])
+    parts = ", ".join(w for w in (_variation(a, owned, mode) for a in addons) if w)
+    needs = frozenset().union(*(next(n for n, w, _m in ADDONS[a] if w == _variation(a, owned, mode)) for a in addons))
+    shown = f"{words[:1].upper()}{words[1:]}, {parts}." if parts else f"{words[:1].upper()}{words[1:]}."
+    return Task(key, f"{shown} {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}),
+                dm_note=GAG_NOTE if "gag" in addons else "")
+
+
+def _cap(minutes: int, addons, mode: str) -> int:
+    """The longest a composed task may last: the pose's own maximum, cut by the mode and each add-on's limit."""
     cap = min(minutes, DISCREET_MINUTES) if mode == DISCREET else minutes
     if "clamps" in addons:
         cap = min(cap, CLAMP_MINUTES)
@@ -363,12 +379,12 @@ def compose(rng, banned: set[str], yesterday_gear: set[str], owned=ALL_GEAR, mod
         cap = min(cap, DEAF_MINUTES)
     if "blind" in addons and set(addons) & RESTRAINTS:
         cap = min(cap, BLIND_RESTRAINED_MINUTES)
-    minutes = rng.choice([m for m in (10, 15, 20, 25, 30) if m <= cap])
-    parts = ", ".join(w for w in (_variation(a, owned, mode) for a in addons) if w)
-    needs = frozenset().union(*(next(n for n, w, _m in ADDONS[a] if w == _variation(a, owned, mode)) for a in addons))
-    shown = f"{words[:1].upper()}{words[1:]}, {parts}." if parts else f"{words[:1].upper()}{words[1:]}."
-    return Task(key, f"{shown} {PHOTO_BEHIND} {minutes} minutes.", "erotic", needs, frozenset({mode}),
-                dm_note=GAG_NOTE if "gag" in addons else "")
+    return cap
+
+
+def _floor(addons) -> int:
+    """The shortest a composed task may last: a rope tie is worth holding (owner, 2026-11-25)."""
+    return ROPE_MINUTES if "thighs" in addons else min(STEP_MINUTES)
 
 
 # Bug fix 2026-11-17 (owner: "never two anal sessions in two days ... yesterday and the day before?"): the plug ladder was remembered as "plug"

@@ -1128,7 +1128,9 @@ def main() -> None:
         # Owner, 2026-11-17: the bot runs his Deep Diver through Intiface Central on this PC, only after "It's in: run it" on a task.
         from toy_control.session import ToySessions
         from toy_control.store import ToyLevels
-        obedience.toy = ToySessions()
+        from toy_control.client import DEFAULT_URL
+        from toy_control.launcher import IntifaceLauncher
+        obedience.toy = ToySessions(start_intiface=IntifaceLauncher(DEFAULT_URL))   # owner, 2026-11-25: Intiface started on its own
         obedience.toy_levels = ToyLevels(core, user_id=obedience.user_id)
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)

@@ -58,6 +58,9 @@ lowest setting, nothing long to set up). Both are mandatory. Owner, 2026-11-16 2
 safety)" works while being asked too. A training day is not asked. Safety lines in the DM follow the gear (`safety_notes`): key and shears
 within reach and never blindfolded while restrained; the collar loose enough for two fingers and never tied, clipped or locked to anything;
 clamps off after 10 minutes at most. Events: `obedience.alone_asked`, `obedience.alone_answered`.
+Owner, 2026-11-25: a rope tie (thighs) is held 20, 25 or 30 minutes (`ROPE_MINUTES`), because tying takes a while; a combination whose limits
+can't reach 20 minutes (discreet, AirPods, clamps) is never given with rope. Every task time is a multiple of 5 (under 5 minutes excepted, and
+the exact minutes left on "Try again (N min)", which have their own reason).
 
 **No writing on his body (owner, 2026-11-15):** the "'locked' written on your thigh" add-on was removed.
 

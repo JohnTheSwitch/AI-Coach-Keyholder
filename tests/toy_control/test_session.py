@@ -197,6 +197,54 @@ class TestASession:
         assert told == ["connection refused"]
 
 
+    def test_no_intiface_starts_it_and_tries_once_more(self) -> None:
+        """Owner, 2026-11-25: insert, turn on, press: the bot opens Intiface itself when it isn't running."""
+        told, launched, calls = [], [], []
+
+        @asynccontextmanager
+        async def refused_once(_url):
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("connection refused")
+            raise LookupError("the toy was not found")      # the second try reaches the next step
+            yield
+
+        s = ToySessions(connect=refused_once, start_intiface=lambda: launched.append(1) or True)
+        s.start(1, "alone", on_problem=told.append)
+        _wait(s)
+        assert launched == [1] and len(calls) == 2 and told == ["the toy was not found"]
+
+        calls.clear()
+        launched.clear()
+        told.clear()
+        s = ToySessions(connect=refused_once, start_intiface=lambda: launched.append(1) or False)
+        s.start(1, "alone", on_problem=told.append)
+        _wait(s)
+        assert launched == [1] and len(calls) == 1 and told == ["connection refused"]       # could not start it: told as before
+
+
+class TestTheLauncher:
+    def test_starts_intiface_minimized_and_waits_for_its_server(self, tmp_path) -> None:
+        from toy_control.launcher import IntifaceLauncher
+        exe = tmp_path / "intiface_central.exe"
+        exe.write_text("")
+        started, up = [], iter([False, False, False, True])
+        launcher = IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: exe, popen=lambda args, **kw: started.append(args),
+                                    listening=lambda h, p: next(up), sleep=lambda s: None)
+        assert launcher() is True and started == [[str(exe)]]
+
+    def test_already_up_never_found_or_remote_does_nothing(self, tmp_path) -> None:
+        from toy_control.launcher import IntifaceLauncher
+        started = []
+        popen = lambda args, **kw: started.append(args)
+        assert IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: None, popen=popen, listening=lambda h, p: True)() is True
+        assert IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: None, popen=popen, listening=lambda h, p: False)() is False
+        assert IntifaceLauncher("ws://192.168.1.5:12345", path=lambda: tmp_path, popen=popen, listening=lambda h, p: False)() is False
+        never = IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: tmp_path / "x.exe", popen=popen, listening=lambda h, p: False,
+                                 sleep=lambda s: None, wait_seconds=3)
+        assert never() is False and len(started) == 1
+
+
 class TestHisLevel:
     def test_feedback_moves_the_next_level_and_right_still_climbs(self, tmp_path) -> None:
         core = Database(tmp_path / "d.db")
