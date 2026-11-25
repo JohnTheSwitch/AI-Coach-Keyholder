@@ -120,3 +120,7 @@ the history's times (a relock entry, `temporary_opening_locked` or `..._late`, g
 same planned-or-health question and the same judging as a live one. A relock found late afterwards goes the usual late way, the same as live
 (`chaster_execution/temporary_opening.py` now matches every relock type, the late one included). Last night's opening (2026-11-23 22:28) was
 left as it is, by the owner's choice.
+
+**Excused before judging (live, 2026-11-25).** When he answers, `_judge_now` first asks `Excuses.reason` for the finding's window (an approved
+exemption, a vacation, an emergency): an excused window is closed by code ("covered"), before any model. Before, the excuse was looked at only
+by the deadline and before counting, so an answer could wait on a model that was down.

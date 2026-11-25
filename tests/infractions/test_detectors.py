@@ -441,6 +441,17 @@ class TestTheSystemDecides:
         reply = w.signals.capture(USER, "Just stuff, really.", NOW + timedelta(hours=1, minutes=5))
         assert "can't be sure" in reply.text and w.status() == [("hygiene_duration", "cleared")]
 
+    def test_an_excused_window_is_settled_by_code_before_any_model(self, tmp_path) -> None:
+        """Live, 2026-11-25: a wear exemption opened the lock inside the finding's window; his answer waited 9 hours on a model that was down."""
+        w = World(tmp_path)
+        signal = self._signal(w)
+        with w.core.raw_connection() as conn:
+            conn.execute("INSERT INTO wear_exemptions (id, user_id, status, created_at, kind, hours, decided_at, expires_at) VALUES ('x', ?, 'approved', ?, 'exemption', 24, ?, ?)",
+                         (USER, iso(NOW), iso(NOW + timedelta(minutes=10)), iso(NOW + timedelta(hours=24))))
+            conn.commit()
+        reply = self._answer(w, signal, "I have a wear exemption")
+        assert "without consequence" in reply.text and w.model.prompts == [] and w.status() == [("hygiene_duration", "cleared")]
+
     def test_not_explained_counts_after_the_appeal_time(self, tmp_path) -> None:
         w = World(tmp_path)
         signal = self._signal(w)

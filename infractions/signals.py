@@ -50,6 +50,7 @@ logger = logging.getLogger("ai_coach_keyholder.infractions")
 __all__ = ["SignalKind", "InfractionSignals", "GRACE", "APPEAL_WINDOW", "CAPTURE_WINDOW", "JUDGE_GIVE_UP", "RULE_GROUPS", "EVIDENCE", "Signal",
            "UNANSWERED_RULE_GROUP", "ADOPTED_RULE_GROUPS", "ASK_TEXT"]
 
+_EXCUSED = "That time was covered (an approved exemption, a vacation or an emergency), so this is closed without consequence."
 _NEVER_OPENED = "You're right: the lock readings show it stayed locked the whole time. Nothing counts."
 GRACE = timedelta(hours=12)                 # how long the wearer has to answer before silence counts
 APPEAL_WINDOW = timedelta(hours=2)          # between "unexplained" and the Incident counting
@@ -443,6 +444,13 @@ class InfractionSignals:
         if self._never_opened(row):
             self._clear(signal_id, "never_opened", now, note="The lock was seen only as locked through the whole window: it was never opened.")
             return OutgoingMessage(text=_NEVER_OPENED)
+        # Live, 2026-11-25: a relock picture "missing" while a wear exemption had opened the lock a minute after the relock. The excuse was only
+        # looked at by the deadline and before counting, so his answer waited 9 hours on a model that was down. An excused window is settled
+        # first, by code; no model is needed for it.
+        excuse = self._excused(row, _signal(row), None)
+        if excuse is not None:
+            self._clear(signal_id, excuse, now)
+            return OutgoingMessage(text=_EXCUSED)
         with self._core.transaction() as tx:
             related = tuple(r["explanation"] for r in tx.fetch_all(
                 "SELECT explanation FROM infraction_signals WHERE user_id = ? AND kind = ? AND id != ? AND explanation IS NOT NULL AND explanation_at >= ? "
