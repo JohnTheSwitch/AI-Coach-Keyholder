@@ -470,6 +470,8 @@ TOY_PAUSED = ("Paused: the toy is off and its time waits for you. Your photo dea
 TOY_PROBLEM = ("I couldn't reach your Deep Diver (Intiface open on the PC, toy on and near it?). Fix that and press Try again (or send "
                "\"run toy\", or \"run toy 45\" for the minutes left), or run it yourself as the task says.")   # live, 2026-11-23: the Try again button (the first button was gone after one press)
 TOY_DEFAULT_MINUTES = 20
+# Tasks with no time of their own (decided by Claude, 2026-11-28, owner may change): 50 push-ups take a few minutes, not 20.
+TOY_TASK_MINUTES = {"board:pushups_diver": 10}
 TOY_ASK = "How was that?"
 TOY_ANSWERS = (("toyweak", "Too weak"), ("toyright", "Right"), ("toymuch", "Too much"))
 
@@ -1484,9 +1486,12 @@ class ObedienceTasks:
         if self.toy is None or row["status"] != "assigned" or not uses_toy(row["text"] or ""):
             return "There's nothing to run for this task."
         from toy_control.session import MAX_MINUTES, profile_for
-        full = min(task_minutes(row["text"] or "") or TOY_DEFAULT_MINUTES, MAX_MINUTES)
+        key = row["catalog_key"] or ""
+        full = min(task_minutes(row["text"] or "") or TOY_TASK_MINUTES.get(key, TOY_DEFAULT_MINUTES), MAX_MINUTES)
         minutes = full if minutes is None else min(minutes, full)      # `run toy 45`: what is left of the task, never more than all of it
-        mode = row["mode"] or DISCREET
+        # A board task is never asked "are you alone?": he starts it himself in free time ("Doing it now"), so it runs the full pattern
+        # (live check, 2026-11-28: the push-ups with the Deep Diver ran 20 minutes of the gentle discreet waves).
+        mode = row["mode"] or (ALONE if key.startswith("board:") else DISCREET)
         profile = profile_for(row["catalog_key"] or "", mode, minutes)
         levels = self.toy_levels
         level = levels.level() if levels is not None else 0.5
@@ -1509,11 +1514,17 @@ class ObedienceTasks:
             text = TOY_NOT_FOUND if "not found" in (_text or "") else TOY_PROBLEM
             tell("toy_problem", text, (ActionSpec(action_id=f"obedience:toy{left}:{row_id}", label=f"Try again ({left} min)"),))
 
-        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=problem,
-                              on_done=done, on_started=lambda: tell("toy_started", TOY_STARTED, self._toy_buttons(row_id))):
+        recorded = []
+
+        def started() -> None:
+            # Live, 2026-11-25 19:29: a session that never reached the toy was recorded and left waiting for feedback. A session is recorded
+            # only once the toy is reached, once per run.
+            if levels is not None and not recorded:
+                recorded.append(levels.record_start(task_ref=row_id, mode=mode, profile=profile, level=level, now=now))
+            tell("toy_started", TOY_STARTED, self._toy_buttons(row_id))
+
+        if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=problem, on_done=done, on_started=started):
             return OutgoingMessage(text="It's already running.", actions=self._toy_buttons(row_id, paused=bool(getattr(self.toy, "paused", lambda: False)())))
-        if levels is not None:
-            levels.record_start(task_ref=row_id, mode=mode, profile=profile, level=level, now=now)
         decision("obedience", "The bot is running the toy for a task.", task=row["catalog_key"], minutes=minutes, mode=mode, profile=profile)
         return OutgoingMessage(text=f"Running it for {minutes} minutes; I decide how strong and when. Your task goes on as written. "
                                "Pause or Stop if you need to; the toy's own button always works too.",

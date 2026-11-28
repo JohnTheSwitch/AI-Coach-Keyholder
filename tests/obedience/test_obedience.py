@@ -1037,6 +1037,8 @@ def test_the_bot_runs_the_deep_diver_only_when_he_says_it_is_in(tmp_path) -> Non
                 return False
             self.on, self.problem, self.done = True, on_problem, on_done
             self.started.append((minutes, mode, profile, base))
+            if on_started is not None:
+                on_started()
             return True
 
         def stop(self):
@@ -1130,3 +1132,61 @@ def test_the_small_bijou_warms_up_for_the_large_one_only(tmp_path) -> None:
     task = w.tasks.ladder_task(owned)
     assert task.key == "plug:bijou_large" and "Warm up with the small Crushious Bijou" in task.text
     assert "Warm up with the gray Satisfyer Deep Diver" in w.tasks.ladder_task(frozenset({"deep_diver", "bijou_large"})).text
+
+
+
+def test_a_toy_session_that_never_reached_the_toy_is_not_recorded(tmp_path) -> None:
+    """Live, 2026-11-25 19:29: a failed connect left a toy_sessions row waiting for feedback. Recorded only once the toy is reached."""
+    class Toy:
+        def __init__(self):
+            self.started_cb = None
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
+            self.started_cb = on_started
+            on_problem("Intiface: not found")
+            return True
+
+    from obedience.service import Task
+    from toy_control.store import ToyLevels
+    w = World(tmp_path)
+    toy = w.tasks.toy = Toy()
+    w.tasks.toy_levels = ToyLevels(w.core, user_id=U)
+    w.tasks._pick = lambda day, mode="alone", owned=None: Task("pose:wall+vibe", "Facing a wall, hands behind your head, Deep Diver in and "
+                                                               "vibrating. Photo from behind, waist down only. 20 minutes.", "erotic")
+    w.tasks.tick(MORNING)
+    w.start()
+    row = w.row()
+    w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING)
+    with w.core.transaction() as tx:
+        assert tx.fetch_one("SELECT COUNT(*) AS n FROM toy_sessions")["n"] == 0
+    toy.started_cb()
+    toy.started_cb()                                       # reached twice in one run: still one session
+    with w.core.transaction() as tx:
+        assert tx.fetch_one("SELECT COUNT(*) AS n FROM toy_sessions")["n"] == 1
+
+
+def test_the_push_ups_with_the_deep_diver_are_run_by_the_bot(tmp_path) -> None:
+    """Owner, 2026-11-25: "controlled by the system in every single task having it". The board's push-ups with the Deep Diver offer
+    "It's in: run it" and run 10 minutes of the full pattern: a board task is started by him in free time, never asked whether he's alone."""
+    from obedience.service import plan_board_task
+    from task_board.service import BOARD
+
+    class Toy:
+        def __init__(self):
+            self.started = []
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started=None):
+            self.started.append((minutes, mode, profile))
+            return True
+
+    task = next(b for b in BOARD if b.key == "pushups_diver")
+    w = World(tmp_path)
+    w.tasks.toy = Toy()
+    plan_board_task(w.core, U, MORNING.date(), task.key, task.text, MORNING)
+    w.tasks.tick(MORNING)
+    row = w.row()
+    with w.core.transaction() as tx:
+        n = tx.fetch_one("SELECT actions_json FROM notifications WHERE actions_json LIKE '%obedience:toy:%'")
+    assert n is not None
+    w.tasks.press(user_id=U, row_id=row["id"], action="toy", now=MORNING)
+    assert w.tasks.toy.started == [(10, "alone", "default")]

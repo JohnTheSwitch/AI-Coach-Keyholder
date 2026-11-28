@@ -191,6 +191,8 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D53 | **The temptation, caged and bot-run** | Owner, 2026-11-25/28: "how am I supposed to edge myself with it on?" and "controlled by the system in every single task having it": the offer says caged edging (hands only around the cage); after Accept, "It's in: run it" runs the Deep Diver 15 minutes on a new `tease` profile (climbs past his level, his Steps, then nothing), with Pause/Stop |
 | D54 | **Stronger default toy pattern; clearer toy errors** | Live, 2026-11-25 ("Too weak"): the build averaged 0.20 against his level 0.52; warm-up ends at 0.8 x his level, build starts at 0.8, firmer rests, shorter near-off waits (his Steps unchanged). Scan 10 -> 30 s; "toy not found" says what to check; the start message says it starts slow |
 | D55 | **Gear: small Bijou and the parcel** | Owner, 2026-11-25/28: the small Crushious Bijou (2.7 cm) only as the large Bijou's warm-up (not a rung, his call); leather cuffs, Gildo No. 27 and Plug & Joy medium added (`OWNER_ADDED_GEAR`, his database only) |
+| D56 | **A toy session is recorded only once the toy is reached** | Live, 2026-11-25 19:29: a session that never connected left a `toy_sessions` row waiting for "How was that?". It is now written when the toy is reached, once per run |
+| D57 | **The push-ups with the Deep Diver, bot-run** | Owner, 2026-11-25 ("every single task having it"): the board's `pushups_diver` already offered "It's in: run it" but ran 20 minutes of the gentle discreet waves (a board task is never asked "are you alone?"). A board task now runs the full pattern; the push-ups run 10 minutes (decided by Claude, owner may change: `TOY_TASK_MINUTES`) |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
 
 ## Ideas (not approved; each needs the owner's yes)
@@ -203,6 +205,20 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
   First step: a test that it pairs and responds. A new kind of action on his body, so asked first. Groundwork built 2026-11-16 (not wired):
   `toy_control/` and his own test `python -m cli toy-test --level 0.2 --seconds 2 --yes`; Intiface Central installed; the PC's Bluetooth
   adapter showed Code 43 and must be fixed first.
+- **Cloud model providers for other installs** (owner, 2026-11-28, after HyperDash asked whether he could install it without a PC for a local
+  model; not for the owner's own bot, which stays on Ollama): a `MODEL_PROVIDER` setting (ollama default / anthropic / openai / gemini) with
+  that install's own key; one more adapter beside `conversation_engine/ollama_adapter.py` (text, structured, tools, readiness), every other rule
+  unchanged. Caveats to tell such a wearer: the bot still needs something running 24/7 (a small rented server or a Raspberry Pi); the chats,
+  judge explanations and lock state go to that provider; cloud providers' usage policies may refuse or forbid explicit content (a refusal is
+  a model failure, never a verdict). For a non-technical wearer, joining the owner's bot as an additional wearer is far easier.
+- **Chaster DMs instead of Discord for additional wearers** (owner, 2026-11-28: "for multi wearer it would be much easier"). Already built and
+  live but narrow: the Chaster chat channel (`messaging/`, Phase C: `channel chaster`, polled, chat only, untrusted) and the keyholder-inbox
+  forward. Missing for a Chaster-only wearer: onboarding over Chaster; commands and check-in replies from Chaster (today never: inbound text is
+  conversation only); every button replaced by a typed answer (Chaster chat has no buttons); the notification queue and check-in prompts
+  delivered to Chaster; polling cost and latency with several wearers (no webhooks; at least 15 s). **Approved 2026-11-28** (owner: "1,2,3 -
+  yes"): Chaster as a full alternative channel for additional wearers (the owner stays on Discord); a message from the wearer's own Chaster
+  account (Chaster's sender id) may do everything a Discord DM can: commands, check-in replies, accepting things; every button becomes a typed
+  answer; replies 15-60 s late are fine; onboarding over Chaster too, so such a wearer never needs Discord. Built with the multi-wearer work (D8).
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
 - **Typing Lines** extension: desk research done (2026-11-16, `docs/research/typing_lines.md`): the bot can keep rewriting the lock's extensions with it installed (sent back unchanged), but cannot configure or drive it; recommendation: not worth integrating.
 - **Ideas from his favourite stories (2026-11-15), P1-P10 + his kink ideas 1-5:** task board, title in every DM, the release as a timed

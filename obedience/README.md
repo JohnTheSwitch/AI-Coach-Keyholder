@@ -155,6 +155,7 @@ the door closed" (the gear is in the gym).
 A task with the Deep Diver in has a button "It's in: run it": the bot then runs a session shaped for the task (warm-up, build, teasing,
 finish; see `toy_control/README.md`) through Intiface Central on the PC, with a Stop button, and asks "How was that?" (Too weak / Right /
 Too much) to set his level for next time. Without a reachable toy he gets a DM to run it himself as written.
+A session is recorded (for "How was that?") only once the toy is reached (live, 2026-11-25). A task-board task runs the full pattern, since he starts it himself in free time and is never asked whether he is alone; a task with no time of its own runs `TOY_TASK_MINUTES` (the push-ups with the Deep Diver: 10 minutes, decided by Claude 2026-11-28) or 20 minutes.
 
 **Pause and Continue (owner, 2026-11-23).** Next to Stop there is Pause: the toy goes off and the session's time waits; Continue goes on where
 it stopped. The photo deadline moves by the time paused (also when a pause ends with Stop), never past midnight of the task's day
