@@ -32,7 +32,9 @@ from infrastructure.time_format import iso as _iso
 
 logger = logging.getLogger("ai_coach_keyholder.schedule_settings")
 
-__all__ = ["WorkEnds", "work_ends_for", "ScheduleSettings", "DAYS"]
+__all__ = ["WorkEnds", "work_ends_for", "quiet_ends_for", "ScheduleSettings", "DAYS", "WEEKEND_WAKE_LATEST"]
+
+WEEKEND_WAKE_LATEST = time(12, 0)       # a weekend morning is quiet until at most noon
 
 DAYS = ("mon", "tue", "wed", "thu", "fri")
 _DAY_WORDS = {"mon": 0, "monday": 0, "po": 0, "tue": 1, "tuesday": 1, "ut": 1, "út": 1, "wed": 2, "wednesday": 2, "st": 2,
@@ -65,15 +67,16 @@ class WorkEnds:
 
 
 _SHARED: dict[str, WorkEnds] = {}
+_SHARED_QUIET: dict[str, WorkEnds] = {}
 _SHARED_LOCK = threading.Lock()
 
 
-def _read(db_path: str) -> dict[int, time]:
+def _read(db_path: str, query: str = "SELECT weekday, work_end FROM schedule_work_ends") -> dict[int, time]:
     try:
         uri = Path(db_path).resolve().as_uri() + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
         try:                                            # `with` would only commit; the file must be let go (tenant archival moves it)
-            rows = conn.execute("SELECT weekday, work_end FROM schedule_work_ends").fetchall()
+            rows = conn.execute(query).fetchall()
         finally:
             conn.close()
     except Exception:
@@ -95,6 +98,16 @@ def work_ends_for(db_path: str | Path) -> WorkEnds:
         ends = _SHARED.get(key)
         if ends is None:
             ends = _SHARED[key] = WorkEnds(_read(key))
+        return ends
+
+
+def quiet_ends_for(db_path: str | Path) -> WorkEnds:
+    """Owner, 2026-11-28: the shared map weekday (5 = Saturday, 6 = Sunday) -> the end of that morning's quiet hours."""
+    key = str(Path(db_path).resolve())
+    with _SHARED_LOCK:
+        ends = _SHARED_QUIET.get(key)
+        if ends is None:
+            ends = _SHARED_QUIET[key] = WorkEnds(_read(key, "SELECT weekday, quiet_end FROM schedule_quiet_ends"))
         return ends
 
 
@@ -120,6 +133,7 @@ class ScheduleSettings:
         """`valid(end)`: None when `end` fits the day's layout (after the work start, room before quiet hours), else why not."""
         self._core, self._user, self._default, self._valid = core, user_id, default_end, valid
         self.ends = work_ends_for(db_path)
+        self.quiet = quiet_ends_for(db_path)          # owner, 2026-11-28: weekend mornings quiet until his wake time
         # Owner, 2026-11-25 ("make it wait 24 hours"): `(user_id, key, now) -> reply | None` (opt_outs.request_off): a change that ends a
         # day EARLIER waits 24 hours while locked; None means it applies at once. A later end (less free time) is always at once.
         self.request_change: Callable[[str, str, datetime], str | None] | None = None
@@ -127,7 +141,10 @@ class ScheduleSettings:
     def listing(self) -> str:
         ends = self.ends.all()
         lines = [f"{_NAMES[d]}: {ends[d].strftime('%H:%M') if d in ends else self._default.strftime('%H:%M') + ' (default)'}" for d in range(5)]
-        return ("Your school/work day ends:\n" + "\n".join(lines) + "\nWeekends and public holidays are free outside quiet hours.\n"
+        wake = self.quiet.all()
+        weekend = ("Weekend mornings are quiet until " + " / ".join(f"{('Saturday', 'Sunday')[d - 5]} {wake[d].strftime('%H:%M')}" for d in sorted(wake))
+                   + ".\n") if wake else ""
+        return ("Your school/work day ends:\n" + "\n".join(lines) + "\nWeekends and public holidays are free outside quiet hours.\n" + weekend +
                 "Change it: `schedule mon thu fri 15:00`, or `schedule tue default`.")
 
     def command(self, user_id: str, text: str, now: datetime) -> str | None:
@@ -196,6 +213,29 @@ class ScheduleSettings:
         done: list[int] = []
         for end in sorted(set(ends.values())):
             done += self._write(sorted(d for d, e in ends.items() if e == end and d in missing), end, now)
+        return done
+
+    def seed_quiet(self, ends: dict[int, time], now: datetime) -> list[int]:
+        """Owner, 2026-11-28 ("quiet until 10:00"): Saturday/Sunday with no row yet get these wake times. Returns the days set now."""
+        done: list[int] = []
+
+        def write(tx: Transaction, _s: object) -> list[int]:
+            for d, end in sorted(ends.items()):
+                if d not in (5, 6) or not (time(0, 0) < end <= WEEKEND_WAKE_LATEST):
+                    continue
+                if tx.fetch_one("SELECT 1 FROM schedule_quiet_ends WHERE weekday = ?", (d,)):
+                    continue
+                tx.execute("INSERT INTO schedule_quiet_ends (weekday, quiet_end, changed_at) VALUES (?, ?, ?)", (d, end.strftime("%H:%M"), _iso(now)))
+                write_event(tx, DomainEvent(event_type="schedule_settings.quiet_end_changed", source_module="schedule_settings", occurred_at=now,
+                                            payload={"user_id": self._user, "weekday": d, "quiet_end": end.strftime("%H:%M"), "previous": None}))
+                done.append(d)
+            return done
+
+        apply_transition(self._core, write=write)
+        for d in done:
+            self.quiet._set(d, ends[d])
+        if done:
+            decision("schedule", "Weekend mornings are quiet until his wake time.", days=done)
         return done
 
     def _write(self, days: list[int], end: time | None, now: datetime) -> list[int]:

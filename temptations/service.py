@@ -64,6 +64,28 @@ def delay_words(cost: Decimal, avg_daily: Decimal | None) -> str:
     return f"At your pace this would push your next token back by {when}."
 
 
+# Owner, 2026-11-28: edging during a release session ("Edging while released ... should add tokens instead of costing them") -> "+0.05, bot
+# runs the toy". Offered once per confirmed release, while its session lasts and at most EDGE_OFFER_FOR after it; it counts only when the
+# bot's 15-minute session really ran to the end and he then says he edged and didn't cum before it ended.
+EDGE_REWARD = Decimal("0.05")
+EDGE_MINUTES = 15
+EDGE_OFFER_FOR = timedelta(hours=2)
+EDGE_OFFER = ("Before you cum: 15 minutes of edging first. The Deep Diver in, I run it, your hand on yourself, right to the edge as often as "
+              "you can, and you don't cum until the 15 minutes are over. Done properly, it earns +0.05 toward your next token. Press "
+              "\"It's in: run it\" when you're ready.")
+EDGE_STARTED = "Connected: you should have felt a short buzz. 15 minutes. Edge, and don't cum before I'm done."
+EDGE_ASK = "That's 15 minutes. Did you edge the whole time and not cum before it ended?"
+EDGE_SHORT = "That session didn't run the full 15 minutes, so it doesn't count. Press \"It's in: run it\" to go again."
+
+
+def get_release_edge_rewards(core: CoreDatabase, user_id: str, lo: str, hi: str) -> Decimal:
+    """Read-only: the release-edging rewards earned in [lo, hi) (owner, 2026-11-28)."""
+    with core.transaction() as tx:
+        rows = tx.fetch_all("SELECT reward FROM release_edges WHERE user_id = ? AND status = 'earned' AND decided_at >= ? AND decided_at < ?",
+                            (user_id, lo, hi))
+    return sum((Decimal(r["reward"]) for r in rows), Decimal(0))
+
+
 def get_temptation_costs(core: CoreDatabase, user_id: str, lo: str, hi: str) -> Decimal:
     """Read-only: the cost of temptations accepted in [lo, hi)."""
     with core.transaction() as tx:
@@ -96,6 +118,122 @@ class Temptations:
             self._expire(now)
         except Exception:
             logger.exception("The temptation pass failed; it continues.")
+        try:
+            self._release_edge(now)
+        except Exception:
+            logger.exception("The release edging pass failed; it continues.")
+
+    # ------------------------------------------------------------------ edging during a release (owner, 2026-11-28)
+    # Wired in bot/discord_bot.py for his own bot: `last_release()` -> (authorization id, confirmed at) | None, `release_session_over(at, now)`,
+    # `clock_now()` for the toy's callbacks. None: no release edging.
+    last_release: Callable[[], tuple[str, datetime] | None] | None = None
+    release_session_over: Callable[[datetime, datetime], bool] | None = None
+    clock_now: Callable[[], datetime] | None = None
+
+    def _release_edge(self, now: datetime) -> None:
+        if self.last_release is None or self.toy is None:
+            return
+        with self._core.transaction() as tx:
+            stale = tx.fetch_all("SELECT id, offered_at FROM release_edges WHERE user_id = ? AND status = 'offered'", (self.user_id,))
+        for r in stale:
+            if now > _parse_iso(r["offered_at"]) + EDGE_OFFER_FOR:
+                self._edge_set(r["id"], "expired", now, only_from=("offered",))
+        release = self.last_release()
+        if release is None:
+            return
+        auth_id, confirmed_at = release
+        if now - confirmed_at > EDGE_OFFER_FOR or now < confirmed_at:
+            return
+        if self.release_session_over is not None and self.release_session_over(confirmed_at, now):
+            return
+        edge_id = str(uuid.uuid4())
+
+        def write(tx: Transaction, _s: object) -> bool:
+            if not tx.execute("INSERT OR IGNORE INTO release_edges (id, user_id, authorization_id, offered_at, status) VALUES (?, ?, ?, ?, 'offered')",
+                              (edge_id, self.user_id, auth_id, _iso(now))).rowcount:
+                return False
+            write_event(tx, DomainEvent(event_type="temptations.release_edge_offered", source_module="temptations", occurred_at=now,
+                                        payload={"release_edge_id": edge_id, "authorization_id": auth_id}))
+            enqueue_in_transaction(tx, user_id=self.user_id, kind="temptation", dedupe_key=f"temptation:edge:{edge_id}", now=now, immediate=True,
+                                   text=EDGE_OFFER, actions=(ActionSpec(action_id=f"temptation:edge:{edge_id}", label="It's in: run it",
+                                                                        style="success"),))
+            return True
+
+        if apply_transition(self._core, write=write):
+            logger.info("Release edging offered.")
+
+    def _edge_set(self, edge_id: str, status: str, now: datetime, *, only_from: tuple, reward: Decimal | None = None,
+                  played: float | None = None) -> bool:
+        marks = ",".join("?" for _ in only_from)
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute(f"UPDATE release_edges SET status = ?, decided_at = ?, reward = COALESCE(?, reward), "
+                              f"played_seconds = COALESCE(?, played_seconds) WHERE id = ? AND status IN ({marks})",
+                              (status, _iso(now), None if reward is None else str(reward), played, edge_id, *only_from)).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="temptations.release_edge_decided", source_module="temptations", occurred_at=now,
+                                            payload={"release_edge_id": edge_id, "status": status,
+                                                     "reward": str(reward) if reward is not None else "0"}))
+            return bool(done)
+
+        return bool(apply_transition(self._core, write=write))
+
+    def _edge_buttons(self, edge_id: str, paused: bool = False) -> tuple:
+        return (ActionSpec(action_id=f"temptation:edgego:{edge_id}", label="Continue") if paused
+                else ActionSpec(action_id=f"temptation:edgepause:{edge_id}", label="Pause"),
+                ActionSpec(action_id=f"temptation:edgestop:{edge_id}", label="Stop", style="danger"))
+
+    def _edge_press(self, edge_id: str, action: str, now: datetime):
+        from application.models import OutgoingMessage
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM release_edges WHERE id = ? AND user_id = ?", (edge_id, self.user_id))
+        if row is None:
+            return "That isn't yours."
+        if action in ("edgeyes", "edgeno"):
+            if row["status"] != "ran":
+                return "Already noted." if row["status"] in ("earned", "declined") else "That session hasn't run its 15 minutes."
+            if action == "edgeyes":
+                self._edge_set(edge_id, "earned", now, only_from=("ran",), reward=EDGE_REWARD)
+                return "Good boy. +0.05 toward your next token. Enjoy your release."
+            self._edge_set(edge_id, "declined", now, only_from=("ran",))
+            return "Thank you for being honest. No reward this time, no consequence: it's your release."
+        if self.toy is None:
+            return "I can't run the toy right now."
+        if action == "edgestop":
+            return "Stopped." if self.toy.stop() else "It isn't running."
+        if action == "edgepause":
+            return (OutgoingMessage(text="Paused: the toy is off and the time waits.", actions=self._edge_buttons(edge_id, paused=True))
+                    if self.toy.pause() else "It isn't running.")
+        if action == "edgego":
+            return (OutgoingMessage(text="Going on.", actions=self._edge_buttons(edge_id)) if self.toy.resume() else "Nothing is paused.")
+        if row["status"] != "offered" or now > _parse_iso(row["offered_at"]) + EDGE_OFFER_FOR:
+            return "That offer is over."
+        say = self.notify or (lambda key, text, actions: None)
+        clock = self.clock_now or (lambda: now)
+        level = self.toy_level() if self.toy_level is not None else 0.5
+        toy = self.toy
+
+        def done() -> None:
+            played = float(getattr(toy, "played_seconds", lambda: 0.0)() or 0.0)
+            if played >= EDGE_MINUTES * 60 - 30:
+                if self._edge_set(edge_id, "ran", clock(), only_from=("offered",), played=played):
+                    say(f"temptation:edge_ask:{edge_id}", EDGE_ASK,
+                        (ActionSpec(action_id=f"temptation:edgeyes:{edge_id}", label="Yes, I edged", style="success"),
+                         ActionSpec(action_id=f"temptation:edgeno:{edge_id}", label="No")))
+            else:
+                say(f"temptation:edge_short:{edge_id}:{uuid.uuid4()}", EDGE_SHORT,
+                    (ActionSpec(action_id=f"temptation:edge:{edge_id}", label="It's in: run it"),))
+
+        def problem(_text: str) -> None:
+            say(f"temptation:edge_problem:{edge_id}:{uuid.uuid4()}", TOY_PROBLEM.replace("or do it yourself as accepted", "or skip it"),
+                (ActionSpec(action_id=f"temptation:edge:{edge_id}", label="Try again"),))
+
+        if not toy.start(EDGE_MINUTES, "alone", profile="tease", base=level, on_problem=problem, on_done=done,
+                         on_started=lambda: say(f"temptation:edge_started:{edge_id}:{uuid.uuid4()}", EDGE_STARTED, self._edge_buttons(edge_id))):
+            return "The toy is already running."
+        logger.info("The bot runs the Deep Diver for release edging.")
+        return OutgoingMessage(text=f"Running it for {EDGE_MINUTES} minutes. Pause or Stop if you need to; the toy's own button always works too.",
+                               actions=self._edge_buttons(edge_id))
 
     def _plan(self, now: datetime) -> None:
         """Once a local day, in free time: about one day in seven gets an offer at a random free moment later that day."""
@@ -216,6 +354,8 @@ class Temptations:
                                actions=self._toy_buttons(row_id))
 
     def press(self, *, user_id: str, row_id: str, action: str, now: datetime):
+        if user_id == self.user_id and action in ("edge", "edgestop", "edgepause", "edgego", "edgeyes", "edgeno"):
+            return self._edge_press(row_id, action, now)
         if user_id != self.user_id or action not in ("accept", "toy", "toystop", "toypause", "toygo"):
             return "That button isn't for you."
         if action != "accept":

@@ -20,3 +20,12 @@ version waits for the Deep Diver control (P6).
 ## Caged edging, run by the bot (owner, 2026-11-25/28)
 
 The offer says it plainly: caged edging, the Deep Diver in, hands only around the cage. After **Accept**, "It's in: run it" (`temptation:toy:<id>`, within an hour of accepting) runs the Deep Diver for 15 minutes on the `tease` profile (toy_control), with Pause / Continue / Stop; the toy's own button always works. Wired in bot/discord_bot.py from the obedience toy (one session at a time). Honour-based as before: a slip is told.
+
+
+## Edging during a release (owner, 2026-11-28)
+
+"Edging while released I think should add tokens instead of costing them": once per confirmed release (`ReleaseEngine.last_confirmed_release`),
+while its release session lasts and at most 2 hours after it, the bot offers 15 minutes of edging before he cums, the Deep Diver run by the
+bot (`tease`). Only a session that ran the full 15 minutes (`played_seconds`) asks "Did you edge the whole time and not cum before it ended?";
+Yes earns +0.05 (`EDGE_REWARD`), added at that day's evaluation (`get_release_edge_rewards`); No costs nothing. Table `release_edges`
+(migration 098), events `temptations.release_edge_offered` / `temptations.release_edge_decided`. Wired for his own bot only.

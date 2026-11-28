@@ -527,7 +527,9 @@ class CheckInService:
     def _morning_ask_at(self, check_in_id: str, day) -> datetime:
         """When the bot asks for this report: a random moment in 08:00-10:00 local, fixed per report (drawn from its id, so a restart keeps it)."""
         offset = int(hashlib.sha256(check_in_id.encode("utf-8")).hexdigest()[:8], 16) % (MORNING_ASK_SPAN_MINUTES + 1)
-        return self._cfg.to_utc(day, MORNING_ASK_FROM) + timedelta(minutes=offset)
+        # Owner, 2026-11-28: on a weekend he sleeps until his wake time, so the 2-hour span starts there.
+        start = max(MORNING_ASK_FROM, self._cfg.end_of_quiet(day)) if hasattr(self._cfg, "end_of_quiet") else MORNING_ASK_FROM
+        return self._cfg.to_utc(day, start) + timedelta(minutes=offset)
 
     def _void_unasked_misses(self, now: datetime) -> None:
         """Owner, 2026-11-18 ("Void it"): a morning report counted missed although its question was never sent is not a miss. It becomes
@@ -565,7 +567,7 @@ class CheckInService:
                 self._cas(row["id"], ("scheduled",), "skipped", now)
             elif row["status"] == "scheduled" and row["local_date"] == day.isoformat() and now >= self._morning_ask_at(row["id"], day):
                 self._ask_morning(now, why="at its random time")
-        if exists or classify(self._cfg, now) is WindowKind.QUIET or local.time() < self._cfg.quiet_end:
+        if exists or classify(self._cfg, now) is WindowKind.QUIET or local.time() < self._cfg.end_of_quiet(local.date()):
             return
         due = self._morning_due(day)
         if now >= due or self._morning_held(now):

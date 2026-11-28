@@ -154,12 +154,13 @@ def window_config_from(config) -> WindowConfig:
     work_ends = None
     db_path = getattr(config, "db_path", None)
     if db_path:
-        from schedule_settings.service import work_ends_for
+        from schedule_settings.service import quiet_ends_for, work_ends_for
         work_ends = work_ends_for(db_path)
+        quiet_ends = quiet_ends_for(db_path)          # owner, 2026-11-28: weekend mornings quiet until his wake time
     return WindowConfig.build(
         timezone_name=config.app_timezone, quiet_start=config.quiet_hours_start, quiet_end=config.quiet_hours_end,
         work_start=config.workday_start, work_end=config.workday_end, holiday_country=config.holiday_country,
-        weekend_release_start=config.weekend_release_start, work_ends=work_ends,
+        weekend_release_start=config.weekend_release_start, work_ends=work_ends, quiet_ends=quiet_ends,
     )
 
 

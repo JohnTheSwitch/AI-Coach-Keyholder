@@ -151,3 +151,60 @@ def test_an_accepted_temptation_can_have_the_bot_run_the_deep_diver(tmp_path) ->
     assert isinstance(run, OutgoingMessage) and t.toy.started == [(15, "tease")] and told and "Don't cum" in told[0]
     assert t.press(user_id=U, row_id=row_id, action="toystop", now=now) == "Stopped."
     assert t.press(user_id="other", row_id=row_id, action="toy", now=now) == "That button isn't for you."
+
+
+
+def test_edging_during_a_release_earns_a_little(tmp_path) -> None:
+    """Owner, 2026-11-28: "Edging while released ... should add tokens instead of costing them" -> "+0.05, bot runs the toy"."""
+    from datetime import timedelta
+    from decimal import Decimal
+    from application.models import OutgoingMessage
+    from temptations.service import get_release_edge_rewards
+
+    class Toy:
+        def __init__(self):
+            self.played, self.cb = 0.0, None
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started):
+            self.cb = on_done
+            on_started()
+            return True
+
+        def played_seconds(self):
+            return self.played
+
+    db = core(tmp_path)
+    t = TestTemptations()._t(db, rolls=[0.99, 0.99])
+    told = []
+    t.toy, t.toy_level, t.notify = Toy(), lambda: 0.6, lambda key, text, actions: told.append((text, actions))
+    t.last_release, t.release_session_over, t.clock_now = (lambda: ("auth-1", NOW)), (lambda at, now: False), (lambda: NOW)
+    t.tick(NOW + timedelta(minutes=5))
+    rows = TestTemptations()._rows(db, "SELECT * FROM release_edges")
+    assert len(rows) == 1 and rows[0]["status"] == "offered"
+    t.tick(NOW + timedelta(minutes=10))
+    assert len(TestTemptations()._rows(db, "SELECT * FROM release_edges")) == 1          # once per release
+    edge = rows[0]["id"]
+    assert isinstance(t.press(user_id=U, row_id=edge, action="edge", now=NOW + timedelta(minutes=6)), OutgoingMessage)
+    t.toy.played = 300.0
+    t.toy.cb()                                                                             # stopped early: doesn't count
+    assert "didn't run the full 15 minutes" in told[-1][0]
+    assert t.press(user_id=U, row_id=edge, action="edgeyes", now=NOW) == "That session hasn't run its 15 minutes."
+    t.press(user_id=U, row_id=edge, action="edge", now=NOW + timedelta(minutes=20))
+    t.toy.played = 900.0
+    t.toy.cb()
+    assert told[-1][0].startswith("That's 15 minutes")
+    assert "+0.05" in t.press(user_id=U, row_id=edge, action="edgeyes", now=NOW + timedelta(minutes=40))
+    assert t.press(user_id=U, row_id=edge, action="edgeno", now=NOW + timedelta(minutes=41)) == "Already noted."
+    assert get_release_edge_rewards(db, U, "2000-01-01", "2100-01-01") == Decimal("0.05")
+
+
+def test_no_release_edging_without_a_fresh_release(tmp_path) -> None:
+    from datetime import timedelta
+    db = core(tmp_path)
+    t = TestTemptations()._t(db, rolls=[0.99, 0.99])
+    t.toy, t.notify = object(), lambda key, text, actions: None
+    t.last_release, t.release_session_over = (lambda: ("auth-1", NOW)), (lambda at, now: False)
+    t.tick(NOW + timedelta(hours=3))                                                       # too long after the release
+    t.last_release = lambda: None
+    t.tick(NOW)
+    assert TestTemptations()._rows(db, "SELECT * FROM release_edges") == []

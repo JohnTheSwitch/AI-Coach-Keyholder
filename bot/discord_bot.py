@@ -869,9 +869,25 @@ def main() -> None:
     if config.enable_chaster_messaging and not chat_ready:
         logger.warning("ENABLE_CHASTER_MESSAGING is true but Chaster chat is NOT active: it needs Chaster fully configured and "
                        "CHASTER_EXECUTION_KEYHOLDER_USER_ID (the bot account).")
+    # Owner, 2026-11-28: "use the keyholder account to dm ... to the account that has the lock". His only Chaster connection is the
+    # keyholder account itself, so for him the other side of the chat is his own wearer account (OWNER_CHASTER_ACCOUNT_ID, else the
+    # wearer last seen on his lock), never the keyholder account's own id.
+    def _chat_account_of(user_id: str, _cfg=config) -> str | None:
+        own = chaster_connections.get(user_id) if chaster_connections is not None else None
+        bot_conn = chaster_connections.get(_cfg.chaster_execution_keyholder_user_id) if chaster_connections is not None else None
+        own_id = own.chaster_account_id if own is not None else None
+        if own_id and (bot_conn is None or own_id != bot_conn.chaster_account_id):
+            return own_id
+        if getattr(_cfg, "owner_chaster_account_id", None):
+            return _cfg.owner_chaster_account_id
+        with core.transaction() as tx:
+            row = tx.fetch_one("SELECT wearer_chaster_id FROM managed_lock_observations WHERE outcome = 'observed' AND wearer_chaster_id IS NOT NULL "
+                               "ORDER BY fetched_at DESC, rowid DESC LIMIT 1")
+        return row["wearer_chaster_id"] if row is not None else None
+
     channel_service = ChannelPreferenceService(
         routes=message_routes, connections=chaster_connections, token_manager=chat_tokens, client=chat_client,
-        bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready)
+        bot_user_id=config.chaster_execution_keyholder_user_id, chaster_messaging_enabled=chat_ready, chaster_account_of=_chat_account_of)
     # Owner, 2026-11-13: nobody reads the keyholder account, so new Chaster messages to it are forwarded to the owner's DM (forward only).
     keyholder_inbox_coro = None
     if chat_ready and config.owner_user_id:
@@ -970,6 +986,8 @@ def main() -> None:
     try:
         from datetime import time as _t
         schedule.seed({0: _t(15, 0), 3: _t(15, 0), 4: _t(15, 0), 1: _t(17, 0), 2: _t(17, 0)}, clock.now())
+        # Owner, 2026-11-28: "On weekends I wake up usually at 10 am" -> "Yes, quiet until 10:00".
+        schedule.seed_quiet({5: _t(10, 0), 6: _t(10, 0)}, clock.now())
     except Exception:
         logger.exception("His school-day ends could not be set; WORKDAY_END applies.")
     # Owner, 2026-11-28: "a higher initial timer ... when the system picks it up and freezes it, it would also set the timer to 0" (and "This
@@ -1052,7 +1070,7 @@ def main() -> None:
         bot.chaster_chat = (ChasterConversationPoller(
             config.db_path, core=core, routes=message_routes, connections=chaster_connections,
             token_manager=chat_tokens, client=chat_client, adapter=chaster_adapter,
-            bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock), chaster_adapter,
+            bot_user_id=config.chaster_execution_keyholder_user_id, clock=clock, chaster_account_of=_chat_account_of), chaster_adapter,
             config.chaster_chat_poll_seconds)
         logger.info("Chaster chat channel enabled (opt-in per user; inbound by polling).")
     # A user whose preferred channel is unavailable still gets the message on Discord.
@@ -1378,6 +1396,12 @@ def main() -> None:
             temptations.notify = (lambda key, text, actions, u=wiring.check_ins.user_id:
                                   notification_queue.enqueue(user_id=u, kind="temptation", dedupe_key=key, text=text, now=clock.now(), actions=actions,
                                                              immediate=True))
+        # Owner, 2026-11-28: edging during a release session earns +0.05 (the bot runs the toy). His own bot only.
+        if getattr(temptations, "toy", None) is not None and getattr(wiring, "release_engine", None) is not None:
+            _engine = wiring.release_engine
+            temptations.last_release = lambda u=wiring.check_ins.user_id, e=_engine: e.last_confirmed_release(u)
+            temptations.release_session_over = _engine.release_session_over
+            temptations.clock_now = clock.now
         bot.temptations_loop = temptations.loop(clock)
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"

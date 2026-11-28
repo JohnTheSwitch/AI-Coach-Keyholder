@@ -73,11 +73,12 @@ class DayFacts:
     surprise: Decimal = Decimal(0)   # research a (owner, 2026-11-15): surprise rewards of tasks verified that day
     cost: Decimal = Decimal(0)    # B7 (owner, 2026-11-16): accepted temptations that day, taken off the pool (never below 0)
     board: Decimal = Decimal(0)   # P1 (owner, 2026-11-15): rewards of task-board tasks verified that day
+    edge: Decimal = Decimal(0)    # owner, 2026-11-28: edging during a release session that day (+0.05, the bot ran the toy)
 
     @property
     def training_bonus(self) -> Decimal:
         return (TRAINING_BONUS["full"] * self.training_full + TRAINING_BONUS["short"] * self.training_short
-                + (WEEK_BONUS if self.week_complete else Decimal(0)) + min(RAISE_BONUS * self.raises, RAISE_BONUS_MAX) + self.board + self.surprise)
+                + (WEEK_BONUS if self.week_complete else Decimal(0)) + min(RAISE_BONUS * self.raises, RAISE_BONUS_MAX) + self.board + self.surprise + self.edge)
 
 
 def get_daily_evaluations(core: CoreDatabase, user_id: str, start: date, end: date) -> list[dict]:
@@ -161,8 +162,16 @@ class DailyEvaluationTask:
             training_full=len(training) - short, training_short=short,
             week_complete=self._week_complete(day), raises=self._raises(lo, hi) if training or self._trained_before(day) else 0,
             # raises only with a verified session that day, or the day before (bug fix 2026-11-16: sets are often logged the next day)
-            board=self._board(lo, hi), surprise=self._surprise(lo, hi), cost=self._cost(lo, hi),
+            board=self._board(lo, hi), surprise=self._surprise(lo, hi), cost=self._cost(lo, hi), edge=self._edge(lo, hi),
         )
+
+    def _edge(self, lo: str, hi: str) -> Decimal:
+        try:
+            from temptations.service import get_release_edge_rewards
+            return get_release_edge_rewards(self._core, self._user, lo, hi)
+        except Exception:
+            logger.exception("Release edging rewards could not be read; the day counts without them.")
+            return Decimal(0)
 
     def _cost(self, lo: str, hi: str) -> Decimal:
         try:

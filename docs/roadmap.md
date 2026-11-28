@@ -196,7 +196,22 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 | D58 | **A lock that ended while the bot was off** | Live, 2026-11-28 ("I've been receiving tokens even while unlocked?"): he ended his lock on 25 Nov evening, the PC stayed off, and the last reading said locked, so 26 and 27 Nov were evaluated as locked days (+0.28 each). After a restart the search simply found no lock and nothing read the old lock again. Now: when a search finds no lock and the newest reading is a locked one, that lock is read once more and Chaster's own `unlockedAt` is kept (migration 096, `ended_at`); a day after that end counts as unlocked (paused, no progress). The same when a new lock is already found (he relocked first): the old lock is read once before the new one. The bot off with the lock still locked is still never a free pass. Owner, same day ("Take it back"): 26 and 27 Nov corrected once to paused days in his database (`DailyEvaluationTask.correct_as_paused`, event `daily_evaluation.corrected` keeps the original numbers): pool back to its 25 Nov value, streak back to 1 |
 | D59 | **A new lock's timer to 0 at pick-up** | Owner, 2026-11-28: "I would want to set a higher initial timer on the lock and when the system picks it up and freezes it, it would also set the timer to 0" (the one exception to Zero-Time-Modification, his explicit yes; "This lock too"). Once per lock, his own lock only (first seen from 2026-11-28 08:30 UTC), after the freeze, remove only; the executor reads the end date before and after, and a later end date goes to review. First live run checks the owner-supplied `update-time` contract and that Chaster lets the keyholder remove time |
 | D60 | **Leg days count only when done** | Live, 2026-11-28 ("check if with the leg day today is everything right (even the name)"): A/B ("whichever he did not do last") and the return-from-break count went by sessions planned, so B skipped on 21 Nov (unlocked) counted and Saturday 28 Nov went out as a full "Leg day A". Now only verified leg days count (`TrainingPlan.done_on`). He did B, lighter, that day; it is recorded as B once (`correct_session`, event `training.session_corrected`) |
+| D61 | **Chaster DMs: the keyholder account to the lock's wearer** | Owner, 2026-11-28: "use the keyholder account to dm ... to the account that has the lock". A manual test message went from the keyholder account to his wearer account the same day (conversation already approved). For him `channel chaster` and the inbound poll now use his wearer account (`OWNER_CHASTER_ACCOUNT_ID`, else the wearer last seen on his lock), not the keyholder account's own id (which found no conversation). Still chat only until the approved Chaster channel work (commands, typed answers, onboarding) is built |
+| D62 | **Weekend mornings quiet until 10:00** | Owner, 2026-11-28: "On weekends I wake up usually at 10 am" -> "Yes, quiet until 10:00". Saturday and Sunday quiet hours end at his wake time (`schedule_quiet_ends`, migration 097, seeded 10:00; `WindowConfig.end_of_quiet`): no tasks, no morning question, nothing owed before then; the morning report is asked in the two hours after it (still due 13:00). `schedule` shows it. His bedtime is still in .env (QUIET_HOURS_START) |
+| D63 | **Edging during a release earns +0.05** | Owner, 2026-11-28: "Edging while released I think should add tokens instead of costing them, because it's something the wearer has to do that delays cumming" -> "+0.05, bot runs the toy". Once per confirmed release, while its session lasts (at most 2 hours): 15 minutes of edging with the Deep Diver run by the bot (`tease`), then "Did you edge the whole time and not cum before it ended?" Yes = +0.05 at that day's evaluation; No = nothing, no consequence; a session that didn't run the full 15 minutes doesn't count. `release_edges` (migration 098) |
+| D64 | **Training tracks: prostate, riding, deepthroat** (approved, building) | Owner, 2026-11-28: "I want to be trained in not only prostate. I want a prostate, riding and deepthroat to be too." About half of erotic days are a training session (his answer), the track trained least recently next; each track moves to its next stage after 3 verified sessions. Deepthroat: never with restraints, a gag or a blindfold, hands free, no face in any photo, stop at once on pain or a gag that won't settle, empty stomach. Still to answer: which dildo for deepthroat, and the proof (tape mark at the depth vs timer photo) |
 | D8 | **Multi-wearer is the next priority** | A Chaster user (longest lock 5 h) asked to join. Order: parity gaps (features, lines, obedience + own gear, release earning/window, morning report + protocol, reviews, temptations, recovery, relock picture), nothing of the owner's leaking to another wearer, onboarding with an experience level (a beginner profile goes to the owner first), then a live dry run with his own spare accounts |
+
+## The rest of the roadmap: approved to build without waiting (owner, 2026-11-28)
+
+Owner, 2026-11-28: "When you're done just do the rest of the roadmap without waiting for my approval. If you have any questions for it, ask
+now." His answers: **new wearers who message the keyholder account on Chaster need his approval first** (forwarded with Approve / Ignore;
+nothing is sent to them before); **the beginner profile is decided by Claude** and told to him after (he may change any number); **cloud
+model providers are built too** (other installs only; his bot stays on Ollama); **no dry run**: once built, he sets ENABLE_MULTI_WEARER himself
+and invites a real wearer. Order: (1) the full Chaster channel (commands, check-in replies, typed answers for every button, onboarding over
+Chaster, Chaster the default for other wearers, approval of new Chaster wearers); (2) the remaining D8 parity and leak checks, the
+experience level at onboarding and the beginner profile; (3) cloud model providers. Still asked every time: a new action on a live lock,
+a philosophy hard limit.
 
 ## Ideas (not approved; each needs the owner's yes)
 
@@ -221,7 +236,7 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
   delivered to Chaster; polling cost and latency with several wearers (no webhooks; at least 15 s). **Approved 2026-11-28** (owner: "1,2,3 -
   yes"): Chaster as a full alternative channel for additional wearers (the owner stays on Discord); a message from the wearer's own Chaster
   account (Chaster's sender id) may do everything a Discord DM can: commands, check-in replies, accepting things; every button becomes a typed
-  answer; replies 15-60 s late are fine; onboarding over Chaster too, so such a wearer never needs Discord. Built with the multi-wearer work (D8).
+  answer; replies 15-60 s late are fine; onboarding over Chaster too, so such a wearer never needs Discord. Built with the multi-wearer work (D8). Owner, same day: **Chaster is the default channel for additional wearers** (Discord only if they choose it); the owner stays on Discord.
 - **Satisfyer Top Secret** worn over the cage, driven the same way (only after the Deep Diver test works).
 - **Typing Lines** extension: desk research done (2026-11-16, `docs/research/typing_lines.md`): the bot can keep rewriting the lock's extensions with it installed (sent back unchanged), but cannot configure or drive it; recommendation: not worth integrating.
 - **Ideas from his favourite stories (2026-11-15), P1-P10 + his kink ideas 1-5:** task board, title in every DM, the release as a timed
@@ -232,7 +247,7 @@ live trial, the token-pace review on 2026-11-27 (already scheduled).
 
 Tasks for each piece are already in the catalogue; after buying, send `gear add <piece>` and they start coming.
 
-1. **Safety shears** (rope and cuff safety; until then, scissors within reach).
+1. ~~**Safety shears**~~ (owned, owner 2026-11-28).
 2. **New blindfold** (Ouch!, about 139 Kč): `gear add blindfold`.
 3. **Hidden Desire Extreme Multiple Bondage Harness** (799 Kč; collar + waist strap with 8 D-rings + velcro cuffs; owner's choice
    2026-11-15, replaces a separate collar): `gear add harness`.

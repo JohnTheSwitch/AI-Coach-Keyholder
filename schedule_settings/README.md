@@ -10,3 +10,9 @@ one `WORKDAY_END` for every weekday took 1.5 free hours on three days and called
 - A time is refused when it isn't after the work start or leaves the evening too short before quiet hours (the release planner's room).
 - Weekends and public holidays have no work time and cannot be set. Quiet hours and the work start stay in `.env`.
 - Not built: school breaks (the owner was offered a `school off` command; not asked for yet).
+
+
+## Weekend wake time (owner, 2026-11-28)
+
+"On weekends I wake up usually at 10 am": Saturday and Sunday mornings stay quiet until his wake time (`schedule_quiet_ends`, migration 097,
+seeded 10:00 for his bot; `quiet_ends_for(db_path)`, read by `WindowConfig.end_of_quiet`). His own setting is never overwritten by the seed.
