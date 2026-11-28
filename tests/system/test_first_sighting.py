@@ -87,7 +87,7 @@ class TestTheTimerTo0:
         world.task.zero_time_from = world.now - timedelta(hours=1)
         world.end_date = world.now + timedelta(days=3)
         world.cycle()                                                # first sighting: frozen
-        world.frozen = True
+        world.frozen, world.frozen_since = True, timedelta(0)
         report = world.cycle(world.now + timedelta(minutes=1))
         assert "barrier_zero_time" in report.notes
         assert world.transport.calls == [("freeze", "lock-1"), ("zero_time", "lock-1", 3 * 24 * 3600 - 60)]

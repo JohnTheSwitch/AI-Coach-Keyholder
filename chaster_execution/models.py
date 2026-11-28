@@ -35,6 +35,15 @@ class ExecStatus(StrEnum):
 # v0.39: freeze/unfreeze may execute ONLY for barrier management, i.e. for decisions created by the
 # release engine under one of these rule ids. A freeze/unfreeze from any other rule (for example a
 # custom Rules Engine ruleset) never executes.
+def remaining_seconds(obs, now) -> int:
+    """Owner, 2026-11-28 (the timer to 0): the time left on a lock. While it is frozen Chaster's clock stands still, so it is counted from
+    the moment it was frozen, not from now (provider-reported `frozenAt`/`endDate`). 0 when unknown or already over."""
+    if obs is None or obs.end_date is None:
+        return 0
+    start = obs.frozen_at if obs.is_frozen and obs.frozen_at is not None else now
+    return max(0, int((obs.end_date - start).total_seconds()))
+
+
 BARRIER_ACTIONS = frozenset({"freeze", "unfreeze", "zero_time"})               # zero_time: owner, 2026-11-28 (the pick-up timer to 0)
 BARRIER_RULE_IDS = frozenset({"barrier.release", "barrier.freeze", "barrier.zero_time"})
 

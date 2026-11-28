@@ -186,3 +186,13 @@ def test_a_leg_day_recorded_as_the_other_one(tmp_path) -> None:
     assert not p.correct_session(SATURDAY, "legs_b", reason="t", now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc))
     assert not p.correct_session(SUNDAY, "legs_b", reason="t", now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc))   # upper: never
     assert p.day_task(SATURDAY + timedelta(days=7)).key == "training:legs_a"
+
+
+def test_the_glute_ham_raise_is_named_as_in_his_app(tmp_path) -> None:
+    """Owner, 2026-11-28: "nordic curl in my app is as glute ham raise"."""
+    from training.plan import ALIASES
+    assert EXERCISES["nordic"].name.startswith("Glute ham raise")
+    assert ALIASES["glute ham raise"] == ALIASES["ghr"] == ALIASES["nordic curl"] == "nordic"
+    p = plan(tmp_path)
+    p.day_task(SATURDAY)                                                                   # A
+    assert "Glute ham raise" in p.day_task(SATURDAY + timedelta(days=7)).details            # B

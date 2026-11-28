@@ -41,6 +41,7 @@ from chaster_execution.models import (
     ExecStatus,
     LockActionTransport,
     TransportOutcome,
+    remaining_seconds,
 )
 from infrastructure.database import Database as CoreDatabase
 from infrastructure.database import Transaction, apply_transition
@@ -169,7 +170,7 @@ class ChasterExecutor:
 
         try:
             if action == ActionType.ZERO_TIME:
-                seconds = int((_parse_iso(end_before) - now).total_seconds())
+                seconds = remaining_seconds(self._get_latest(), now)
                 result = self._transport.remove_remaining_time(lock_id=lock_id, seconds=seconds)
             else:
                 result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
@@ -245,7 +246,7 @@ class ChasterExecutor:
             target = self._decision_lock(decision_id)
             if target is None or target != obs.chaster_lock_id:
                 return refuse("the timer to 0 is for another lock than the one observed")
-            if obs.end_date is None or (obs.end_date - now).total_seconds() < 60:
+            if remaining_seconds(obs, now) < 60:
                 return refuse("no remaining time to remove")
         if action == ActionType.UNFREEZE and self._window_check is not None and not self._window_check(now):
             return refuse("barrier release outside a discretionary window")

@@ -36,7 +36,7 @@ EXERCISES: dict[str, Exercise] = {e.key: e for e in (
     Exercise("rdl", "Romanian deadlift", 4, 6, 10, 90, 2.5, "kg", "3 min"),
     Exercise("front_squat", "Front squat", 3, 6, 10, 80, 2.5, "kg", "2.5 min"),
     Exercise("hip_thrust", "Hip thrust, 1 s hold at the top", 3, 8, 12, 110, 2.5, "kg", "2 min"),
-    Exercise("nordic", "Nordic curl, as slow as you can down", 3, 3, 6, 0, 0, "bw", "2 min"),
+    Exercise("nordic", "Glute ham raise, as slow as you can down", 3, 3, 6, 0, 0, "bw", "2 min"),   # owner, 2026-11-28: his app's name
     Exercise("seated_calf", "Seated calf raise", 4, 12, 20, 40, 2.5, "kg", "60 s", "weight on the knees"),
     Exercise("bench", "Bench press", 3, 5, 8, 75, 2.5, "kg", "2 min", "superset with pull-ups, ~30 s between"),
     Exercise("pullups", "Pull-ups", 3, 5, 8, 0, 0, "bw", "2 min", "as now"),
@@ -69,7 +69,7 @@ ALIASES: dict[str, str] = {
     "rdl": "rdl", "romanian deadlift": "rdl", "rumunský mrtvý tah": "rdl",
     "front squat": "front_squat", "přední dřep": "front_squat",
     "hip thrust": "hip_thrust",
-    "nordic": "nordic", "nordic curl": "nordic",
+    "nordic": "nordic", "nordic curl": "nordic", "glute ham raise": "nordic", "ghr": "nordic", "glute-ham raise": "nordic",
     "seated calf": "seated_calf", "výpony vsedě": "seated_calf",
     "bench": "bench", "bench press": "bench",
     "pullups": "pullups", "pull-ups": "pullups", "pull ups": "pullups", "přítahy": "pullups",

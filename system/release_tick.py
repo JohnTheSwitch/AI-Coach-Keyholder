@@ -362,7 +362,8 @@ class ReleaseEnginePeriodicTask:
         if (obs is None or now - obs.fetched_at > LOCK_DATA_MAX_AGE or obs.status is not ChasterProviderStatus.LOCKED
                 or obs.has_keyholder is not True or obs.is_frozen is not True or not obs.chaster_lock_id):
             return False
-        if obs.end_date is None or (obs.end_date - now).total_seconds() < 60:
+        from chaster_execution.models import remaining_seconds
+        if remaining_seconds(obs, now) < 60:
             return False
         first_seen = self._engine.get_first_seen_at(obs.chaster_lock_id)
         if first_seen is None or first_seen < self.zero_time_from:

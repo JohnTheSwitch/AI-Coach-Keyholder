@@ -264,6 +264,13 @@ class TestTheTimerTo0:
         w.run()
         assert w.status(d) == "blocked" and not w.transport.calls
 
+    def test_a_frozen_lock_counts_from_the_freeze(self, core) -> None:
+        """Chaster's clock stands still while frozen: the time left is the end date minus the moment it was frozen."""
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True, frozen_at=NOW - timedelta(hours=5), end_date=NOW - timedelta(hours=1)))
+        d = self._decision(w)
+        w.run()
+        assert w.status(d) == "executed" and w.transport.calls == [("zero_time", "lock-1", 4 * 3600)]
+
     def test_an_end_date_that_moved_later_goes_to_review(self, core) -> None:
         def later(world, now):
             world.observation = obs(is_frozen=True, end_date=NOW + timedelta(days=4))
