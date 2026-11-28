@@ -149,11 +149,17 @@ def runtime_halted(core):
 
 
 def window_config_from(config) -> WindowConfig:
-    """Fail-fast: raises ValueError for an invalid layout / timezone."""
+    """Fail-fast: raises ValueError for an invalid layout / timezone. Per-day work ends (owner, 2026-11-25) come from this database's
+    `schedule_settings` map, shared and live."""
+    work_ends = None
+    db_path = getattr(config, "db_path", None)
+    if db_path:
+        from schedule_settings.service import work_ends_for
+        work_ends = work_ends_for(db_path)
     return WindowConfig.build(
         timezone_name=config.app_timezone, quiet_start=config.quiet_hours_start, quiet_end=config.quiet_hours_end,
         work_start=config.workday_start, work_end=config.workday_end, holiday_country=config.holiday_country,
-        weekend_release_start=config.weekend_release_start,
+        weekend_release_start=config.weekend_release_start, work_ends=work_ends,
     )
 
 

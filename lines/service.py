@@ -166,6 +166,15 @@ class LineService:
                                                   "BETWEEN ? AND ? AND COALESCE(rule_group_id, '') != ?",
                                                   (self.user_id, start.isoformat(), end.isoformat(), RELEASE_GROUP))]
 
+    def get_release_lines_waiting(self) -> dict | None:
+        """Owner, 2026-11-25: the open release lines still to write (none submitted and in review), or None."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT id, sentence, required, done, created_at, review_status FROM line_assignments WHERE user_id = ? AND "
+                               "rule_group_id = ? AND status = 'open' AND mode IS NULL ORDER BY created_at DESC LIMIT 1", (self.user_id, RELEASE_GROUP))
+        if row is None or (row["review_status"] is not None and row["review_status"] != "rejected"):
+            return None
+        return dict(row)
+
     def assign_release(self, since: str, now: datetime) -> bool:
         """Earn the release (owner, 2026-11-15): RELEASE_LINES release lines, unless some were assigned since `since` (the last spent token).
         True when they were assigned now. On paper like any lines when `paper` is wired."""

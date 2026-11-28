@@ -944,6 +944,21 @@ def test_a_toy_pause_moves_the_photo_deadline_up_to_midnight(tmp_path) -> None:
     assert len(moved) == 2
 
 
+def test_task_now_brings_todays_task_forward_once(tmp_path) -> None:
+    """Owner, 2026-11-25: `task now` instead of waiting for the random moment; only before the task came."""
+    w = World(tmp_path)
+    w.tasks.tick(MORNING)
+    row = w.row()
+    assert row["status"] == "planned"
+    reply = w.tasks.extra_task_command(U, "Task now", MORNING)
+    assert reply.startswith("Today's task is coming now")
+    from datetime import timedelta
+    w.tasks.tick(MORNING + timedelta(minutes=2))
+    assert w.row()["status"] != "planned"                                    # it came
+    assert w.tasks.extra_task_command(U, "task now", MORNING + timedelta(minutes=3)) in ("Today's task is already out.", "You've had today's task.")
+    assert w.tasks.extra_task_command("other", "task now", MORNING) is None
+
+
 def test_run_toy_starts_the_session_for_the_task_he_is_doing(tmp_path) -> None:
     """Owner, 2026-11-23: he started the task himself (Intiface was closed), then hands the toy to the bot with `run toy 45`."""
     from obedience.service import Task
@@ -1096,3 +1111,22 @@ def test_a_rope_tie_is_held_at_least_20_minutes_and_every_time_is_a_multiple_of_
     for task in CATALOG:
         for n, unit in re.findall(r"(\d+)[ -](minutes?|hours?)", task.text):
             assert int(n) < 5 or int(n) % 5 == 0 or unit.startswith("hour"), task.text
+
+
+
+def test_the_small_bijou_warms_up_for_the_large_one_only(tmp_path) -> None:
+    """Owner, 2026-11-25: "I don't think I need to warm up with it for the deep diver, maybe warm up with it for the larger bijou"."""
+    from obedience.service import PLUG_LADDER
+    assert "bijou_small" not in [p.key for p in PLUG_LADDER]
+    w = World(tmp_path)
+    owned = frozenset({"bijou_small", "deep_diver", "bijou_large"})
+    assert "Warm up" not in w.tasks.ladder_task(owned).text                     # the Deep Diver: no warm-up
+    with w.core.raw_connection() as conn:
+        for i in range(3):
+            conn.execute("INSERT INTO obedience_tasks (id, user_id, local_date, catalog_key, text, planned_at, status, created_at, outcome, "
+                         "decided_at) VALUES (?, ?, ?, 'plug:deep_diver', 't', '2026-11-14T18:00:00Z', 'passed', '2026-11-14T17:00:00Z', "
+                         "'verified', '2026-11-14T19:00:00Z')", (f"x{i}", U, f"2026-11-1{i}"))
+        conn.commit()
+    task = w.tasks.ladder_task(owned)
+    assert task.key == "plug:bijou_large" and "Warm up with the small Crushious Bijou" in task.text
+    assert "Warm up with the gray Satisfyer Deep Diver" in w.tasks.ladder_task(frozenset({"deep_diver", "bijou_large"})).text

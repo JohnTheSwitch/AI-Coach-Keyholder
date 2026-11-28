@@ -61,7 +61,7 @@ def plan_target(
     today = cfg.local(now).date()
     for i in range(_MAX_SEARCH_DAYS):
         d = today + timedelta(days=i)
-        base = cfg.weekend_release_start if is_non_working_day(cfg, d) else cfg.work_end
+        base = cfg.weekend_release_start if is_non_working_day(cfg, d) else cfg.end_of_work(d)   # owner, 2026-11-25: per-day ends
         target = cfg.to_utc(d, base) + timedelta(minutes=draw_offset_minutes(seed, d, min_offset, max_offset))
         if target <= now + MIN_LEAD or classify(cfg, target) is not WindowKind.DISCRETIONARY:
             if i == 0 and (again := _later_today(now, seed, cfg, d)) is not None:

@@ -22,7 +22,7 @@ can therefore only make the system more conservative, never less.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
 from functools import lru_cache
@@ -65,11 +65,25 @@ class WindowConfig:
     # Base time of the adaptive release on weekends and public holidays (WORKDAY_END has no
     # meaning there). Owner decision: 10:00 local.
     weekend_release_start: time = time(10, 0)
+    # Owner, 2026-11-25: a weekday may end at its own time (schedule_settings: `get(weekday) -> time | None`, shared and live). None or a
+    # missing day: work_end.
+    work_ends: object = field(default=None, compare=False, hash=False, repr=False)
+
+    def end_of_work(self, d: date) -> time:
+        """The end of work time on local date `d` (its own per-day end, else WORKDAY_END)."""
+        if self.work_ends is not None:
+            try:
+                own = self.work_ends.get(d.weekday())
+            except Exception:
+                own = None
+            if own is not None and self.work_start < own < self.quiet_start:
+                return own
+        return self.work_end
 
     @classmethod
     def build(
         cls, *, timezone_name: str, quiet_start: str, quiet_end: str, work_start: str, work_end: str,
-        holiday_country: str | None = "CZ", weekend_release_start: str = "10:00",
+        holiday_country: str | None = "CZ", weekend_release_start: str = "10:00", work_ends: object = None,
     ) -> "WindowConfig":
         """Fail-fast validation of the whole window layout."""
         try:
@@ -86,7 +100,7 @@ class WindowConfig:
         if not (qe <= wr < qs):
             raise ValueError("require QUIET_HOURS_END <= WEEKEND_RELEASE_START < QUIET_HOURS_START")
         return cls(tz=tz, quiet_start=qs, quiet_end=qe, work_start=ws, work_end=we,
-                   holiday_country=(holiday_country or None), weekend_release_start=wr)
+                   holiday_country=(holiday_country or None), weekend_release_start=wr, work_ends=work_ends)
 
     def local(self, instant: datetime) -> datetime:
         if instant.tzinfo is None:
@@ -116,10 +130,10 @@ def classify(cfg: WindowConfig, instant: datetime) -> WindowKind:
         return WindowKind.QUIET
     if is_non_working_day(cfg, loc.date()):
         return WindowKind.DISCRETIONARY
-    return WindowKind.WORK if t < cfg.work_end else WindowKind.DISCRETIONARY
+    return WindowKind.WORK if t < cfg.end_of_work(loc.date()) else WindowKind.DISCRETIONARY
 
 
 def discretionary_interval(cfg: WindowConfig, d: date) -> tuple[datetime, datetime]:
     """The discretionary interval of local date `d`, as UTC instants [start, end)."""
-    start = cfg.quiet_end if is_non_working_day(cfg, d) else cfg.work_end
+    start = cfg.quiet_end if is_non_working_day(cfg, d) else cfg.end_of_work(d)
     return cfg.to_utc(d, start), cfg.to_utc(d, cfg.quiet_start)

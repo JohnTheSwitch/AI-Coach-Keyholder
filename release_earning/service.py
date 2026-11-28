@@ -38,7 +38,7 @@ WAIT_LINES = "release_waiting_for_lines"
 class ReleaseEarning:
     def __init__(self, *, user_id: str, last_spend_at: Callable[[], str | None], training_verified_since: Callable[[str], bool],
                  training_today: Callable[[datetime], bool], release_lines_done_since: Callable[[str], bool],
-                 assign_release_lines: Callable[[str, datetime], bool]) -> None:
+                 assign_release_lines: Callable[[str, datetime], bool], remind: Callable[[datetime], None] | None = None) -> None:
         """`last_spend_at()`: ISO time of the last token spent on a release that was not refunded (None: never). `assign_release_lines(since, now)`:
         assigns the release lines unless some were already assigned since then (True when it assigned them now)."""
         self.user_id = user_id
@@ -47,6 +47,9 @@ class ReleaseEarning:
         self._training_today = training_today
         self._lines_done = release_lines_done_since
         self._assign = assign_release_lines
+        # Owner, 2026-11-25 (proposal 2): his lines were assigned at 05:29 and nothing reminded him for 39 hours while the token waited. While
+        # the release waits only on lines, `remind(now)` may say so (once a day, in free time: the wiring decides).
+        self._remind = remind
 
     def hold(self, now: datetime) -> str | None:
         """None: the release is earned (or this could not be read). Otherwise why it waits."""
@@ -58,6 +61,11 @@ class ReleaseEarning:
                 return WAIT_TRAINING
             if self._assign(since, now):
                 decision("release_earning", "A token is ready: 20 release lines assigned before the release is planned.")
+            elif self._remind is not None:
+                try:
+                    self._remind(now)
+                except Exception:
+                    logger.exception("The release-lines reminder failed; nothing else changes.")
             return WAIT_LINES
         except Exception:
             logger.exception("Could not tell whether the release was earned; it is not held for it.")

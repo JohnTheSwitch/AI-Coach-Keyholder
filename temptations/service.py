@@ -30,8 +30,18 @@ FREE_SHARE = 0.25
 DAILY_CHANCE = 1 / 7
 OFFER_FOR = timedelta(hours=1)
 STEP = timedelta(minutes=15)
-OFFER = ("Temptation: 15 minutes of edging, the Deep Diver in, right to the edge as often as you like, no cumming. {price} "
-         "Offer ends at {until}.")
+# Owner, 2026-11-25: "how am I supposed to edge myself with it on?" -> caged edging said plainly; and "I want it to be controlled by the system in
+# every single task having it" -> once he accepts, the bot can run the Deep Diver for the 15 minutes (a teasing pattern, Pause and Stop).
+OFFER = ("Temptation: 15 minutes of caged edging. The Deep Diver in, let it work you up, hands only around the cage, right to the edge as often "
+         "as you like, no cumming. {price} Offer ends at {until}.")
+ACCEPTED = ("Accepted. 15 minutes of caged edging: the Deep Diver in, hands only around the cage, right to the edge as often as you like, and "
+            "you do not cum. If you slip, you tell me.")
+TOY_MINUTES = 15
+TOY_OFFER = " Press \"It's in: run it\" once it's in and I'll run it."
+TOY_STARTED = "Connected: you should have felt a short buzz. I'll take you up and let you drop, again and again. Don't cum."
+TOY_DONE = "That's your 15 minutes. If you slipped, tell me."
+TOY_PROBLEM = ("I couldn't reach your Deep Diver (Intiface on the PC, the toy on and not connected to your phone?). Press Try again, or do it "
+               "yourself as accepted.")
 
 
 def delay_words(cost: Decimal, avg_daily: Decimal | None) -> str:
@@ -164,9 +174,56 @@ class Temptations:
 
         return bool(apply_transition(self._core, write=write))
 
-    def press(self, *, user_id: str, row_id: str, action: str, now: datetime) -> str:
-        if user_id != self.user_id or action != "accept":
+    # The bot runs the Deep Diver (owner, 2026-11-28): wired in bot/discord_bot.py. `toy` is toy_control.session.ToySessions, `toy_level()`
+    # his level (toy_control.store), `notify(key, text, actions)` a DM.
+    toy = None
+    toy_level: Callable[[], float] | None = None
+    notify: Callable[[str, str, tuple], None] | None = None
+
+    def _toy_buttons(self, row_id: str, paused: bool = False) -> tuple:
+        return (ActionSpec(action_id=f"temptation:toygo:{row_id}", label="Continue") if paused
+                else ActionSpec(action_id=f"temptation:toypause:{row_id}", label="Pause"),
+                ActionSpec(action_id=f"temptation:toystop:{row_id}", label="Stop", style="danger"))
+
+    def _toy_press(self, row: dict, action: str, now: datetime):
+        from application.models import OutgoingMessage
+        if self.toy is None:
+            return "I can't run the toy right now; do it yourself as accepted."
+        if action == "toystop":
+            return "Stopped." if self.toy.stop() else "It isn't running."
+        if action == "toypause":
+            return (OutgoingMessage(text="Paused: the toy is off and the time waits.", actions=self._toy_buttons(row["id"], paused=True))
+                    if self.toy.pause() else "It isn't running.")
+        if action == "toygo":
+            return (OutgoingMessage(text="Going on.", actions=self._toy_buttons(row["id"])) if self.toy.resume() else "Nothing is paused.")
+        if now > _parse_iso(row["decided_at"]) + timedelta(hours=1):
+            return "That was a while ago; the offer's time is over."
+        say = self.notify or (lambda key, text, actions: None)
+        row_id = row["id"]
+        level = self.toy_level() if self.toy_level is not None else 0.5
+
+        def problem(_text: str) -> None:
+            say(f"temptation:toy_problem:{row_id}:{uuid.uuid4()}", TOY_PROBLEM,
+                (ActionSpec(action_id=f"temptation:toy:{row_id}", label="Try again"),))
+
+        started = self.toy.start(TOY_MINUTES, "alone", profile="tease", base=level, on_problem=problem,
+                                 on_done=lambda: say(f"temptation:toy_done:{row_id}:{uuid.uuid4()}", TOY_DONE, ()),
+                                 on_started=lambda: say(f"temptation:toy_started:{row_id}:{uuid.uuid4()}", TOY_STARTED, self._toy_buttons(row_id)))
+        if not started:
+            return "The toy is already running."
+        logger.info("The bot runs the Deep Diver for an accepted temptation.")
+        return OutgoingMessage(text=f"Running it for {TOY_MINUTES} minutes. Pause or Stop if you need to; the toy's own button always works too.",
+                               actions=self._toy_buttons(row_id))
+
+    def press(self, *, user_id: str, row_id: str, action: str, now: datetime):
+        if user_id != self.user_id or action not in ("accept", "toy", "toystop", "toypause", "toygo"):
             return "That button isn't for you."
+        if action != "accept":
+            with self._core.transaction() as tx:
+                row = tx.fetch_one("SELECT * FROM temptation_offers WHERE id = ? AND user_id = ?", (row_id, user_id))
+            if row is None or row["status"] != "accepted":
+                return "That offer isn't accepted."
+            return self._toy_press(dict(row), action, now)
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT * FROM temptation_offers WHERE id = ? AND user_id = ?", (row_id, user_id))
         if row is None or row["status"] != "offered" or now > _parse_iso(row["expires_at"]):
@@ -175,7 +232,11 @@ class Temptations:
             return "That offer is gone."
         if "text" in row.keys() and row["text"]:
             return f"Accepted: {row['text']} If you slip, you tell me."
-        return ("Accepted. 15 minutes, the Deep Diver in, right to the edge as often as you like, and you do not cum. If you slip, you tell me.")
+        if self.toy is not None:
+            from application.models import OutgoingMessage
+            return OutgoingMessage(text=ACCEPTED + TOY_OFFER, actions=(ActionSpec(action_id=f"temptation:toy:{row_id}", label="It's in: run it",
+                                                                                  style="success"),))
+        return ACCEPTED
 
     async def loop(self, clock, *, interval_seconds: float = 120.0) -> None:
         import asyncio

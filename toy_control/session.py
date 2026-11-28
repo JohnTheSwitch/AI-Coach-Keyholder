@@ -31,9 +31,9 @@ logger = logging.getLogger("ai_coach_keyholder.toy_control")
 MAX_MINUTES = 90
 DISCREET_MAX = 0.25                       # not alone: quiet enough not to be heard
 FLOOR = 0.05                              # the "almost nothing" of a tease
-PROFILES = ("default", "prostate", "wear", "discreet")
+PROFILES = ("default", "prostate", "wear", "discreet", "tease")
 LEVELS = {"alone": (FLOOR, 1.0), "discreet": (FLOOR, DISCREET_MAX)}
-SCAN_SECONDS = 10.0
+SCAN_SECONDS = 30.0                       # live, 2026-11-25: 10 s missed a toy that was slow to advertise
 # Owner, 2026-11-23: "Pause" and "Continue" on a running session; the time left waits while paused. A session left paused this long ends
 # (the toy is already off), so a forgotten pause never holds the one session slot for days.
 MAX_PAUSED_SECONDS = 12 * 3600
@@ -156,6 +156,15 @@ def plan_pattern(rng: random.Random, minutes: float, mode: str, *, profile: str 
         while out.left > 0:                                       # gentle waves: up over three steps, down over two
             for f in (0.4, 0.7, 1.0, 0.7, 0.4):
                 out.add(top * f, rng.randint(30, 60))
+    elif profile == "tease":
+        # Owner, 2026-11-25/28: caged edging in the temptation, run by the bot: a climb to past his level, his Steps at the top, then nothing for a
+        # while, again and again. Every climb is different.
+        while out.left > 0:
+            climb = rng.randint(3, 6)
+            for i in range(climb):
+                out.add(base * (0.5 + 0.7 * (i + 1) / climb), rng.randint(15, 30))
+            _steps(out, rng, base * 1.2, sets=rng.randint(3, 6))
+            out.add(0.0, rng.randint(20, 45))
     elif profile == "wear":
         while out.left > 0:                                       # mostly off; now and then a burst he can't predict
             out.add(0.0, rng.randint(60, 240))                     # owner, 2026-11-23: 1-4 minutes quiet (was 3-10)
@@ -177,11 +186,11 @@ def plan_pattern(rng: random.Random, minutes: float, mode: str, *, profile: str 
         warm, build, tease = total * 0.1, total * 0.4, total * 0.3
         while out.left > total - warm:                            # warm-up: low and slow
             done = 1 - (out.left - (total - warm)) / warm
-            out.add(low + (base * 0.6 - low) * done, 30)
+            out.add(low + (base * 0.8 - low) * done, 30)          # live, 2026-11-25 ("Too weak"): the warm-up ends nearer his level (was 0.6)
         k = 0
         while out.left > total - warm - build:                    # build: steps (his favourite), each set a little higher, a short rest
             done = 1 - (out.left - (total - warm - build)) / build
-            top = base * (0.6 + 0.4 * done)
+            top = base * (0.8 + 0.3 * done)                        # live, 2026-11-25: the build starts higher (was 0.6 -> 1.0)
             motif = rng.choice(("steps", "steps", "waves", "pulse"))   # never the same thing for long (owner, 2026-11-17)
             if motif == "steps":
                 _steps(out, rng, top)
@@ -193,11 +202,11 @@ def plan_pattern(rng: random.Random, minutes: float, mode: str, *, profile: str 
                     out.add(top, 1.0)
                     out.add(0.0, 1.0)
             if k % 2:
-                out.add(base * 0.5, rng.randint(10, 20))
+                out.add(base * 0.7, rng.randint(10, 20))           # a firmer rest (was 0.5)
             k += 1
         while out.left > total - warm - build - tease:            # teasing: steps up past his level, then almost nothing, and wait
             _steps(out, rng, base * 1.15, sets=rng.randint(4, 6))
-            out.add(FLOOR, rng.randint(20, 60))
+            out.add(FLOOR, rng.randint(15, 40))                    # shorter waits at almost nothing (was 20-60 s)
         while out.left > 0:                                       # finish: the strongest stretch
             out.add(base * 1.1 + rng.choice((-0.05, 0.0, 0.05)), 30)
     return _surprises(out.steps, rng, base, cap) if profile in ("default", "prostate") else out.steps

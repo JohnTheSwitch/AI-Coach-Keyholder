@@ -188,6 +188,7 @@ class CoachKeyholderBot(discord.Client):
         self._notification_task: asyncio.Task | None = None
         self.detectors = None                    # infractions.wiring.detector_loop coroutine when a watch is active
         self.model_warmup = None                 # warm_model coroutine: the model is loaded before the first message needs it
+        self.model_watch = None                  # system.model_watch.ModelWatch.loop: the owner hears when the model is down (owner, 2026-11-25)
         self._detector_task: asyncio.Task | None = None
         self.extension_guard = None              # chaster_execution.extension_guard.extension_guard_loop coroutine
         self.keyholder_inbox = None              # messaging.keyholder_inbox.keyholder_inbox_loop coroutine (owner, 2026-11-13)
@@ -254,6 +255,8 @@ class CoachKeyholderBot(discord.Client):
             self._extension_guard_task = asyncio.create_task(self.extension_guard, name="extension-guard")
         if self.model_warmup is not None:
             self._model_warmup_task = asyncio.create_task(self.model_warmup, name="model-warmup")
+        if self.model_watch is not None:
+            self._model_watch_task = asyncio.create_task(self.model_watch, name="model-watch")
         if self.keyholder_inbox is not None:
             self._keyholder_inbox_task = asyncio.create_task(self.keyholder_inbox, name="keyholder-inbox")
         if self.update_check is not None:
@@ -602,6 +605,27 @@ async def warm_model(model, *, attempts: int = WARMUP_ATTEMPTS, pause_seconds: f
     return False
 
 
+RELEASE_LINES_REMINDER = "Your release is waiting on your lines: \"{sentence}\" {left} times, by hand on paper, photo in the Chaster task."
+
+
+def _remind_release_lines(now, obedience, line_service, queue, user_id) -> None:
+    """Owner, 2026-11-25 (proposal 2): once a day, in his free time, while the release waits only on release lines that are not in review; never
+    on the day they were assigned (that day had its own message). Never anything about timing."""
+    from infrastructure.time_format import parse_iso
+    ports = obedience._ports
+    row = line_service.get_release_lines_waiting()
+    if row is None or not ports.free_time(now):
+        return
+    day = ports.today(now)
+    if ports.today(parse_iso(row["created_at"])) == day:
+        return
+    left = max(1, int(row["required"]) - int(row["done"] or 0))
+    if queue.enqueue(user_id=user_id, kind="lines", dedupe_key=f"lines:release_reminder:{row['id']}:{day.isoformat()}", now=now,
+                     text=RELEASE_LINES_REMINDER.format(sentence=row["sentence"], left=left)):
+        from infrastructure.decision_log import decision
+        decision("release_earning", "Reminded him that the release waits on his lines.", day=day.isoformat())
+
+
 def build_bot(config: Config, db: Database, clock: Clock, application_service: ApplicationService) -> CoachKeyholderBot:
     intents = discord.Intents.default()
     intents.message_content = True  # required to read message content (privileged intent)
@@ -928,8 +952,45 @@ def main() -> None:
             supervision_end=wiring.supervision.get_estimated_end, window_config=window_config_from(config)).answer
     from features.service import Features
     features = Features(core)                     # owner, 2026-11-16: per-wearer feature switches (`features`, `<feature> off|on`)
-    application_service.features_command = features.command
+    # Owner, 2026-11-25: `schedule`: his own end of the school day per weekday (schedule_settings/).
+    from schedule_settings.service import ScheduleSettings
+    _sched_cfg = window_config_from(config)
+
+    def _end_fits(end, c=_sched_cfg, room=config.unlock_window_max_offset_minutes):
+        if not c.work_start < end:
+            return f"That's before your day starts ({c.work_start.strftime('%H:%M')})."
+        if end.hour * 60 + end.minute + room >= c.quiet_start.hour * 60 + c.quiet_start.minute:
+            return "That's too late in the day: the evening has to leave room before quiet hours."
+        return None
+
+    schedule = ScheduleSettings(core, db_path=config.db_path, user_id=config.check_in_user_id or config.owner_user_id,
+                                default_end=_sched_cfg.work_end, valid=_end_fits)
+    # Owner, 2026-11-25 ("Schedule it yourself"): his timetable, home at 15:00 on Mon/Thu/Fri and at 17:00 on Tue/Wed. Only his own database
+    # and only days with nothing set yet, so a later `schedule` change of his always stands.
+    try:
+        from datetime import time as _t
+        schedule.seed({0: _t(15, 0), 3: _t(15, 0), 4: _t(15, 0), 1: _t(17, 0), 2: _t(17, 0)}, clock.now())
+    except Exception:
+        logger.exception("His school-day ends could not be set; WORKDAY_END applies.")
+    application_service.features_command = (lambda user_id, text, now, f=features.command, s=schedule.command:
+                                            f(user_id, text, now) or s(user_id, text, now))
     bot.model_warmup = warm_model(ollama_model)
+    # Owner, 2026-11-25: Ollama was broken for 9.5 hours and nobody knew. The watch restarts it once if it isn't running and tells him.
+    from system.model_watch import ModelWatch, start_ollama_task
+
+    def _probe(model=ollama_model) -> bool:
+        from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
+        ready = model.check_ready()
+        if not (ready.reachable and ready.installed):
+            return False
+        model.generate(request=ModelGenerationRequest(messages=(ModelMessage(role=ModelMessageRole.USER, content="Reply with OK."),),
+                                                      max_output_characters=40))
+        return True
+
+    bot.model_watch = ModelWatch(
+        probe=_probe, restart=start_ollama_task,
+        notify=lambda key, text: notification_queue.enqueue(user_id=config.owner_user_id, kind="model_health", dedupe_key=key, text=text,
+                                                            now=clock.now())).loop(clock)
     bot.dm_actions["lock_report"] = application_service
     if exemption_dm is not None:
         bot.dm_actions["exemption"] = exemption_dm
@@ -1132,6 +1193,8 @@ def main() -> None:
         from toy_control.launcher import IntifaceLauncher
         obedience.toy = ToySessions(start_intiface=IntifaceLauncher(DEFAULT_URL))   # owner, 2026-11-25: Intiface started on its own
         obedience.toy_levels = ToyLevels(core, user_id=obedience.user_id)
+        from obedience.service import OWNER_ADDED_GEAR
+        obedience.default_owned = obedience.default_owned | OWNER_ADDED_GEAR   # his gear bought since 2026-11-14 (owner, 2026-11-25/28)
         bot.dm_actions["obedience"] = ObedienceDm(obedience, resolve_user=resolve_user, now=clock.now)
         bot.obedience_loop = obedience.loop(clock)
         application_service.gear_command = obedience.gear_command
@@ -1166,6 +1229,9 @@ def main() -> None:
         opt_outs.register(key, lambda user, now, k=key: application_service.apply_off(k, user, now))
     application_service.opt_outs = opt_outs
     opt_outs.register_features(features.apply_off, label=lambda key: _FEATURES[key][0] if key in _FEATURES else None)
+    # Owner, 2026-11-25: a schedule change that frees time waits 24 hours while locked, like a switch-off.
+    opt_outs.register_schedule(schedule.apply_change, label=schedule.describe)
+    schedule.request_change = opt_outs.request_off
     features.request_off = opt_outs.request_off
     features.withdraw = opt_outs.withdraw
     if obedience is not None:              # owner, 2026-11-16: "gear remove shouldn't work instantly"
@@ -1283,6 +1349,13 @@ def main() -> None:
                                                                                          or wiring.vacation.is_paused(u, now) or _window_left(now) is not None))
         from system.dm_actions import ObedienceDm as _TemptationDm
         bot.dm_actions["temptation"] = _TemptationDm(temptations, resolve_user=resolve_user, now=clock.now)
+        # Owner, 2026-11-28 ("controlled by the system in every single task having it"): the bot runs the Deep Diver for an accepted temptation.
+        if obedience is not None and getattr(obedience, "toy", None) is not None:
+            temptations.toy = obedience.toy
+            temptations.toy_level = getattr(obedience, "toy_levels", None) and obedience.toy_levels.level
+            temptations.notify = (lambda key, text, actions, u=wiring.check_ins.user_id:
+                                  notification_queue.enqueue(user_id=u, kind="temptation", dedupe_key=key, text=text, now=clock.now(), actions=actions,
+                                                             immediate=True))
         bot.temptations_loop = temptations.loop(clock)
     if exemption_dm is not None and detectors.signals is not None:
         domain = config.hygiene_trust_domain or "hygiene"
@@ -1385,7 +1458,9 @@ def main() -> None:
                 user_id=notice_user, last_spend_at=lambda rt=release_task: rt.engine.get_last_spend_at(rt.user_id),
                 training_verified_since=lambda since: get_training_verified_since(core, notice_user, since),
                 training_today=(lambda now, tp=training_for_release: tp.is_training_day_now(now)) if training_for_release is not None else (lambda now: False),
-                release_lines_done_since=line_service.release_done_since, assign_release_lines=line_service.assign_release)
+                release_lines_done_since=line_service.release_done_since, assign_release_lines=line_service.assign_release,
+                remind=(lambda now, ob=obedience, ls=line_service, q=notification_queue, u=notice_user: _remind_release_lines(now, ob, ls, q, u))
+                if obedience is not None else None)
             release_task.release_earned = earning.hold
             # The release window (owner, 2026-11-16; P4, queue B3): 2 hours to relock and send a picture; none = asked to explain.
             if relock_pictures_fn is not None and detectors.signals is not None:

@@ -180,7 +180,7 @@ class TestASession:
         servers, told, done = [], [], []
         s = _sessions([], servers)
         s.start(1, "alone", on_problem=told.append, on_done=lambda: done.append(1))
-        _wait(s, 20)
+        _wait(s, 45)                                                    # the scan waits 30 s (live, 2026-11-25)
         assert told and not done and "ScalarCmd" not in [k for k, _ in servers[0].sent]
 
     def test_no_intiface_tells_him(self) -> None:
@@ -228,10 +228,15 @@ class TestTheLauncher:
         from toy_control.launcher import IntifaceLauncher
         exe = tmp_path / "intiface_central.exe"
         exe.write_text("")
-        started, up = [], iter([False, False, False, True])
-        launcher = IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: exe, popen=lambda args, **kw: started.append(args),
-                                    listening=lambda h, p: next(up), sleep=lambda s: None)
+        started, up, minimized = [], iter([False, False, False, True]), []
+
+        class Process:
+            pid = 4242
+
+        launcher = IntifaceLauncher("ws://127.0.0.1:12345", path=lambda: exe, popen=lambda args, **kw: started.append(args) or Process(),
+                                    listening=lambda h, p: next(up), sleep=lambda s: None, minimize=lambda pid: minimized.append(pid) or 1)
         assert launcher() is True and started == [[str(exe)]]
+        assert minimized == [4242]                          # live, 2026-11-25: it opened in front of him; minimized once its window exists
 
     def test_already_up_never_found_or_remote_does_nothing(self, tmp_path) -> None:
         from toy_control.launcher import IntifaceLauncher
@@ -284,3 +289,19 @@ def test_every_few_minutes_a_surprise_so_he_never_gets_used_to_it() -> None:
     breaks = [i for i in range(len(steps) - 1) if steps[i][0] == 0 and 3 <= steps[i][1] <= 8 and 2 <= steps[i + 1][1] <= 5 and steps[i + 1][0] > 0]
     assert len(breaks) >= 3
     assert not any(l == 0 and 3 <= s <= 8 for l, s in plan_pattern(random.Random(2), 15, "discreet"))   # not alone: no sudden changes
+
+
+
+def test_the_default_sits_closer_to_his_level() -> None:
+    """Live, 2026-11-25 ("Too weak"): the 30-minute default averaged 0.20 in its build against his level 0.52. It now builds around his level;
+    his Steps are unchanged."""
+    steps = plan_pattern(random.Random(4), 30, "alone", profile="default", base=0.52)
+    total = sum(s for _, s in steps)
+    build = []
+    t = 0.0
+    for level, s in steps:
+        if 0.1 * total <= t < 0.5 * total:
+            build.append((level, s))
+        t += s
+    average = sum(level * s for level, s in build) / sum(s for _, s in build)
+    assert average >= 0.27

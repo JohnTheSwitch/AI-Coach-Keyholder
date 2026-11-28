@@ -55,6 +55,9 @@ PHOTO_DEADLINE = timedelta(minutes=60)
 # session for the task he is doing now (the full task time, or the minutes he names, never more), like pressing "It's in: run it".
 _RUN_TOY = re.compile(r"(run (the )?toy|run (the )?deep diver|spust hracku|spusť hračku)( (?P<min>\d{1,3})( ?(min|minutes|minut))?)?")
 _EXTRA_TASK = re.compile(r"(extra (erotic )?task|ukol navic|úkol navíc)( (at|v) (?P<at>\d{1,2}:\d{2}))?")
+# Owner, 2026-11-25: "If the obedience task waits for me to answer, could we make it earlier" -> `task now` brings today's task forward (only
+# before it came, in free time with the photo hour inside it). On days he doesn't send it, the surprise moment stays.
+_TASK_NOW = re.compile(r"(task now|today'?s task now|ukol ted|úkol teď|ukol hned|úkol hned)")
 VOTE_LIMIT = timedelta(hours=12)
 CLOCK_SKEW = timedelta(minutes=2)
 # Owner, 2026-11-17: "I don't remember approving that. I just wanted erotic tasks." The 1-in-4 workout task was Claude's own proposal (14 Nov),
@@ -86,6 +89,7 @@ DISCREET_ONLY = frozenset({DISCREET})
 # can need; he keeps the owned list in the DM (`gear`, `gear add blindfold`). DEFAULT_OWNED is his inventory of 2026-11-14 (the blindfold
 # broke on 2026-11-15, so it is not owned until he adds it back).
 GEAR: dict[str, str] = {
+    "bijou_small": "small Crushious Bijou (metal plug, 2.7 cm)",      # owner, 2026-11-25: "I also have this one"
     "deep_diver": "gray Satisfyer Deep Diver (vibrating plug)",
     "bijou_large": "clear Crushious Bijou (metal plug)",
     "gildo_27": "glass Gildo No. 27 plug",
@@ -109,15 +113,18 @@ GEAR: dict[str, str] = {
 DEFAULT_OWNED = frozenset({"airpods", "deep_diver", "bijou_large", "rimfire_s", "dildo_purple", "dildo_big", "rope_cotton", "rope_hemp", "toy_cuffs",
                            "gag"})
 ALL_GEAR = frozenset(GEAR)
+# Owner's own gear bought after the 2026-11-14 inventory, added in the bot's wiring for his database only (another wearer starts from nothing).
+# 2026-11-25: the small Crushious Bijou ("I also have this one"); 2026-11-28: the parcel ("This has arrived ... You add it").
+OWNER_ADDED_GEAR = frozenset({"bijou_small", "leather_cuffs", "gildo_27", "plug_joy_medium"})
 GEAR_ALIASES = {"gildo": "gildo_27", "plug_joy": "plug_joy_medium", "plug_and_joy": "plug_joy_medium", "rimfire": "rimfire_s",
-                "bijou": "bijou_large", "diver": "deep_diver", "cuffs": "leather_cuffs", "padlock": "padlocks", "locks": "padlocks",
+                "bijou": "bijou_large", "small_bijou": "bijou_small", "bijou_maly": "bijou_small", "diver": "deep_diver", "cuffs": "leather_cuffs", "padlock": "padlocks", "locks": "padlocks",
                 "nipple_clamps": "clamps", "clamp": "clamps", "mask": "blindfold", "harness": "bondage_harness",
                 "hidden_desire_harness": "bondage_harness", "ball_gag": "gag", "fluffy_cuffs": "toy_cuffs"}
 # Leak audit (owner, 2026-11-16): the catalogue names are the owner's own items. An additional wearer sees each piece by its ROLE and may
 # give it their own name (`gear add vibrating plug as black silicone plug`); task texts then use their name (NAME_VARIANTS, longest first).
 # Only toys are renamed: restraints, the harness and the collar keep their names, because the safety notes are read from those words.
 ROLE: dict[str, str] = {
-    "deep_diver": "vibrating plug", "bijou_large": "large metal plug", "gildo_27": "glass plug", "plug_joy_medium": "medium plug",
+    "deep_diver": "vibrating plug", "bijou_small": "small metal plug", "bijou_large": "large metal plug", "gildo_27": "glass plug", "plug_joy_medium": "medium plug",
     "rimfire_s": "small plug", "dildo_purple": "suction-cup dildo", "dildo_big": "big dildo", "rope_cotton": "soft rope",
     "rope_hemp": "hemp rope", "toy_cuffs": "fluffy cuffs", "leather_cuffs": "leather cuffs", "padlocks": "small padlocks",
     "blindfold": "blindfold", "collar": "collar", "clamps": "nipple clamps", "gag": "ball gag",
@@ -125,6 +132,7 @@ ROLE: dict[str, str] = {
 }
 NAME_VARIANTS: dict[str, tuple[str, ...]] = {
     "deep_diver": ("gray Satisfyer Deep Diver (vibrating plug)", "gray Satisfyer Deep Diver", "gray Deep Diver", "Satisfyer Deep Diver", "Deep Diver"),
+    "bijou_small": ("small Crushious Bijou (metal plug, 2.7 cm)", "small Crushious Bijou", "small Bijou"),
     "bijou_large": ("clear Crushious Bijou (metal plug)", "clear Crushious Bijou", "Crushious Bijou", "clear Bijou", "Bijou"),
     "gildo_27": ("glass Gildo No. 27 plug", "glass Gildo No. 27", "Gildo No. 27", "Gildo"),
     "plug_joy_medium": ("Plug & Joy medium plug", "Plug & Joy medium", "Plug & Joy"),
@@ -407,7 +415,7 @@ def gear_of(key: str) -> set[str]:
 
 # Owner, 2026-11-16 23:35: the voters in Chaster don't know his toys by name, so they see what each one is; whether it vibrates is not shown
 # (a photo cannot show it; the DM keeps it).
-_SHORT_NAMES = {"gray Satisfyer Deep Diver": "vibrating plug", "clear Crushious Bijou": "clear plug", "glass Gildo No. 27": "glass plug",
+_SHORT_NAMES = {"small Crushious Bijou": "small metal plug", "gray Satisfyer Deep Diver": "vibrating plug", "clear Crushious Bijou": "clear plug", "glass Gildo No. 27": "glass plug",
                 "Plug & Joy medium": "plug", "Wolf Rimfire S": "large plug",
                 "Deep Diver": "vibrating plug", "Bijou": "clear plug", "Gildo": "glass plug", "Plug & Joy": "plug", "Rimfire": "large plug"}
 _VIBRATING = ("in and vibrating", " in, vibrating on its lowest setting")
@@ -449,7 +457,12 @@ def uses_anal(text: str) -> bool:
 TOY_OFFER = "Press \"It's in: run it\" once it's in and I'll control it myself; if I can't reach it, run it yourself as written."
 TOY_STOPPED = "Stopped."
 # Owner, 2026-11-23: a confirmation at the start of each session (with the check buzz).
-TOY_STARTED = "Connected to your Deep Diver: you should have felt a short buzz. If you didn't, press Stop and check the toy and Intiface."
+TOY_STARTED = ("Connected to your Deep Diver: you should have felt a short buzz. If you didn't, press Stop and check the toy and Intiface. "
+               "It starts slow and builds.")     # owner, 2026-11-25: the slow warm-up felt like it wasn't working
+# Live, 2026-11-25: Intiface was running but the toy wasn't advertising (it had to be forgotten and paired again in Windows).
+TOY_NOT_FOUND = ("Intiface is running, but I couldn't find your Deep Diver. Is it switched on (light blinking) and not connected to the "
+                 "Satisfyer app on your phone? If it still isn't found, remove it in Windows Bluetooth settings and pair it again. Then press "
+                 "Try again.")
 # Owner, 2026-11-23: "Pause" / "Continue" on a session the bot runs. The session's time waits, and the photo deadline moves by the time paused,
 # never past midnight of the task's day. Pauses are not limited (the time left still has to be done).
 TOY_PAUSED = ("Paused: the toy is off and its time waits for you. Your photo deadline moves by however long you pause, midnight at the "
@@ -506,6 +519,7 @@ class Plug:
     name: str
     diameter_cm: float
     lube: str                                # what the plug's material takes
+    warm_up: str | None = None               # owner, 2026-11-25: its own warm-up plug (a GEAR key) instead of the rung below
 
 
 # Sizes from sexshop51.cz product pages and retailer specs (2026-11-14). A rung counts only when its plug is in his gear list.
@@ -513,11 +527,13 @@ class Plug:
 # and PVC, never numbing lube, never overnight, stop at pain or bleeding.
 PLUG_LADDER: tuple[Plug, ...] = (
     Plug("deep_diver", "gray Satisfyer Deep Diver", 3.3, "water-based lube"),
-    Plug("bijou_large", "clear Crushious Bijou", 4.1, "plenty of lube"),
+    Plug("bijou_large", "clear Crushious Bijou", 4.1, "plenty of lube", warm_up="bijou_small"),   # owner, 2026-11-25: "warm up with it for the larger bijou"
     Plug("gildo_27", "glass Gildo No. 27", 4.5, "plenty of lube"),
     Plug("plug_joy_medium", "Plug & Joy medium", 5.5, "water-based lube"),
     Plug("rimfire_s", "Wolf Rimfire S", 6.0, "water-based lube"),
 )
+# Warm-up plugs that are not rungs of their own (owner, 2026-11-25: the small Bijou, 2.7 cm, only warms up for the large Bijou).
+GEAR_WARM_UP_NAMES = {"bijou_small": "small Crushious Bijou"}
 LADDER_STEP = 3                          # verified wears on a rung before the next one
 LADDER_SHARE = 1 / 3                     # of erotic days
 LADDER_MINUTES = (20, 30, 45, 60)        # wearing time by verified wears at the current rung
@@ -911,6 +927,7 @@ class ObedienceTasks:
                 "AND catalog_key LIKE 'plug:%' GROUP BY catalog_key", (self.user_id,))}
             last = tx.fetch_one("SELECT catalog_key, outcome FROM obedience_tasks WHERE user_id = ? AND catalog_key LIKE 'plug:%' AND decided_at IS NOT NULL "
                                 "ORDER BY decided_at DESC LIMIT 1", (self.user_id,))
+        owned_keys = set(owned)
         owned = [p for p in PLUG_LADDER if p.key in owned]
         if not owned:
             return None
@@ -924,7 +941,10 @@ class ObedienceTasks:
         rung = owned[index]
         wears = passed.get(f"plug:{rung.key}", 0)
         minutes = LADDER_MINUTES[min(wears, len(LADDER_MINUTES) - 1)]
-        warm = f" Warm up with the {owned[index - 1].name} for 10 minutes first." if index > 0 else ""
+        if rung.warm_up and rung.warm_up in owned_keys:
+            warm = f" Warm up with the {GEAR_WARM_UP_NAMES.get(rung.warm_up, rung.warm_up)} for 10 minutes first."
+        else:
+            warm = f" Warm up with the {owned[index - 1].name} for 10 minutes first." if index > 0 else ""
         return Task(f"plug:{rung.key}", f"Your {rung.name} in, with {rung.lube}.{warm} Photo of the plug base only. "
                                          f"Keep it in {minutes} minutes.", "erotic")
 
@@ -1200,12 +1220,46 @@ class ObedienceTasks:
     add_hook: Callable[[str, str, datetime], object] | None = None
     _AT_ONCE = ("broken", "broke", "lost", "never_had", "never_owned", "dont_have", "don't_have", "not_mine")
 
+    def task_now(self, now: datetime) -> str:
+        """`task now` (owner, 2026-11-25): today's task comes now instead of at its random moment. The heads-up (a plug day) goes out at once
+        and the task follows on the next pass, a minute or two later."""
+        if self._ports.in_exemption() or self._ports.paused(now):
+            return "Not now: tasks are paused (an exemption or a vacation)."
+        if not (self._ports.free_time(now) and self._ports.free_time(now + PHOTO_DEADLINE)):
+            return "Only in your free time, with the photo hour still inside it."
+        day = self._ports.today(now)
+        self._plan(now)
+        row = self._row_for(day)
+        if row is None:
+            return "There's no task for you today."
+        if row["status"] != "planned" or _parse_iso(row["planned_at"]) <= now:
+            return "Today's task is already out." if row["status"] in ("planned", "asking", "assigned") else "You've had today's task."
+        soon = now + timedelta(seconds=1)
+
+        def write(tx: Transaction, _s: object) -> bool:
+            done = tx.execute("UPDATE obedience_tasks SET planned_at = ? WHERE id = ? AND status = 'planned'", (_iso(soon), row["id"])).rowcount
+            if done:
+                write_event(tx, DomainEvent(event_type="obedience.task_brought_forward", source_module="obedience", occurred_at=now,
+                                            payload={"obedience_task_id": row["id"], "was": row["planned_at"]}))
+            return bool(done)
+
+        if not apply_transition(self._core, write=write):
+            return "Today's task is already out."
+        decision("obedience", "Today's task was brought forward at his request (`task now`).")
+        try:
+            self._prep_notice(now)
+        except Exception:
+            logger.exception("The heads-up could not be prepared; the task still comes.")
+        return "Today's task is coming now: give me a minute or two."
+
     def extra_task_command(self, user_id: str, text: str, now: datetime) -> str | None:
         """`extra task` or `extra task at 21:00` (owner, 2026-11-16: "I don't have a workout today, so I feel it's only right I have a proper
         erotic task"): ONE extra erotic task today (slot 1), run like any other (alone question, Chaster, photo, vote, the usual
         consequences). Only in free time, with the photo hour still inside it; never during an exemption, a pause or with erotic tasks off.
         None when the message is not this request."""
         said = " ".join((text or "").lower().split()).strip(" .!?")
+        if user_id == self.user_id and _TASK_NOW.fullmatch(said):
+            return self.task_now(now)
         match = _EXTRA_TASK.fullmatch(said)
         if user_id != self.user_id or match is None:
             return None
@@ -1452,7 +1506,8 @@ class ObedienceTasks:
             # Live, 2026-11-23: "Try again" restarted the whole 90 minutes. It now goes on with what was left of this session.
             played = getattr(self.toy, "played_seconds", lambda: 0.0)()
             left = max(1, math.ceil(minutes - float(played or 0.0) / 60))
-            tell("toy_problem", TOY_PROBLEM, (ActionSpec(action_id=f"obedience:toy{left}:{row_id}", label=f"Try again ({left} min)"),))
+            text = TOY_NOT_FOUND if "not found" in (_text or "") else TOY_PROBLEM
+            tell("toy_problem", text, (ActionSpec(action_id=f"obedience:toy{left}:{row_id}", label=f"Try again ({left} min)"),))
 
         if not self.toy.start(minutes, mode, profile=profile, base=level, on_problem=problem,
                               on_done=done, on_started=lambda: tell("toy_started", TOY_STARTED, self._toy_buttons(row_id))):

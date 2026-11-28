@@ -47,3 +47,5 @@ to do is insert, turn on and press that it's in?" When a session finds nothing o
 Central's own program (`%APPDATA%\IntifaceCentral\intiface_central.exe`, or `INTIFACE_PATH`) minimized without taking the focus, waits up to
 45 seconds for its server (its "start server on startup" setting is on), and the session tries once more. Only before the toy was reached: a
 link lost mid-session never starts the pattern over. Only for a local URL; the bot never closes Intiface. Logged in toy.log.
+
+**2026-11-25/28.** Profile `tease` (the temptation): climbs past his level, his Steps at the top, then 20-45 s of nothing, repeated. The default profile sits nearer his level after "Too weak" (warm-up to 0.8 x, build from 0.8 x, firmer rests, shorter near-off waits). Scan 30 s. The default and tease profiles are the same for every wearer; each is built around that wearer's own level.

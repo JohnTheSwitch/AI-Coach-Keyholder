@@ -166,3 +166,8 @@ own time, or the minutes he names, never more (he started a task himself while I
 
 
 **Another wearer (2026-11-17):** `ObedienceTasks.custom` makes their erotic task come only from their own approved tasks (`custom_tasks/`), never this catalogue; with none that fits, `CUSTOM_FALLBACK`. The coach is told the short training session is optional.
+
+**`task now` (owner, 2026-11-25).** "If the obedience task waits for me to answer, could we make it earlier": `task now` (or `úkol teď`)
+brings today's task forward to now, only while it is still planned (before the question came), in free time with the photo hour inside it,
+never during an exemption or a pause. The heads-up goes out at once on a plug day and the task follows on the next pass. Event
+`obedience.task_brought_forward`. On days he doesn't send it, the random moment stays.

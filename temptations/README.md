@@ -16,3 +16,7 @@ version waits for the Deep Diver control (P6).
 ## Another wearer (owner, 2026-11-17)
 
 `Ports.offer_text`: for another wearer the offer is one of their own approved temptations that fits their gear (`custom_tasks/`, kind `temptation`), stored on the offer (`temptation_offers.text`, migration 094); none fitting means no offer. The owner's fixed offer is unchanged.
+
+## Caged edging, run by the bot (owner, 2026-11-25/28)
+
+The offer says it plainly: caged edging, the Deep Diver in, hands only around the cage. After **Accept**, "It's in: run it" (`temptation:toy:<id>`, within an hour of accepting) runs the Deep Diver for 15 minutes on the `tease` profile (toy_control), with Pause / Continue / Stop; the toy's own button always works. Wired in bot/discord_bot.py from the obedience toy (one session at a time). Honour-based as before: a slip is told.

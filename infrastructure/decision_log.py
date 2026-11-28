@@ -92,8 +92,21 @@ def log_event(event_type: str, source_module: str, payload: dict[str, Any] | Non
         pass
 
 
+_MODEL_HEALTH: dict = {"ok_at": None, "error_at": None}
+
+
+def model_health() -> dict:
+    """Owner, 2026-11-25 (system/model_watch.py): when the last model call answered and when the last one failed (aware UTC, or None)."""
+    return dict(_MODEL_HEALTH)
+
+
 def model_call(*, model: str, messages: list, tools: list, structured: bool, answer: Any, error: str | None, seconds: float) -> None:
     """One block in model.log: the whole prompt and the raw answer (or the error). No model ever sees a release time or a Trust score, so none is here."""
+    try:
+        from infrastructure.clock import SystemClock
+        _MODEL_HEALTH["error_at" if error else "ok_at"] = SystemClock().now()
+    except Exception:  # pragma: no cover
+        pass
     try:
         head = f"model={model} seconds={seconds} structured={structured}" + (f" tools={','.join(tools)}" if tools else "") + (f" ERROR={error}" if error else "")
         parts = [f"===== {head}"]

@@ -112,3 +112,42 @@ def test_the_monthly_review_on_the_first_sunday() -> None:
                       month={"name": "November", "days": 28, "tokens": 3, "check_ins_ok": 40, "check_ins_due": 50})
     text = render_week(facts)
     assert "Your month (November): 3 tokens earned, 40 of 50 check-ins" in text and MONTHLY_ASK in text
+
+
+
+def test_an_accepted_temptation_can_have_the_bot_run_the_deep_diver(tmp_path) -> None:
+    """Owner, 2026-11-28: "controlled by the system in every single task having it"; caged edging said plainly (2026-11-25)."""
+    from datetime import timedelta
+    from application.models import OutgoingMessage
+    from temptations.service import OFFER
+
+    class Toy:
+        def __init__(self):
+            self.started, self.stopped = [], 0
+
+        def start(self, minutes, mode, *, profile, base, on_problem, on_done, on_started):
+            self.started.append((minutes, profile))
+            on_started()
+            return True
+
+        def stop(self):
+            self.stopped += 1
+            return True
+
+    assert "caged edging" in OFFER and "hands only around the cage" in OFFER
+    db = core(tmp_path)
+    helper = TestTemptations()
+    t = helper._t(db, rolls=[0.0, 0.9])
+    t.tick(NOW)
+    offer = helper._rows(db, "SELECT * FROM temptation_offers")[0]
+    now = datetime.fromisoformat(offer["offer_at"].replace("Z", "+00:00"))
+    t.tick(now)
+    row_id = offer["id"]
+    told = []
+    t.toy, t.toy_level, t.notify = Toy(), lambda: 0.6, lambda key, text, actions: told.append(text)
+    reply = t.press(user_id=U, row_id=row_id, action="accept", now=now)
+    assert isinstance(reply, OutgoingMessage) and reply.actions[0].action_id == f"temptation:toy:{row_id}"
+    run = t.press(user_id=U, row_id=row_id, action="toy", now=now + timedelta(minutes=2))
+    assert isinstance(run, OutgoingMessage) and t.toy.started == [(15, "tease")] and told and "Don't cum" in told[0]
+    assert t.press(user_id=U, row_id=row_id, action="toystop", now=now) == "Stopped."
+    assert t.press(user_id="other", row_id=row_id, action="toy", now=now) == "That button isn't for you."

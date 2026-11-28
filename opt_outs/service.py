@@ -43,6 +43,13 @@ SWITCHES = {"photo_check_ins": "photo check-ins", "conditioning": "Progressive C
 
 GEAR_PREFIX = "gear:"
 FEATURE_PREFIX = "feature:"
+# Owner, 2026-11-25 ("Yes, make it wait 24 hours"): a `schedule` change that ends a school day earlier (more free time, an earlier possible
+# release) waits like a switch-off while locked. Key `schedule:<days>=<HH:MM|default>`, e.g. `schedule:0,3=14:00`.
+SCHEDULE_PREFIX = "schedule:"
+
+
+def _schedule(key: str) -> bool:
+    return key.startswith(SCHEDULE_PREFIX)
 
 
 def _gear(key: str) -> bool:
@@ -78,9 +85,17 @@ class OptOuts:
         self._feature_apply, self._feature_label = apply_off, label
 
     _feature_apply: Callable[[str, str, datetime], str] | None = None
+    _schedule_apply: Callable[[str, str, datetime], str] | None = None
+    _schedule_label: Callable[[str], str] = staticmethod(lambda change: change)
+
+    def register_schedule(self, apply_change: Callable[[str, str, datetime], str], label: Callable[[str], str]) -> None:
+        """Owner, 2026-11-25: `(user_id, change, now) -> reply` applies a waiting schedule change; `label(change)` names it."""
+        self._schedule_apply, self._schedule_label = apply_change, label
     _feature_label: Callable[[str], str | None] = staticmethod(lambda key: None)
 
     def _covered(self, key: str) -> bool:
+        if _schedule(key):
+            return self._schedule_apply is not None
         if _gear(key):
             return self._gear_apply is not None
         if key.startswith(FEATURE_PREFIX):
@@ -88,6 +103,8 @@ class OptOuts:
         return key in self.switches
 
     def _name(self, key: str) -> str:
+        if _schedule(key):
+            return self._schedule_label(key[len(SCHEDULE_PREFIX):])
         if _gear(key):
             return f"the {self._gear_label(key[len(GEAR_PREFIX):])} from your gear list"
         if key.startswith(FEATURE_PREFIX):
@@ -95,6 +112,8 @@ class OptOuts:
         return SWITCHES[key]
 
     def _apply(self, user_id: str, key: str, now: datetime) -> str:
+        if _schedule(key):
+            return self._schedule_apply(user_id, key[len(SCHEDULE_PREFIX):], now) if self._schedule_apply is not None else "Changed."
         if _gear(key):
             return self._gear_apply(user_id, key[len(GEAR_PREFIX):], now) if self._gear_apply is not None else "Removed."
         if key.startswith(FEATURE_PREFIX):
@@ -110,7 +129,7 @@ class OptOuts:
             if self._covered(key):
                 self.withdraw(user_id, key, now)          # bug fix 2026-11-21: a request left waiting while he was unlocked is done now
             return None
-        verb, still = ("remove", "removed") if _gear(key) else ("switch off", "off")
+        verb, still = ("remove", "removed") if _gear(key) else ("change", "changed") if _schedule(key) else ("switch off", "off")
         pending = self._pending(user_id, key)
         if pending is not None:
             return (f"You already asked to {verb} {self._name(key)}. I'll ask you on {self._clock(_parse_iso(pending['ask_at']))} whether you "
@@ -126,6 +145,9 @@ class OptOuts:
 
         apply_transition(self._core, write=write)
         decision("opt_outs", "A switch-off while locked waits 24 hours, then is asked about.", switch=key)
+        if _schedule(key):
+            return (f"Noted. While you're locked, {self._name(key)} isn't done at once, because it gives you more free time: on "
+                    f"{self._clock(ask_at)} I'll ask whether you still want it, and only a yes changes it. Until then your schedule stays as it is.")
         if _gear(key):
             return (f"Noted. While you're locked, removing {self._name(key)} isn't done at once: on {self._clock(ask_at)} I'll ask whether "
                     f"you still want it removed, and only a yes removes it. Until then tasks may still use it. If it broke or you lost it, "
@@ -151,7 +173,11 @@ class OptOuts:
             self._decide(row, "lapsed", now)
 
     def _ask(self, row: dict, now: datetime) -> None:
-        if _gear(row["switch"]):
+        if _schedule(row["switch"]):
+            text = (f"24 hours ago you asked for {self._name(row['switch'])}. Do you still want it? If I don't hear from you, your schedule "
+                    f"stays as it is.")
+            labels = ("Yes, change it", "Keep it as it is")
+        elif _gear(row["switch"]):
             text = (f"24 hours ago you asked to remove {self._name(row['switch'])}. Do you still want it removed? If I don't hear from you, "
                     f"it stays on the list.")
             labels = ("Yes, remove it", "Keep it")
@@ -187,6 +213,8 @@ class OptOuts:
             self._decide(row, "kept_on", now)
             if _gear(row["switch"]):
                 return f"Good. The {self._gear_label(row['switch'][len(GEAR_PREFIX):])} stays on your gear list."
+            if _schedule(row["switch"]):
+                return "Good. Your schedule stays as it is."
             name = self._name(row["switch"])
             return f"Good. {name[:1].upper() + name[1:]} stays on."
         if not self._decide(row, "applied", now):

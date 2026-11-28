@@ -89,3 +89,22 @@ def test_a_verified_or_credited_session_after_the_spend_counts(tmp_path) -> None
                    (OU, MORNING.date().isoformat(), MORNING.isoformat(), MORNING.isoformat()))
     assert get_training_verified_since(w.core, OU, "2026-11-15T10:00:00Z") is True
     assert get_training_verified_since(w.core, OU, "2026-11-15T19:00:00Z") is False
+
+
+
+def test_while_it_waits_on_lines_it_reminds_and_never_on_the_assigning_pass() -> None:
+    """Owner, 2026-11-25 (proposal 2): a reminder while the release waits only on lines (the wiring keeps it to once a day, free time)."""
+    from datetime import datetime, timezone
+    from release_earning.service import ReleaseEarning, WAIT_LINES
+    reminded, assigned = [], iter([True, False, False])
+    e = ReleaseEarning(user_id="u", last_spend_at=lambda: None, training_verified_since=lambda s: False, training_today=lambda n: False,
+                       release_lines_done_since=lambda s: False, assign_release_lines=lambda s, n: next(assigned), remind=reminded.append)
+    now = datetime(2026, 11, 25, 18, 0, tzinfo=timezone.utc)
+    assert e.hold(now) == WAIT_LINES and reminded == []                    # assigned now: that message is enough
+    assert e.hold(now) == WAIT_LINES and reminded == [now]
+
+    def broken(_now):
+        raise RuntimeError("boom")
+
+    e._remind = broken
+    assert e.hold(now) == WAIT_LINES                                       # a failing reminder never changes the hold

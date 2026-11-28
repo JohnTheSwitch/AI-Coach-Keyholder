@@ -14,3 +14,7 @@ Gap fix G3 (owner, 2026-11-15): "the check-ins turning off after 24h shouldn't b
 
 Table `opt_out_requests` (migration 074), written only by `service.py`. Events: `opt_outs.requested`, `opt_outs.asked`, `opt_outs.decided`.
 Buttons: scope `optout` through `system/dm_actions.OptOutDm`.
+
+**Schedule changes (owner, 2026-11-25).** A `schedule` change that ends a school day earlier (more free time, an earlier possible release)
+waits COOLING while locked and is asked about like a switch-off (key `schedule:<days>=<HH:MM|default>`, `register_schedule`). A later end
+is always at once.
