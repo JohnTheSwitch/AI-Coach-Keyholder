@@ -276,6 +276,49 @@ class DailyEvaluationTask:
 
         return bool(apply_transition(self._core, write=write))
 
+    def correct_as_paused(self, days: list[date], *, reason: str, now: datetime) -> list[str]:
+        """Owner, 2026-11-28 ("Take it back"): days that were evaluated as locked days although he was unlocked (the lock ended while the bot
+        was off) are turned into paused days: their progress comes off the pool (never below 0), the streak goes back to the day before.
+        Only the newest evaluated days, none of which earned a token; anything else changes nothing. The original numbers stay in the event.
+        Idempotent: a day already paused is left alone. Returns the dates corrected."""
+        wanted = sorted({d.isoformat() for d in days})
+        if not wanted:
+            return []
+
+        def write(tx: Transaction, _s: object) -> list[str]:
+            rows = [dict(r) for r in tx.fetch_all("SELECT * FROM daily_evaluations WHERE user_id = ? AND local_date >= ? ORDER BY local_date",
+                                                  (self._user, wanted[0]))]
+            if not rows or any(r["local_date"] not in wanted for r in rows):
+                return []                                        # a later day was evaluated since: not the newest days any more
+            todo = [r for r in rows if not r["paused"]]
+            if not todo or any(int(r["tokens_earned"] or 0) for r in todo):
+                return []
+            taken = sum((Decimal(str(r["progress"] or 0)) for r in todo), Decimal(0))
+            pool_row = tx.fetch_one("SELECT pool FROM token_pool_state WHERE user_id = ?", (self._user,))
+            pool = Decimal(pool_row["pool"]) if pool_row else Decimal(0)
+            new_pool = max(Decimal(0), pool - taken)
+            before = tx.fetch_one("SELECT streak_after FROM daily_evaluations WHERE user_id = ? AND local_date < ? ORDER BY local_date DESC LIMIT 1",
+                                  (self._user, wanted[0]))
+            streak = int(before["streak_after"]) if before is not None else 0
+            for r in todo:
+                tx.execute("UPDATE daily_evaluations SET paused = 1, progress = '0', clean = 0, bonus = '0', pool_after = ?, streak_after = ? "
+                           "WHERE user_id = ? AND local_date = ?", (str(new_pool), streak, self._user, r["local_date"]))
+            tx.execute("INSERT INTO token_pool_state (user_id, pool, updated_at) VALUES (?, ?, ?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET pool = excluded.pool, updated_at = excluded.updated_at", (self._user, str(new_pool), _iso(now)))
+            tx.execute("INSERT INTO clean_streak_state (user_id, streak, updated_at) VALUES (?, ?, ?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET streak = excluded.streak, updated_at = excluded.updated_at", (self._user, streak, _iso(now)))
+            write_event(tx, DomainEvent(
+                event_type="daily_evaluation.corrected", source_module="system", occurred_at=now,
+                payload={"reason": reason, "pool_before": str(pool), "pool_after": str(new_pool), "streak_after": streak,
+                         "days": [{"local_date": r["local_date"], "progress": r["progress"], "clean": r["clean"], "streak_after": r["streak_after"],
+                                   "bonus": r["bonus"], "pool_after": r["pool_after"]} for r in todo]}))
+            return [r["local_date"] for r in todo]
+
+        done = apply_transition(self._core, write=write) or []
+        if done:
+            logger.info("Daily evaluations corrected to paused days: %s (%s).", ", ".join(done), reason)
+        return list(done)
+
     def _record_paused(self, day: date, facts: DayFacts, score: Decimal, now: datetime) -> bool:
         def write(tx: Transaction, _s: object) -> bool:
             if tx.fetch_one("SELECT 1 FROM daily_evaluations WHERE user_id = ? AND local_date = ?", (self._user, day.isoformat())):

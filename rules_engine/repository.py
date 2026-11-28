@@ -208,20 +208,22 @@ class RulesEngineService:
 
     def record_barrier_decision(
         self, *, trigger_id: str, action: ActionType, rule_id: str, reason: str, now: datetime,
-        trust_domain: str = "release",
+        trust_domain: str = "release", lock_id: str | None = None,
     ) -> Decision:
         """Records a freeze/unfreeze decision for barrier management (v0.39). Called by the
         release tick for an already-authorised release; it is the ONLY way a freeze/unfreeze
         decision comes into being (the Rules Engine's own rules never execute them).
         Idempotent on `trigger_id`."""
-        if action not in (ActionType.FREEZE, ActionType.UNFREEZE):
-            raise ValueError("a barrier decision must be a freeze or an unfreeze")
+        if action not in (ActionType.FREEZE, ActionType.UNFREEZE, ActionType.ZERO_TIME):
+            raise ValueError("a barrier decision must be a freeze, an unfreeze or the pick-up timer to 0")
+        if (action is ActionType.ZERO_TIME) != (rule_id == "barrier.zero_time"):
+            raise ValueError("the timer to 0 has its own rule id, barrier.zero_time, and nothing else uses it")
         if not rule_id.startswith("barrier.") or not reason.strip() or not trigger_id.strip():
             raise ValueError("barrier decisions need a barrier.* rule id, a reason and a trigger id")
         decision = Decision(
             trigger_id=trigger_id, trust_domain=trust_domain, created_at=now, action_type=action, hours=0,
             entitlement_class=EntitlementClass.GUARANTEED, rule_id=rule_id, ruleset_version="barrier",
-            reason=reason, inputs={"barrier": True}, status=DecisionStatus.DRY_RUN,
+            reason=reason, inputs={"barrier": True, **({"lock_id": lock_id} if lock_id else {})}, status=DecisionStatus.DRY_RUN,
         )
 
         def write(tx: Transaction, _state: object) -> Decision | None:

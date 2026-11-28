@@ -59,8 +59,12 @@ class TestZeroTime:
     def test_the_shipped_ruleset_is_empty(self) -> None:
         assert DEFAULT_RULESET.rules == ()
 
-    def test_no_time_action_exists(self) -> None:
-        assert {a.value for a in A} == {"no_action", "freeze", "unfreeze"}
+    def test_no_time_action_exists_but_the_timer_to_0(self) -> None:
+        """Owner, 2026-11-28: the one exception is removing a new lock's remaining time once; nothing can add time."""
+        assert {a.value for a in A} == {"no_action", "freeze", "unfreeze", "zero_time"}
+
+    def test_no_rule_can_use_the_timer_to_0(self) -> None:
+        assert all(r.action is not A.ZERO_TIME for r in DEFAULT_RULESET.rules)
 
     @pytest.mark.parametrize("kw", [dict(), dict(setback_streak=5), dict(trust_score=0.2), dict(previous_trust_score=0.35, trust_score=0.25),
                                     dict(direction=D.PROGRESS, trust_score=0.9), dict(direction=D.NEUTRAL, previous_trust_score=0.6, trust_score=0.8)])
@@ -230,4 +234,8 @@ class TestRulesetValidation:
             validate_ruleset(self._rs(r, r))
 
     def test_no_code_reveal_action_exists(self) -> None:
-        assert {a.value for a in A} == {"no_action", "freeze", "unfreeze"}
+        assert {a.value for a in A} == {"no_action", "freeze", "unfreeze", "zero_time"}
+
+    def test_no_rule_may_take_the_timer_to_0(self) -> None:
+        with pytest.raises(RulesetValidationError):
+            validate_ruleset(self._rs(Rule(id="t", description="t", action=A.ZERO_TIME, direction=D.SETBACK)))

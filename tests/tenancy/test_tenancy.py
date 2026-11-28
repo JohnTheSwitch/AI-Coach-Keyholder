@@ -416,4 +416,4 @@ class TestIsolation:
                 assert not [n for n in names if n.split(".")[0] in forbidden], (path.name, names)
 
     def test_the_main_database_migrations_are_unchanged_by_phase_e1(self) -> None:
-        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 95   # 095: schedule_work_ends (owner, 2026-11-25)
+        assert max(int(p.name.split("_")[0]) for p in (ROOT / "database" / "migrations").glob("*.sql")) == 96   # 096: lock ended_at (live, 2026-11-28)

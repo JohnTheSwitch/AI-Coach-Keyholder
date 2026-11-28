@@ -35,8 +35,8 @@ class ExecStatus(StrEnum):
 # v0.39: freeze/unfreeze may execute ONLY for barrier management, i.e. for decisions created by the
 # release engine under one of these rule ids. A freeze/unfreeze from any other rule (for example a
 # custom Rules Engine ruleset) never executes.
-BARRIER_ACTIONS = frozenset({"freeze", "unfreeze"})
-BARRIER_RULE_IDS = frozenset({"barrier.release", "barrier.freeze"})
+BARRIER_ACTIONS = frozenset({"freeze", "unfreeze", "zero_time"})               # zero_time: owner, 2026-11-28 (the pick-up timer to 0)
+BARRIER_RULE_IDS = frozenset({"barrier.release", "barrier.freeze", "barrier.zero_time"})
 
 DECISION_MAX_AGE_MINUTES = 15
 
@@ -62,3 +62,5 @@ class LockActionTransport(Protocol):
     must never log or return tokens, headers or bodies."""
 
     def set_frozen(self, *, lock_id: str, frozen: bool) -> TransportResult: ...
+
+    def remove_remaining_time(self, *, lock_id: str, seconds: int) -> TransportResult: ...

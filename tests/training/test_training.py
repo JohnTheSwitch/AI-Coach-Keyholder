@@ -158,3 +158,31 @@ def test_a_moved_session_keeps_the_extra_free(tmp_path) -> None:
     assert p.day_task(date(2026, 11, 17)).key == "training:short:legs_a_short"
     assert "2026-11-17" in get_planned_sessions(p._core, U, "2026-11-16", "2026-11-22")     # still one of the week's sessions
     assert "upper body" in p.extra(U, "extra training", datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)).text
+
+
+def test_a_leg_day_he_never_did_does_not_count(tmp_path) -> None:
+    """Live, 2026-11-28: short A done on 17 Nov, B skipped on 21 Nov (unlocked, no free slot). Saturday 28 Nov came as a full "Leg day A"
+    instead of B, and without the return-from-break loads, because the skipped B counted as done."""
+    p = plan(tmp_path)
+    done = {"2026-11-14"}
+    p.done_on = lambda d: d in done
+    first = p.day_task(date(2026, 11, 14))                                                 # legs A, done
+    assert first.key == "training:legs_a" and "back after a break" in first.details
+    second = p.day_task(SATURDAY)                                                          # legs B, never done
+    assert second.key == "training:legs_b" and "back after a break" in second.details
+    third = p.day_task(SATURDAY + timedelta(days=7))
+    assert third.key == "training:legs_b" and "back after a break" in third.details        # B again, still the 2nd leg day back
+    done.add((SATURDAY + timedelta(days=7)).isoformat())
+    fourth = p.day_task(SATURDAY + timedelta(days=14))
+    assert fourth.key == "training:legs_a" and "back after a break" not in fourth.details
+
+
+def test_a_leg_day_recorded_as_the_other_one(tmp_path) -> None:
+    """Owner, 2026-11-28: the task went out as A, he did B: recorded as B once, so the next Saturday is A."""
+    p = plan(tmp_path)
+    p.done_on = lambda d: True
+    p.day_task(SATURDAY)                                                                  # A
+    assert p.correct_session(SATURDAY, "legs_b", reason="t", now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc))
+    assert not p.correct_session(SATURDAY, "legs_b", reason="t", now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc))
+    assert not p.correct_session(SUNDAY, "legs_b", reason="t", now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc))   # upper: never
+    assert p.day_task(SATURDAY + timedelta(days=7)).key == "training:legs_a"

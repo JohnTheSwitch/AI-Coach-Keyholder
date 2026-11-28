@@ -87,6 +87,9 @@ class TrainingPlan:
         self._free_time = free_time
         self.after_today: Callable[[datetime], object] | None = None   # obedience: switch today's planned task to the short session
         self.today_open: Callable[[datetime], bool] | None = None      # obedience: today's task is not out yet (none, or only planned)
+        # Live, 2026-11-28: the leg day A/B and the return-from-break count went by sessions PLANNED, so a leg day skipped while he was
+        # unlocked counted as done. `done_on(local_date)` (obedience.get_verified_training): True when that day's session was verified.
+        self.done_on: Callable[[str], bool] | None = None
         self._today = today
 
     @property
@@ -211,11 +214,17 @@ class TrainingPlan:
         return OutgoingMessage(text=f"Good. An extra short session today: {what}. It comes as today's task with the details. "
                                     "Verified in Chaster, it earns like any short session.")
 
-    def _next_legs(self, day: date) -> str:
+    def _leg_days_done(self, day: date) -> list[str]:
+        """The leg sessions before `day`, newest first, that he actually did (verified); all planned ones when `done_on` isn't wired."""
         with self._core.transaction() as tx:
-            row = tx.fetch_one("SELECT session_key FROM training_sessions WHERE user_id = ? AND local_date < ? AND session_key LIKE 'legs_%' "
-                               "ORDER BY local_date DESC LIMIT 1", (self.user_id, day.isoformat()))
-        return "legs_b" if row is not None and row["session_key"].startswith("legs_a") else "legs_a"
+            rows = tx.fetch_all("SELECT local_date, session_key FROM training_sessions WHERE user_id = ? AND local_date < ? "
+                                "AND session_key LIKE 'legs_%' ORDER BY local_date DESC", (self.user_id, day.isoformat()))
+        return [r["session_key"] for r in rows if self.done_on is None or self.done_on(r["local_date"])]
+
+    def _next_legs(self, day: date) -> str:
+        """Whichever he did not do last (the plan); a leg day he never did doesn't count (live, 2026-11-28)."""
+        done = self._leg_days_done(day)
+        return "legs_b" if done and done[0].startswith("legs_a") else "legs_a"
 
     def _short_day(self, day: date) -> str:
         week = f"{day.isocalendar()[0]}-W{day.isocalendar()[1]:02d}"
@@ -233,6 +242,23 @@ class TrainingPlan:
 
         apply_transition(self._core, write=write)
 
+    def correct_session(self, day: date, session: str, *, reason: str, now: datetime) -> bool:
+        """Owner, 2026-11-28: a day's session recorded as one thing but done as another (the task had already gone out as "Leg day A", he
+        did B as the plan says). Only a leg day to a leg day; the old key stays in the event. True when it changed."""
+        if not session.startswith("legs_"):
+            return False
+
+        def write(tx: Transaction, _s: object) -> bool:
+            row = tx.fetch_one("SELECT session_key FROM training_sessions WHERE user_id = ? AND local_date = ?", (self.user_id, day.isoformat()))
+            if row is None or row["session_key"] == session or not row["session_key"].startswith("legs_"):
+                return False
+            tx.execute("UPDATE training_sessions SET session_key = ? WHERE user_id = ? AND local_date = ?", (session, self.user_id, day.isoformat()))
+            write_event(tx, DomainEvent(event_type="training.session_corrected", source_module="training", occurred_at=now,
+                                        payload={"local_date": day.isoformat(), "from": row["session_key"], "to": session, "reason": reason}))
+            return True
+
+        return bool(apply_transition(self._core, write=write))
+
     def _deload_week(self, day: date) -> bool:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT MIN(local_date) AS first FROM training_sessions WHERE user_id = ?", (self.user_id,))
@@ -242,9 +268,7 @@ class TrainingPlan:
         return weeks % DELOAD_EVERY_WEEKS == DELOAD_EVERY_WEEKS - 1
 
     def _leg_days_before(self, day: date) -> int:
-        with self._core.transaction() as tx:
-            return tx.fetch_one("SELECT COUNT(*) AS n FROM training_sessions WHERE user_id = ? AND local_date < ? AND session_key LIKE 'legs_%'",
-                                (self.user_id, day.isoformat()))["n"]
+        return len(self._leg_days_done(day))
 
     def weight(self, key: str) -> float:
         with self._core.transaction() as tx:

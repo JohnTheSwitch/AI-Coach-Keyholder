@@ -26,6 +26,7 @@ Guarantees (see docs/architecture/chaster_execution_phase3_proposal.md):
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -107,7 +108,7 @@ class ChasterExecutor:
 
         cutoff = _iso(now - timedelta(minutes=DECISION_MAX_AGE_MINUTES))
         marks = ",".join("?" for _ in BARRIER_RULE_IDS)
-        eligible = f"action_type IN ('freeze', 'unfreeze') AND rule_id IN ({marks})"
+        eligible = f"action_type IN ('freeze', 'unfreeze', 'zero_time') AND rule_id IN ({marks})"
         args: list = sorted(BARRIER_RULE_IDS)
         with self._core.transaction() as tx:
             rows = tx.fetch_all(
@@ -167,13 +168,19 @@ class ChasterExecutor:
             return ExecStatus.PENDING   # lost the claim; someone else owns it
 
         try:
-            result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
+            if action == ActionType.ZERO_TIME:
+                seconds = int((_parse_iso(end_before) - now).total_seconds())
+                result = self._transport.remove_remaining_time(lock_id=lock_id, seconds=seconds)
+            else:
+                result = self._transport.set_frozen(lock_id=lock_id, frozen=(action == ActionType.FREEZE))
         except Exception:
             logger.exception("Transport raised for decision %s; outcome unknown.", decision_id)
             self._transition(decision_id, ExecStatus.EXECUTING, ExecStatus.NEEDS_REVIEW, now, "transport error; outcome unknown")
             return ExecStatus.NEEDS_REVIEW
 
         http = result.http_status
+        if result.outcome == TransportOutcome.OK and action == ActionType.ZERO_TIME:
+            return self._check_time_went_down(decision_id, lock_id, end_before, now, http)
         if result.outcome == TransportOutcome.OK:
             self._transition(decision_id, ExecStatus.EXECUTING, ExecStatus.EXECUTED, now, "accepted by Chaster", http_status=http)
             return ExecStatus.EXECUTED
@@ -185,12 +192,32 @@ class ChasterExecutor:
                          _FAILURE_DETAIL.get(result.outcome, "failed"), http_status=http)
         return ExecStatus.FAILED
 
+    def _check_time_went_down(self, decision_id: str, lock_id: str, end_before: str, now: datetime, http) -> ExecStatus:
+        """Owner, 2026-11-28: the time contract is the owner's, not Chaster's documentation. After the call the lock is read again: an end
+        date later than before means the sign was wrong, and that goes to review at once (never retried)."""
+        try:
+            self._refresh(now)
+        except Exception:
+            logger.exception("Observation refresh failed after the timer to 0.")
+        after = self._get_latest()
+        later = after is not None and after.chaster_lock_id == lock_id and after.end_date is not None and after.end_date > _parse_iso(end_before)
+        if later:
+            logger.error("The timer to 0 made the lock's end date LATER (%s -> %s): review the lock now.", end_before, _iso(after.end_date))
+            self._transition(decision_id, ExecStatus.EXECUTING, ExecStatus.NEEDS_REVIEW, now,
+                             "the end date moved later instead of to now: inspect the lock and its time", http_status=http)
+            return ExecStatus.NEEDS_REVIEW
+        self._transition(decision_id, ExecStatus.EXECUTING, ExecStatus.EXECUTED, now, "accepted by Chaster: remaining time removed",
+                         http_status=http)
+        return ExecStatus.EXECUTED
+
     def _preflight(self, decision_id: str, action: ActionType, now: datetime, rule_id: str | None = None):
         def refuse(reason: str):
             return reason, None, None
 
         if action.value not in BARRIER_ACTIONS or not self._allow_barrier or rule_id not in BARRIER_RULE_IDS:
             return refuse("barrier actions execute only for barrier management")
+        if (action == ActionType.ZERO_TIME) != (rule_id == "barrier.zero_time"):
+            return refuse("the timer to 0 runs only under its own rule")
         scopes = self._get_scopes()
         if not scopes or REQUIRED_SCOPE not in scopes:
             return refuse("keyholder connection lacks the required scope; re-authorisation needed")
@@ -211,9 +238,15 @@ class ChasterExecutor:
             return refuse("lock is not in a locked state")
         if obs.has_keyholder is not True:
             return refuse("lock is not confirmed to be a keyholder lock")
-        want_frozen = action == ActionType.UNFREEZE           # an unfreeze needs the barrier to be up
+        want_frozen = action in (ActionType.UNFREEZE, ActionType.ZERO_TIME)   # an unfreeze needs the barrier up; the timer to 0 comes after it
         if obs.is_frozen is not want_frozen:
             return refuse("lock is not in the state this barrier action expects")
+        if action == ActionType.ZERO_TIME:
+            target = self._decision_lock(decision_id)
+            if target is None or target != obs.chaster_lock_id:
+                return refuse("the timer to 0 is for another lock than the one observed")
+            if obs.end_date is None or (obs.end_date - now).total_seconds() < 60:
+                return refuse("no remaining time to remove")
         if action == ActionType.UNFREEZE and self._window_check is not None and not self._window_check(now):
             return refuse("barrier release outside a discretionary window")
         if not obs.chaster_lock_id or not obs.chaster_lock_id.strip():
@@ -224,6 +257,15 @@ class ChasterExecutor:
         if why is not None:
             return refuse(f"limits re-check refused: {why}")
         return None, obs.chaster_lock_id, None if obs.end_date is None else _iso(obs.end_date)
+
+    def _decision_lock(self, decision_id: str) -> str | None:
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT inputs_json FROM lock_decisions WHERE id = ?", (decision_id,))
+        try:
+            value = json.loads(row["inputs_json"]).get("lock_id") if row is not None else None
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, str) and value else None
 
     def _recent_executed(self, decision_id: str, now: datetime) -> tuple[RecentAction, ...]:
         marks = ",".join("?" for _ in _COUNTED_STATUSES)

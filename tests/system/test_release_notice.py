@@ -239,4 +239,4 @@ class TestSafety:
     def test_the_transport_can_only_freeze_and_has_no_unlock(self) -> None:
         from chaster_execution.transport import ChasterHttpTransport
         public = {n for n in dir(ChasterHttpTransport) if not n.startswith("_")}
-        assert public == {"set_frozen", "set_extensions"}
+        assert public == {"set_frozen", "set_extensions", "remove_remaining_time"}   # the pick-up timer to 0 only (owner, 2026-11-28)

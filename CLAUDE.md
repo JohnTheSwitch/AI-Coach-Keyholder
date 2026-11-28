@@ -66,8 +66,8 @@ Several of these are enforced by repository-wide tests that scan the source, so 
 
 **Safety of the live system:**
 
-- The system never changes a lock's duration, up or down. No time method exists on the transport or executor, and none may be added.
-- The Chaster `/unlock` endpoint and lock destruction are banned from the execution plane. Only freeze and unfreeze execute.
+- The system never adds to a lock's duration. It removes time in exactly one case (owner, 2026-11-28): once per lock, right after his newly picked-up lock is frozen, its remaining time goes to 0 (`ZERO_TIME`, rule `barrier.zero_time`, `remove_remaining_time` with a negative duration only). No other time method may be added.
+- The Chaster `/unlock` endpoint and lock destruction are banned from the execution plane. Only freeze, unfreeze and that one timer-to-0 execute.
 - Execution is doubly gated: `ENABLE_CHASTER_EXECUTION` plus a runtime halt that is seeded halted and fails closed if its row is missing or unreadable. New gates must also fail closed.
 - An ambiguous outcome (timeout, 5xx, unexpected status) ends as `needs_review` and is never retried.
 - Models can't change state. Known commands never reach the model, conversation context providers are read-only, and the coach only proposes from the closed catalogue in `coach/actions.py`, which applies only on the user's own button. Don't add a path where model output writes state or acts on a lock. The one exception (owner, 2026-11-10, because there is no second person to decide): `infractions/judge.py` judges the wearer's explanation of a detector finding, and an unexplained finding is confirmed by the system. Health and emergencies are decided in code before any model, and a model failure is never a verdict.

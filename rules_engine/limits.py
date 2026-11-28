@@ -39,8 +39,8 @@ def apply_limits(
     `hours` column. Raising the barrier only restrains: it is never blocked by the pool or the cooldown and does not use up the release
     budget (otherwise a release followed by its re-freeze would block the next day's release). The pool limits RELEASES (unfreezes).
     """
-    if action is ActionType.FREEZE:
-        return 0, None
+    if action is ActionType.FREEZE or action is ActionType.ZERO_TIME:
+        return 0, None                  # the timer to 0 (owner, 2026-11-28) is once per lock by its trigger, and it only restrains less time
     releases = tuple(a for a in recent if a.action_type is ActionType.UNFREEZE)
     window_start = now - ROLLING_WINDOW
     in_window = [a for a in releases if window_start <= a.created_at <= now]

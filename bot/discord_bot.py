@@ -972,6 +972,20 @@ def main() -> None:
         schedule.seed({0: _t(15, 0), 3: _t(15, 0), 4: _t(15, 0), 1: _t(17, 0), 2: _t(17, 0)}, clock.now())
     except Exception:
         logger.exception("His school-day ends could not be set; WORKDAY_END applies.")
+    # Owner, 2026-11-28: "a higher initial timer ... when the system picks it up and freezes it, it would also set the timer to 0" (and "This
+    # lock too": the lock he put on that morning, first seen after 08:30 UTC). His own release tick only.
+    if getattr(wiring, "release_task", None) is not None:
+        from datetime import datetime as _dt, timezone as _tz
+        wiring.release_task.zero_time_from = _dt(2026, 11, 28, 8, 30, tzinfo=_tz.utc)
+    # Owner, 2026-11-28 ("Take it back"): his lock ended on 25 Nov evening while the PC was off, and 26 and 27 Nov were evaluated as locked
+    # days (D58). Once, in his own database only: those two days become paused days and their progress comes off the pool.
+    if getattr(wiring, "daily", None) is not None:
+        try:
+            from datetime import date as _d
+            wiring.daily.correct_as_paused([_d(2026, 11, 26), _d(2026, 11, 27)], reason="unlocked: the lock ended 2026-11-25 while the bot was off",
+                                           now=clock.now())
+        except Exception:
+            logger.exception("The 26-27 Nov correction could not be made.")
     application_service.features_command = (lambda user_id, text, now, f=features.command, s=schedule.command:
                                             f(user_id, text, now) or s(user_id, text, now))
     bot.model_warmup = warm_model(ollama_model)
@@ -1205,6 +1219,14 @@ def main() -> None:
                                       enabled=lambda u=obedience.user_id: features.is_on(u, "task_board"))
         bot.dm_actions["board"] = ObedienceDm(task_board, resolve_user=resolve_user, now=clock.now)
         bot.task_board_loop = task_board.loop(clock)
+        # Owner, 2026-11-28: Saturday's task went out as "Leg day A" (a skipped B had counted as done); he does B, lighter, as the plan says.
+        # Recorded as B once, so the next Saturday is A.
+        if obedience is not None and getattr(obedience, "training", None) is not None:
+            try:
+                from datetime import date as _d2
+                obedience.training.correct_session(_d2(2026, 11, 28), "legs_b", reason="the task went out as A; he did B (owner)", now=clock.now())
+            except Exception:
+                logger.exception("The 28 Nov leg day could not be recorded as B.")
         training_plan = getattr(obedience, "training", None)
         if training_plan is not None:
             from system.dm_actions import TrainingDm

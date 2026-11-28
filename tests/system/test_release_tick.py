@@ -53,6 +53,9 @@ class FakeTransport:
     def set_frozen(self, *, lock_id, frozen):
         return self._do("freeze" if frozen else "unfreeze", lock_id)
 
+    def remove_remaining_time(self, *, lock_id, seconds):
+        return self._do("zero_time", lock_id, seconds)
+
 
 class World:
     def __init__(self, tmp_path: Path, *, transport=None, can_execute=True, scopes=("locks",), frozen=True,
@@ -65,6 +68,7 @@ class World:
         self.now = local(MON, 10, 0)
         self.frozen, self.frozen_since, self.status = frozen, frozen_since, status
         self.lock_id = "lock-1"
+        self.end_date = None
         self.penalty, self.supervised = penalty, supervised
         self.refreshes = 0
         self.refresh_effective = True
@@ -94,7 +98,7 @@ class World:
         return ChasterProviderObservation(
             id="o", connection_id=U, provider="chaster", chaster_lock_id=self.lock_id, status=self.status,
             fetched_at=fetched, created_at=fetched, is_frozen=self.frozen, has_keyholder=True,
-            frozen_at=(self.now - self.frozen_since) if self.frozen else None,
+            frozen_at=(self.now - self.frozen_since) if self.frozen else None, end_date=self.end_date,
         )
 
     def _refresh(self, now):

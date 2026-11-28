@@ -12,7 +12,8 @@ Engine. **It executes nothing: no Chaster call exists anywhere in it.**
 - Order: (1) absolute safety gates, (2) first matching rule, (3) the action
   must be valid for the lock's state, (4) hard limits. Every outcome, including
   `NO_ACTION`, has a non-empty reason (DEC-2).
-- **Actions:** `NO_ACTION`, `FREEZE`, `UNFREEZE`. No time action exists (owner decision, Zero-Time-Modification).
+- **Actions:** `NO_ACTION`, `FREEZE`, `UNFREEZE`, and `ZERO_TIME` (owner, 2026-11-28: a new lock's timer to 0 once, barrier management only;
+  `validate_ruleset` refuses it in any rule). Nothing adds time (Zero-Time-Modification).
   FREEZE/UNFREEZE are valid but **dormant** (no shipped rule uses them) and are
   checked against `isFrozen`. There is no code-reveal action (excluded by the
   owner).

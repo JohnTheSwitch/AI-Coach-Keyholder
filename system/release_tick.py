@@ -49,6 +49,8 @@ _REFREEZE_RECHECK = timedelta(hours=6)        # how long an observation of "froz
 # Owner, 2026-11-13: a newly recognised lock that is not frozen is frozen once, at its first sighting. The lock is looked at this often for it.
 _FIRST_SIGHT_EVERY = timedelta(minutes=10)
 FIRST_FREEZE_REASON = "First sighting of a new lock: the barrier goes up"
+ZERO_TIME_RULE_ID = "barrier.zero_time"
+ZERO_TIME_REASON = "A new lock picked up and frozen: its starting timer goes to 0 (owner, 2026-11-28)"
 # Live, 2026-11-13: the system refroze the lock on 11 Nov 04:28, but the stored reading was the one from just before ("not frozen"). While a veto
 # (supervision) held releases nothing refreshed it, and the backstop, which pre-checked that stored reading, would never have fired: the
 # maximum-hold guarantee was gone. The backstop now looks at the lock itself at least every _BACKSTOP_RECHECK, and after a failed refresh
@@ -100,6 +102,9 @@ class ReleaseEnginePeriodicTask:
         self._failing_since: datetime | None = None
         self._first_sight_at: datetime | None = None
         self.first_sight_every: timedelta | None = _FIRST_SIGHT_EVERY        # None: no first-sighting freeze (tests of other rules)
+        # Owner, 2026-11-28 ("a higher initial timer ... when the system picks it up and freezes it, it would also set the timer to 0"): set
+        # in his own wiring only. A lock first seen at or after this moment has its remaining time removed once, after it is frozen.
+        self.zero_time_from: datetime | None = None
         # Phase F4: release_engine.conditioning.ProgressiveConditioning while ENABLE_SLAVE_TRAINING is on; the consumer of
         # `release.provider_confirmed` (system/startup.py) uses it. None = Progressive Conditioning is off.
         self.conditioning = None
@@ -170,6 +175,9 @@ class ReleaseEnginePeriodicTask:
             return report
 
         if self._maybe_first_freeze(now, report):
+            return report
+
+        if self._maybe_zero_time(now, report):
             return report
 
         if self._maybe_refreeze(now, report):
@@ -343,6 +351,29 @@ class ReleaseEnginePeriodicTask:
         self._rules.record_barrier_decision(trigger_id=f"barrier-first:{obs.chaster_lock_id}", action=ActionType.FREEZE,
                                             rule_id=BARRIER_FREEZE_RULE_ID, reason=FIRST_FREEZE_REASON, now=now)
         report.add("barrier_first_freeze")
+        return True
+
+    def _maybe_zero_time(self, now: datetime, report: TickReport) -> bool:
+        """Owner, 2026-11-28: once per lock, his newly picked-up lock, frozen, with time left: the remaining time is removed (timer to 0).
+        Only a lock first seen at or after `zero_time_from`; never while execution is off or halted; the executor re-checks everything."""
+        if self.zero_time_from is None or not self._can_execute or self._halted():
+            return False
+        obs = self._get_obs()
+        if (obs is None or now - obs.fetched_at > LOCK_DATA_MAX_AGE or obs.status is not ChasterProviderStatus.LOCKED
+                or obs.has_keyholder is not True or obs.is_frozen is not True or not obs.chaster_lock_id):
+            return False
+        if obs.end_date is None or (obs.end_date - now).total_seconds() < 60:
+            return False
+        first_seen = self._engine.get_first_seen_at(obs.chaster_lock_id)
+        if first_seen is None or first_seen < self.zero_time_from:
+            return False
+        try:
+            self._rules.record_barrier_decision(trigger_id=f"barrier-zero-time:{obs.chaster_lock_id}", action=ActionType.ZERO_TIME,
+                                                rule_id=ZERO_TIME_RULE_ID, reason=ZERO_TIME_REASON, now=now, lock_id=obs.chaster_lock_id)
+        except Exception:
+            logger.exception("The timer to 0 could not be recorded.")
+            return False
+        report.add("barrier_zero_time")
         return True
 
     def _maybe_owner_test(self, now: datetime, report: TickReport) -> bool:

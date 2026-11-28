@@ -45,6 +45,9 @@ class FakeTransport:
     def set_frozen(self, *, lock_id, frozen):
         return self._do("freeze" if frozen else "unfreeze", lock_id, 0)
 
+    def remove_remaining_time(self, *, lock_id, seconds):
+        return self._do("zero_time", lock_id, seconds)
+
 
 @pytest.fixture
 def core(tmp_path: Path) -> CoreDatabase:
@@ -211,13 +214,64 @@ class TestOnlyBarrierActionsExecute:
         d = w.decision()
         assert w.run() == [] and w.status(d) == "dry_run"
 
-    def test_the_transport_has_no_time_method(self) -> None:
+    def test_the_transport_can_never_add_time(self) -> None:
+        """Owner, 2026-11-28: the only time call removes (a negative duration); no method can add time."""
         from chaster_execution.models import LockActionTransport
         from chaster_execution.transport import ChasterHttpTransport
         for cls in (LockActionTransport, ChasterHttpTransport):
             assert not hasattr(cls, "add_time") and not hasattr(cls, "remove_time") and not hasattr(cls, "_update_time")
         text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")
-        assert '"update-time"' not in text
+        assert text.count('"update-time"') == 1 and '{"duration": -seconds}' in text
+
+    def test_the_transport_sends_only_a_negative_duration(self) -> None:
+        from chaster_execution.transport import ChasterHttpTransport
+        sent = []
+        t = ChasterHttpTransport.__new__(ChasterHttpTransport)
+        t._post = lambda lock_id, endpoint, body, **kw: sent.append((lock_id, endpoint, body)) or TransportResult(outcome=O.OK, http_status=204)
+        assert t.remove_remaining_time(lock_id="lock-1", seconds=3600).outcome == O.OK
+        assert sent == [("lock-1", "update-time", {"duration": -3600})]
+        for bad in (0, -5, True, 1.5, 367 * 24 * 3600):
+            assert t.remove_remaining_time(lock_id="lock-1", seconds=bad).outcome == O.NOT_SENT
+        assert len(sent) == 1
+
+
+class TestTheTimerTo0:
+    """Owner, 2026-11-28: his newly picked-up lock, once frozen, has its remaining time removed once."""
+
+    def _decision(self, w, lock="lock-1"):
+        d = w.decision(action="zero_time", rule_id="barrier.zero_time")
+        with w.core.transaction() as tx:
+            tx.execute("UPDATE lock_decisions SET inputs_json = ? WHERE id = ?", ('{"barrier": true, "lock_id": "%s"}' % lock, d))
+        return d
+
+    def test_a_frozen_lock_loses_its_remaining_time(self, core) -> None:
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True, end_date=NOW + timedelta(days=2)))
+        d = self._decision(w)
+        w.run()
+        assert w.status(d) == "executed" and w.transport.calls == [("zero_time", "lock-1", 2 * 24 * 3600)]
+
+    @pytest.mark.parametrize("o,lock", [(dict(is_frozen=False), "lock-1"), (dict(is_frozen=True, end_date=None), "lock-1"),
+                                        (dict(is_frozen=True, end_date=NOW + timedelta(seconds=30)), "lock-1"), (dict(is_frozen=True), "other")])
+    def test_refused_unless_frozen_with_time_left_and_the_same_lock(self, core, o, lock) -> None:
+        w = World(core, FakeTransport(), observation=obs(**o))
+        d = self._decision(w, lock)
+        w.run()
+        assert w.status(d) == "blocked" and not w.transport.calls
+
+    def test_only_under_its_own_rule(self, core) -> None:
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True))
+        d = w.decision(action="zero_time", rule_id="barrier.freeze")
+        w.run()
+        assert w.status(d) == "blocked" and not w.transport.calls
+
+    def test_an_end_date_that_moved_later_goes_to_review(self, core) -> None:
+        def later(world, now):
+            world.observation = obs(is_frozen=True, end_date=NOW + timedelta(days=4))
+        w = World(core, FakeTransport(), observation=obs(is_frozen=True, end_date=NOW + timedelta(days=2)))
+        d = self._decision(w)
+        w.refresh_fn = later
+        w.run()
+        assert w.status(d) == "needs_review"
 
 
 class TestStaleness:

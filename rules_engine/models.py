@@ -25,10 +25,14 @@ class ActionType(StrEnum):
     NO_ACTION = "no_action"
     FREEZE = "freeze"
     UNFREEZE = "unfreeze"
+    # The one exception to Zero-Time-Modification (owner, 2026-11-28: "a higher initial timer ... when the system picks it up and freezes it,
+    # it would also set the timer to 0"): once per lock, right after the bot froze his newly recognised lock, its remaining time is removed.
+    # Only ever a removal down to 0, only from barrier management (rule `barrier.zero_time`), never from a rule of the Rules Engine.
+    ZERO_TIME = "zero_time"
     # Deliberately absent: any code / combination reveal (excluded from
     # Phase 2 by owner decision; irreversible and in tension with
-    # philosophy.md 4.2), and any time change: the system never adds to or
-    # removes from a lock's duration (owner decision, Zero-Time-Modification).
+    # philosophy.md 4.2), and any other time change: the system never adds
+    # to a lock's duration and removes time only as ZERO_TIME above.
 
 
 class EntitlementClass(StrEnum):

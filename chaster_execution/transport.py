@@ -9,8 +9,11 @@ Barrier management (v0.39) uses the DOCUMENTED freeze endpoint:
     POST https://api.chaster.app/locks/{lockId}/extensions    {"extensions": [...]}
 (see `set_extensions`; reached only from the guarded `python -m cli extension-review`).
 
-There is deliberately NO method for Chaster's time endpoint: the system never changes a lock's duration, up or down (owner decision,
-Zero-Time-Modification).
+Time (Zero-Time-Modification, owner 2026-11-04) has ONE exception (owner, 2026-11-28): `remove_remaining_time` takes the remaining time
+off his newly frozen lock once, so its timer is 0. It can only remove, never add:
+    POST https://api.chaster.app/locks/{lockId}/update-time    {"duration": -<seconds>}
+The body and its sign come from the owner (2026-10, not in Chaster's OpenAPI); the executor reads the end date before and after and sends
+a wrong-direction result to review.
 
 Outcome mapping: 204 -> OK; 400 -> NOT_ELIGIBLE; 403 -> FORBIDDEN; 404 -> NOT_FOUND; 401 -> the token manager refreshes once and retries once
 (a 401 means the request was not processed), else UNAUTHORIZED. Anything else, including any other 2xx, a 5xx, a read timeout or a dropped
@@ -51,6 +54,7 @@ logger = logging.getLogger("ai_coach_keyholder.chaster_execution.transport")
 __all__ = ["ChasterHttpTransport", "build_keyholder_transport"]
 
 _LOCK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_REMOVE_SECONDS = 366 * 24 * 3600     # a starting timer longer than a year is not his (owner, 2026-11-28)
 
 
 class ChasterHttpTransport:
@@ -68,6 +72,13 @@ class ChasterHttpTransport:
         self._keyholder_user_id = keyholder_user_id
         self._clock = clock
         self._send = send            # injectable so tests never touch the network
+
+    def remove_remaining_time(self, *, lock_id: str, seconds: int) -> TransportResult:
+        """Owner, 2026-11-28: the pick-up timer to 0. Always a negative duration; nothing here can add time."""
+        if (not isinstance(lock_id, str) or not _LOCK_ID.match(lock_id) or isinstance(seconds, bool) or not isinstance(seconds, int)
+                or not (1 <= seconds <= _MAX_REMOVE_SECONDS)):
+            return TransportResult(outcome=TransportOutcome.NOT_SENT)
+        return self._post(lock_id, "update-time", {"duration": -seconds})
 
     def set_frozen(self, *, lock_id: str, frozen: bool) -> TransportResult:
         """Barrier management: POST /locks/{lockId}/freeze with the documented body

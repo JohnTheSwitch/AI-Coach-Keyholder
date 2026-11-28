@@ -198,3 +198,111 @@ class TestNoCheckInsWhileUnlocked:
         assert get_unlocked_throughout(core, *day) is True          # the lock had ended and nothing locked was seen that day
         seen(day[0] + timedelta(hours=15))
         assert get_unlocked_throughout(core, *day) is False         # a new lock that afternoon: the day counts
+
+    def test_a_lock_that_ended_while_the_bot_was_off(self, core) -> None:
+        """Live, 2026-11-28: he ended his lock on 25 Nov evening with the PC off until the 28th; the last reading said locked, so the 26th and
+        27th earned token progress. Chaster's `unlockedAt`, read when the bot is back, says the lock had ended."""
+        import uuid
+        from infrastructure.time_format import iso
+        from system.keyholder_lock_source import get_unlocked_throughout
+
+        def seen(at, outcome="observed", status="locked", ended=None, lock="L1"):
+            with core.transaction() as tx:
+                tx.execute("INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, fetched_at, created_at, "
+                           "ended_at) VALUES (?, ?, ?, 'keyholder_search', ?, 0, ?, ?, ?)",
+                           (str(uuid.uuid4()), lock, outcome, status, iso(at), iso(at), iso(ended) if ended else None))
+
+        seen(NOW)                                                    # locked, then the bot is off
+        day1, day2 = (NOW + timedelta(days=1), NOW + timedelta(days=2)), (NOW + timedelta(days=2), NOW + timedelta(days=3))
+        assert get_unlocked_throughout(core, *day1) is False
+        seen(NOW + timedelta(days=3, hours=1), outcome="not_found", status=None, ended=NOW + timedelta(hours=2))   # back: ended 2 h after
+        assert get_unlocked_throughout(core, *day1) is True
+        assert get_unlocked_throughout(core, *day2) is True
+        assert get_unlocked_throughout(core, NOW, NOW + timedelta(days=1)) is False   # the day it ended counts as it was
+        seen(NOW + timedelta(days=1, hours=5), lock="L2")            # a new lock was seen on day 1: day 1 counts
+        assert get_unlocked_throughout(core, *day1) is False
+
+    def test_the_ended_lock_is_read_once_when_the_search_finds_none(self, core) -> None:
+        """Live, 2026-11-28: after a restart the search found no lock and nothing read the old one again."""
+        import uuid
+        from infrastructure.time_format import iso
+        from system.keyholder_lock_source import KeyholderLockObservationSource
+
+        with core.transaction() as tx:
+            tx.execute("INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, fetched_at, created_at) "
+                       "VALUES (?, 'L1', 'observed', 'keyholder_search', 'locked', 0, ?, ?)", (str(uuid.uuid4()), iso(NOW), iso(NOW)))
+
+        class Resolver:
+            def current(self, now=None):
+                return None
+
+            def cached(self):
+                return None
+
+            def known_unlocked(self, now=None):
+                return True
+
+        class Tokens:
+            def call_with_token(self, user_id, *, now, operation):
+                return operation("t")
+
+        class Client:
+            calls = []
+
+            def get_lock(self, *, access_token, lock_id):
+                self.calls.append(lock_id)
+                return {"_id": lock_id, "role": "keyholder", "status": "unlocked", "unlockedAt": "2026-11-25T19:10:00.000Z"}
+
+        from infrastructure.clock import FrozenClock
+        client = Client()
+        src = KeyholderLockObservationSource(core.db_path, core=core, lock_id=None, wearer_user_id="w", keyholder_user_id="k",
+                                             keyholder_tokens=Tokens(), lock_client=client, clock=FrozenClock(NOW), resolver=Resolver())
+        later = NOW + timedelta(days=3)
+        assert src.refresh(later) == "not_found"
+        assert src.refresh(later + timedelta(minutes=5)) is None     # read once: the newest reading no longer says locked
+        assert client.calls == ["L1"]
+        with core.transaction() as tx:
+            row = tx.fetch_one("SELECT ended_at FROM managed_lock_observations WHERE outcome = 'not_found'")
+        assert row["ended_at"].startswith("2026-11-25T19:10:00")
+
+
+    def test_the_ended_lock_is_read_once_when_a_new_lock_is_found(self, core) -> None:
+        """Live, 2026-11-28: he relocked before the bot had read the old lock's end. The old one is read first, then the new one."""
+        import uuid
+        from infrastructure.clock import FrozenClock
+        from infrastructure.time_format import iso
+        from system.keyholder_lock_source import KeyholderLockObservationSource
+
+        with core.transaction() as tx:
+            tx.execute("INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, fetched_at, created_at) "
+                       "VALUES (?, 'L1', 'observed', 'keyholder_search', 'locked', 0, ?, ?)", (str(uuid.uuid4()), iso(NOW), iso(NOW)))
+
+        class Resolver:
+            def current(self, now=None):
+                return "L2"
+
+            def cached(self):
+                return "L2"
+
+            def known_unlocked(self, now=None):
+                return False
+
+        class Tokens:
+            def call_with_token(self, user_id, *, now, operation):
+                return operation("t")
+
+        class Client:
+            calls = []
+
+            def get_lock(self, *, access_token, lock_id):
+                self.calls.append(lock_id)
+                if lock_id == "L1":
+                    return {"_id": "L1", "role": "keyholder", "status": "unlocked", "unlockedAt": "2026-11-25T19:10:00.000Z"}
+                return {"_id": "L2", "role": "keyholder", "status": "locked", "isFrozen": False}
+
+        client = Client()
+        src = KeyholderLockObservationSource(core.db_path, core=core, lock_id=None, wearer_user_id="w", keyholder_user_id="k",
+                                             keyholder_tokens=Tokens(), lock_client=client, clock=FrozenClock(NOW), resolver=Resolver())
+        assert src.refresh(NOW + timedelta(days=3)) == "observed"
+        assert src.refresh(NOW + timedelta(days=3, minutes=5)) == "observed"
+        assert client.calls == ["L1", "L2", "L2"]

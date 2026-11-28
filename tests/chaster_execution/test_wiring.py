@@ -275,7 +275,7 @@ class TestIsolationGuards:
     def test_transport_interface_has_only_the_barrier_method(self) -> None:
         from chaster_execution.models import LockActionTransport
         methods = {m for m in vars(LockActionTransport) if not m.startswith("_")}
-        assert methods == {"set_frozen"}
+        assert methods == {"set_frozen", "remove_remaining_time"}     # remove_remaining_time: the pick-up timer to 0 (owner, 2026-11-28)
 
     def test_no_tls_weakening_anywhere_in_the_new_code(self) -> None:
         for pkg in ("chaster_execution", "rules_engine", "system"):

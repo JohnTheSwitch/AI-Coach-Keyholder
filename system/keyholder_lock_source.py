@@ -66,14 +66,21 @@ def get_lock_stayed_locked(core: CoreDatabase, since: datetime, until: datetime)
 
 
 def get_unlocked_throughout(core: CoreDatabase, start: datetime, end: datetime) -> bool:
-    """Owner, 2026-11-18: a day without a lock counts like a vacation day. True only when the last reading at or before `start` said the lock
-    was no longer locked (the lock had ended) and no reading in (start, end] saw a lock locked. No reading before `start` (nothing known),
-    or the bot off while still locked (its last reading said locked), is never "unlocked". Read-only."""
+    """Owner, 2026-11-18: a day without a lock counts like a vacation day. True only when the lock was known to have ended by `start` and no
+    reading in (start, end] saw a lock locked. Known ended: the last reading at or before `start` said the lock was no longer locked, or
+    (live, 2026-11-28) a later reading of that same lock carries Chaster's own `unlockedAt` at or before `start` (the bot was off when it
+    ended). No reading before `start` (nothing known), or the bot off while still locked with no end recorded by Chaster, is never
+    "unlocked". Read-only."""
     with core.transaction() as tx:
-        before = tx.fetch_one("SELECT outcome, status FROM managed_lock_observations WHERE fetched_at <= ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1",
-                              (_iso(start),))
-        if before is None or (before["outcome"] == "observed" and before["status"] == "locked"):
+        before = tx.fetch_one("SELECT lock_id, outcome, status FROM managed_lock_observations WHERE fetched_at <= ? "
+                              "ORDER BY fetched_at DESC, rowid DESC LIMIT 1", (_iso(start),))
+        if before is None:
             return False
+        if before["outcome"] == "observed" and before["status"] == "locked":
+            ended = tx.fetch_one("SELECT 1 FROM managed_lock_observations WHERE lock_id = ? AND ended_at IS NOT NULL AND ended_at <= ? LIMIT 1",
+                                 (before["lock_id"], _iso(start)))
+            if ended is None:
+                return False
         seen = tx.fetch_one("SELECT 1 FROM managed_lock_observations WHERE outcome = 'observed' AND status = 'locked' AND fetched_at > ? "
                             "AND fetched_at <= ? LIMIT 1", (_iso(start), _iso(end)))
     return seen is None
@@ -115,9 +122,17 @@ class KeyholderLockObservationSource:
         """Reads and records the lock once. None when nothing could be read: nothing is recorded and the last state simply goes stale."""
         if self._resolver is not None:
             self._resolver.current(now)
-        if self._lock_id is None:
-            return None
         lock_id = self._lock_id
+        old = self._ended_unread(now, lock_id)
+        if old is not None:
+            outcome = self._read(old, now)                  # the previous lock first, so its end is on record
+            if lock_id is None:
+                return outcome
+        if lock_id is None:
+            return None
+        return self._read(lock_id, now)
+
+    def _read(self, lock_id: str, now: datetime) -> str | None:
         try:
             raw = self._tokens.call_with_token(self._kh_user, now=now, operation=lambda token: self._client.get_lock(access_token=token, lock_id=lock_id))
         except Exception as exc:
@@ -128,13 +143,30 @@ class KeyholderLockObservationSource:
             logger.warning("Release lock check: %s; nothing will act on this lock.", outcome)
         usable = outcome == LockCheck.OBSERVED
         frozen = raw.get("isFrozen") if usable and isinstance(raw.get("isFrozen"), bool) else None
+        # Live, 2026-11-28: Chaster's own end time of a lock that is no longer locked (provider-reported), for get_unlocked_throughout.
+        ended = _time(raw.get("unlockedAt")) if outcome == LockCheck.NOT_FOUND and isinstance(raw, dict) else None
         with self._core.transaction() as tx:
             tx.execute(
                 "INSERT INTO managed_lock_observations (id, lock_id, outcome, source, status, is_frozen, frozen_at, end_date, "
-                "wearer_chaster_id, keyholder_chaster_id, fetched_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "wearer_chaster_id, keyholder_chaster_id, fetched_at, created_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (str(uuid.uuid4()), lock_id, outcome, SOURCE, "locked" if usable else None, None if frozen is None else int(frozen),
                  _iso(_time(raw.get("frozenAt"))) if usable and _time(raw.get("frozenAt")) else None,
                  _iso(_time(raw.get("endDate"))) if usable and _time(raw.get("endDate")) else None,
                  _user_id(raw.get("user")) if isinstance(raw, dict) else None, _user_id(raw.get("keyholder")) if isinstance(raw, dict) else None,
-                 _iso(now), _iso(self._clock.now())))
+                 _iso(now), _iso(self._clock.now()), _iso(ended) if ended else None))
         return outcome
+
+    def _ended_unread(self, now: datetime, current: str | None) -> str | None:
+        """Live, 2026-11-28: the owner's lock ended while the bot was off, and the search afterwards simply found no lock (or already his next
+        lock), so nothing ever read the old lock again and its last reading still said "locked". When the newest reading is a locked one of a
+        lock that is no longer his current one (a search found none, or a different one), that lock is read once more, so its end and
+        Chaster's `unlockedAt` get recorded. None otherwise."""
+        if self._resolver is None:
+            return None
+        if current is None and not getattr(self._resolver, "known_unlocked", lambda _n=None: False)(now):
+            return None
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT lock_id, outcome, status FROM managed_lock_observations ORDER BY fetched_at DESC, rowid DESC LIMIT 1")
+        if row is None or row["outcome"] != LockCheck.OBSERVED or row["status"] != "locked" or row["lock_id"] == current:
+            return None
+        return row["lock_id"]

@@ -41,6 +41,8 @@ def validate_ruleset(ruleset: Ruleset) -> Ruleset:
             raise RulesetValidationError(f"rule {rule.id!r}: description must be non-empty")
         if not isinstance(rule.action, ActionType) or rule.action == ActionType.NO_ACTION:
             raise RulesetValidationError(f"rule {rule.id!r}: action must be an actionable ActionType")
+        if rule.action == ActionType.ZERO_TIME:      # owner, 2026-11-28: only barrier management takes a new lock's timer to 0, never a rule
+            raise RulesetValidationError(f"rule {rule.id!r}: no rule may change a lock's time")
         if rule.hours != 0:
             raise RulesetValidationError(f"rule {rule.id!r}: {rule.action.value} takes no hours")
         if rule.direction is not None and not isinstance(rule.direction, GoalDirection):

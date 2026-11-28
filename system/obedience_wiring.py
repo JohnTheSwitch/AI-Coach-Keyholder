@@ -85,6 +85,8 @@ def build_obedience(config, core, *, proof_checks, signals, window_cfg, notes: l
                                        feature_on=(lambda f: True) if features is None else (lambda f: features.is_on(user_id, f)),
                                        midnight=lambda d: window_cfg.to_utc(d + timedelta(days=1), time(0, 0))))
     tasks.training = plan                                     # work queue Q4c: the bot wires its `log` and its Monday buttons
+    from obedience.service import get_verified_training
+    plan.done_on = lambda d, u=user_id: bool(get_verified_training(core, u, d))   # live, 2026-11-28: only leg days he did count
     tasks.trust_domain = domain                               # owner, 2026-11-17: a task verified in Chaster earns like an answered check-in
     plan.after_today = tasks.take_training_today              # bug fix 2026-11-16: "Today" switches a task that is only planned
     plan.today_open = tasks.today_open                        # `extra training` only while today's task is not out yet

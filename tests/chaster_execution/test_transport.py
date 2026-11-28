@@ -184,7 +184,7 @@ class TestFactoryAndInterface:
 
     def test_public_surface_is_only_barrier_and_extension_methods(self, parts) -> None:
         public = {n for n in dir(ChasterHttpTransport) if not n.startswith("_")}
-        assert public == {"set_frozen", "set_extensions"}       # set_extensions: Phase I2, CLI only
+        assert public == {"set_frozen", "set_extensions", "remove_remaining_time"}   # set_extensions: Phase I2, CLI only; remove_remaining_time: 2026-11-28
 
     def test_module_never_disables_tls_verification(self) -> None:
         text = (ROOT / "chaster_execution" / "transport.py").read_text(encoding="utf-8")

@@ -2,8 +2,12 @@
 
 Canonical: `docs/architecture/chaster_execution_phase3_proposal.md` (approved).
 Carries out barrier decisions on a Chaster lock. **Zero-Time-Modification (owner decision, 2026-11-04): the system never changes a lock's duration,
-up or down.** No time method exists on the transport or the executor, and no action type or limit for one exists in `rules_engine`. Lock
-progression is governed purely by the frozen state and the Release Engine. `ENABLE_CHASTER_EXECUTION` stays false until live testing.
+up or down.** One exception (owner, 2026-11-28: "a higher initial timer ... when the system picks it up and freezes it, it would also set the
+timer to 0"): `ZERO_TIME`, rule `barrier.zero_time`, once per lock, decided only by the release tick (`_maybe_zero_time`) for his newly
+recognised lock (first seen at or after `zero_time_from`, set in his own wiring), only after it is frozen, with more than a minute left.
+`remove_remaining_time` sends `update-time` with a NEGATIVE duration only (owner-supplied contract); the executor re-checks that the lock is
+frozen, is the decision's lock and has time left, reads the end date again afterwards, and sends an end date that moved later to review.
+Nothing can add time, and no Rules Engine rule may use it. Lock progression is otherwise governed purely by the frozen state and the Release Engine. `ENABLE_CHASTER_EXECUTION` stays false until live testing.
 
 **Live testing (owner decision, 2026-11-04):** physical lock destruction and unlock (the Chaster `/unlock` endpoint) stay banned, and no method for them exists
 here. Unfreezing through the Release Engine (`frozen=False`) is allowed once the execution halt is lifted.

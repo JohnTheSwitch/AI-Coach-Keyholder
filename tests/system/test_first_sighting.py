@@ -77,3 +77,36 @@ class TestTheFirstSighting:
         world = new_lock_world(tmp_path, frozen=False, status=ChasterProviderStatus.UNLOCKED)
         world.cycle()
         assert world.transport.calls == [] and not world.engine.has_seen_lock("lock-1")
+
+
+class TestTheTimerTo0:
+    """Owner, 2026-11-28: "a higher initial timer ... when the system picks it up and freezes it, it would also set the timer to 0"."""
+
+    def test_a_new_lock_is_frozen_then_its_timer_goes_to_0_once(self, tmp_path) -> None:
+        world = new_lock_world(tmp_path, frozen=False)
+        world.task.zero_time_from = world.now - timedelta(hours=1)
+        world.end_date = world.now + timedelta(days=3)
+        world.cycle()                                                # first sighting: frozen
+        world.frozen = True
+        report = world.cycle(world.now + timedelta(minutes=1))
+        assert "barrier_zero_time" in report.notes
+        assert world.transport.calls == [("freeze", "lock-1"), ("zero_time", "lock-1", 3 * 24 * 3600 - 60)]
+        world.end_date = world.now
+        world.end_date = world.now + timedelta(days=1)               # even with time again later: once per lock only
+        world.cycle(world.now + timedelta(hours=1))
+        assert [c for c in world.transport.calls if c[0] == "zero_time"] == [("zero_time", "lock-1", 3 * 24 * 3600 - 60)]
+
+    def test_a_lock_first_seen_before_the_switch_keeps_its_timer(self, tmp_path) -> None:
+        world = new_lock_world(tmp_path, frozen=True)
+        world.end_date = world.now + timedelta(days=3)
+        world.cycle()                                                # seen with the switch off
+        world.task.zero_time_from = world.now + timedelta(minutes=5)
+        world.cycle(world.now + timedelta(minutes=10))
+        assert world.transport.calls == []
+
+    def test_off_unless_his_wiring_sets_it(self, tmp_path) -> None:
+        world = new_lock_world(tmp_path, frozen=True)
+        world.end_date = world.now + timedelta(days=3)
+        world.cycle()
+        world.cycle(world.now + timedelta(minutes=10))
+        assert world.task.zero_time_from is None and world.transport.calls == []
